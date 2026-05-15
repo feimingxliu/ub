@@ -9,23 +9,42 @@ import (
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tui/diffview"
 )
 
 // Model is a small, focused permission modal state.
 type Model struct {
 	Request  permission.Request
 	Expanded bool
+	Diff     diffview.Model
 }
 
 // New creates a permission modal model.
 func New(req permission.Request) Model {
-	return Model{Request: req}
+	var diff diffview.Model
+	if req.Preview != nil {
+		diff = diffview.New(req.Preview.Files)
+	}
+	return Model{Request: req, Diff: diff}
 }
 
 // ToggleDiff toggles full preview diff rendering.
 func (m Model) ToggleDiff() Model {
 	m.Expanded = !m.Expanded
 	return m
+}
+
+// HandleKey applies modal-local navigation keys.
+func (m *Model) HandleKey(key string) bool {
+	if !m.Expanded {
+		return false
+	}
+	return m.Diff.HandleKey(key)
+}
+
+// SelectedDiffPath returns the selected diff path.
+func (m Model) SelectedDiffPath() string {
+	return m.Diff.SelectedPath()
 }
 
 // View renders the modal as plain text.
@@ -57,13 +76,8 @@ func (m Model) View() string {
 		}
 		if len(req.Preview.Files) > 0 {
 			if m.Expanded {
-				for _, file := range req.Preview.Files {
-					b.WriteString(fmt.Sprintf("diff %s (%s)\n", file.Path, file.Kind))
-					b.WriteString(file.UnifiedDiff)
-					if !strings.HasSuffix(file.UnifiedDiff, "\n") {
-						b.WriteByte('\n')
-					}
-				}
+				b.WriteString(m.Diff.View())
+				b.WriteByte('\n')
 			} else {
 				b.WriteString("press d to show diff\n")
 			}

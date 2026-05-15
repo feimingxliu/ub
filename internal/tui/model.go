@@ -97,6 +97,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.modal = m.modal.ToggleDiff()
 				return m, nil
 			default:
+				if m.modal.HandleKey(key.String()) {
+					return m, nil
+				}
 				if decision, ok := permissiondialog.DecisionForKey(key.String()); ok {
 					m.pending.Response <- decision
 					m.pending = nil

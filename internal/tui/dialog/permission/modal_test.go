@@ -64,8 +64,36 @@ func TestModalRendersContextAndDiff(t *testing.T) {
 	}
 
 	expanded := New(req).ToggleDiff().View()
-	if !strings.Contains(expanded, "diff main.go") || !strings.Contains(expanded, "+new") {
+	if !strings.Contains(expanded, "main.go") || !strings.Contains(expanded, "new") {
 		t.Fatalf("expanded view missing diff:\n%s", expanded)
+	}
+}
+
+func TestModalNavigatesDiffFiles(t *testing.T) {
+	req := permission.Request{
+		Tool: "edit",
+		Risk: tool.RiskWrite,
+		Mode: execution.ModeDefault,
+		Preview: &tool.Preview{
+			Summary: "two files",
+			Files: []tool.FileDiff{
+				{Path: "a.go", Kind: tool.KindModify, UnifiedDiff: "-a\n+a\n"},
+				{Path: "b.py", Kind: tool.KindModify, UnifiedDiff: "-b\n+b\n"},
+			},
+		},
+	}
+	modal := New(req).ToggleDiff()
+	if got := modal.SelectedDiffPath(); got != "a.go" {
+		t.Fatalf("selected = %q, want a.go", got)
+	}
+	if !modal.HandleKey("right") {
+		t.Fatalf("right key not handled")
+	}
+	if got := modal.SelectedDiffPath(); got != "b.py" {
+		t.Fatalf("selected = %q, want b.py", got)
+	}
+	if !strings.Contains(modal.View(), "b.py") {
+		t.Fatalf("view missing selected file:\n%s", modal.View())
 	}
 }
 
