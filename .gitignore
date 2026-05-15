@@ -2,3 +2,18 @@
 /.claude/
 /.codex/
 /.opencode/
+
+# Go binary (matches the project's main artifact)
+/ub
+*.exe
+
+# Go test / coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
