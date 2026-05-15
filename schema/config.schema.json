@@ -100,6 +100,9 @@
         "default_model": {
           "type": "string"
         },
+        "default_provider": {
+          "type": "string"
+        },
         "small_model": {
           "type": "string"
         },
@@ -219,6 +222,9 @@
   },
   "properties": {
     "default_model": {
+      "type": "string"
+    },
+    "default_provider": {
       "type": "string"
     },
     "small_model": {

@@ -37,6 +37,9 @@ func mergeInto(dst, src *Config) {
 	if src.DefaultModel != "" {
 		dst.DefaultModel = src.DefaultModel
 	}
+	if src.DefaultProvider != "" {
+		dst.DefaultProvider = src.DefaultProvider
+	}
 	if src.SmallModel != "" {
 		dst.SmallModel = src.SmallModel
 	}

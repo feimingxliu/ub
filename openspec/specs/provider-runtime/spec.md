@@ -58,7 +58,7 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 
 ### Requirement: 最小 chat 命令
 
-系统 SHALL 提供 `ub chat` 子命令用于 provider 对话。命令 MUST 支持 `ub chat "prompt"`、`ub chat -`、`--provider <name>`、`--model <id>`、`--session <id>` 和 `--new`；文本 delta MUST 流式写到 stdout。`--provider` 与 `--model` MUST 只影响当前调用，不写回配置。
+系统 SHALL 提供 `ub chat` 子命令用于 provider 对话。命令 MUST 支持 `ub chat "prompt"`、`ub chat -`、`--provider <name>`、`--model <id>`、`--session <id>` 和 `--new`；文本 delta MUST 流式写到 stdout。`--provider` 与 `--model` MUST 只影响当前调用，不写回配置。未传 `--provider` 时，命令 MUST 使用 `default_provider`；若未配置 `default_provider`，MUST 使用配置中第一个可用 provider。命令 MUST NOT 从 `default_model` 的 `/` 前缀推断 provider。
 
 #### Scenario: 参数 prompt
 
@@ -76,7 +76,19 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 
 - **GIVEN** 配置中有多个 provider
 - **WHEN** 用户运行 `ub chat --provider test "hi"`
-- **THEN** 命令 MUST 使用名为 `test` 的 provider，而不是默认模型推导出的 provider
+- **THEN** 命令 MUST 使用名为 `test` 的 provider
+
+#### Scenario: 默认 provider 配置
+
+- **GIVEN** 配置中设置 `default_provider: vibecoding`，且 `default_model: openai/glm-5.1`
+- **WHEN** 用户运行 `ub chat "hi"`
+- **THEN** 命令 MUST 使用 `vibecoding` provider，并把完整 model `openai/glm-5.1` 传给 provider
+
+#### Scenario: 不从 default_model 推断 provider
+
+- **GIVEN** 配置中只有 `providers.vibecoding`，且 `default_model: openai/glm-5.1`
+- **WHEN** 用户运行 `ub chat "hi"`
+- **THEN** 命令 MUST 使用 `vibecoding` provider，而不是尝试使用名为 `openai` 的 provider
 
 #### Scenario: tool_call 暂不执行
 

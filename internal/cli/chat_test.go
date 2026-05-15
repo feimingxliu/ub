@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
@@ -189,7 +191,7 @@ func TestChatRejectsToolCalls(t *testing.T) {
 	}
 }
 
-func TestChatInfersProviderFromDefaultModel(t *testing.T) {
+func TestChatUsesFirstConfiguredProviderWhenProviderUnset(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `default_model: fake/test-model
 providers:
@@ -212,6 +214,90 @@ providers:
 	}
 	if got := out.String(); got != "inferred" {
 		t.Fatalf("stdout = %q, want inferred", got)
+	}
+}
+
+func TestChatUsesDefaultProvider(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_provider: zed
+default_model: openai/test-model
+providers:
+  alpha:
+    type: fake
+    script:
+      - type: text_delta
+        text: alpha
+  zed:
+    type: fake
+    script:
+      - type: text_delta
+        text: zed
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat default provider: %v", err)
+	}
+	if got := out.String(); got != "zed" {
+		t.Fatalf("stdout = %q, want zed", got)
+	}
+}
+
+func TestChatDoesNotInferProviderFromDefaultModelPrefix(t *testing.T) {
+	captureRequests = nil
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: openai/test-model
+providers:
+  vibecoding:
+    type: capture
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat first provider fallback: %v", err)
+	}
+	if len(captureRequests) != 1 {
+		t.Fatalf("capture request len = %d, want 1", len(captureRequests))
+	}
+	if got := captureRequests[0].Model; got != "openai/test-model" {
+		t.Fatalf("model = %q, want full default_model", got)
+	}
+}
+
+func TestChatPreservesDefaultModelProviderPrefix(t *testing.T) {
+	captureRequests = nil
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: capture/test-model
+providers:
+  capture:
+    type: capture
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat inferred provider: %v", err)
+	}
+	if len(captureRequests) != 1 {
+		t.Fatalf("capture request len = %d, want 1", len(captureRequests))
+	}
+	if got := captureRequests[0].Model; got != "capture/test-model" {
+		t.Fatalf("model = %q, want full default_model", got)
 	}
 }
 
@@ -573,10 +659,70 @@ func TestChatWritesProviderErrorEvent(t *testing.T) {
 	}
 }
 
+func TestChatErrorUpdatesSessionUpdatedAt(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+    script:
+      - type: error
+        error: boom
+`)
+	t.Chdir(temp)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	old := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	if err := st.CreateSession(context.Background(), store.Session{
+		ID:        "sess_error",
+		Workspace: temp,
+		Title:     "old",
+		Model:     "fake/model",
+		CreatedAt: old,
+		UpdatedAt: old,
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "fake", "--session", "sess_error", "hello"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected chat error")
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("Open after chat: %v", err)
+	}
+	defer st.Close()
+	got, err := st.GetSession(context.Background(), "sess_error")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if !got.UpdatedAt.After(old) {
+		t.Fatalf("UpdatedAt = %s, want after %s", got.UpdatedAt, old)
+	}
+}
+
 func TestSelectChatProviderRequiresProvider(t *testing.T) {
 	_, _, err := selectChatProvider(nil, "", "")
 	if err == nil {
 		t.Fatal("expected provider selection error")
+	}
+	_, _, err = selectChatProvider(&config.Config{DefaultModel: "openai/test-model"}, "", "")
+	if err == nil {
+		t.Fatal("expected provider selection error without configured providers")
 	}
 }
 
@@ -589,6 +735,13 @@ func TestChatTitle(t *testing.T) {
 	}
 	if got := chatTitle(strings.Repeat("a", 80)); len(got) != 60 || !strings.HasSuffix(got, "...") {
 		t.Fatalf("long title = %q len=%d", got, len(got))
+	}
+	got := chatTitle(strings.Repeat("你", 80))
+	if !utf8.ValidString(got) {
+		t.Fatalf("title is invalid UTF-8: %q", got)
+	}
+	if utf8.RuneCountInString(got) != 60 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("cjk title = %q rune_len=%d", got, utf8.RuneCountInString(got))
 	}
 }
 

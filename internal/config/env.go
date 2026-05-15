@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"os"
 	"regexp"
-	"strings"
 )
 
 // envPattern matches one of:
@@ -41,17 +40,4 @@ func Expand(b []byte) []byte {
 		slog.Warn("env variable used in config is unset", "name", name)
 		return []byte("")
 	})
-}
-
-// expandString is a convenience for callers (tests, REPLs) that have a
-// string in hand rather than a byte slice.
-func expandString(s string) string {
-	return string(Expand([]byte(s)))
-}
-
-// envHasPlaceholder reports whether s contains a substitution placeholder.
-// Used by error messages to hint at the cause when YAML parsing fails on
-// what looks like a literal "${" inside a string.
-func envHasPlaceholder(s string) bool {
-	return strings.Contains(s, "${")
 }

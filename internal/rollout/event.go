@@ -2,15 +2,15 @@
 package rollout
 
 import (
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	mathrand "math/rand/v2"
 	"time"
 
 	"github.com/feimingxliu/ub/internal/message"
-	"github.com/feimingxliu/ub/internal/provider"
 )
 
 // Type identifies a rollout event kind.
@@ -95,10 +95,10 @@ func AssistantMessage(sessionID string, turn int, msg message.Message) (Event, e
 }
 
 // Usage creates a usage event.
-func Usage(sessionID string, turn int, usage provider.Usage) (Event, error) {
+func Usage(sessionID string, turn, inputTokens, outputTokens int) (Event, error) {
 	return NewEvent(sessionID, turn, TypeUsage, UsagePayload{
-		InputTokens:  usage.InputTokens,
-		OutputTokens: usage.OutputTokens,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
 	})
 }
 
@@ -114,8 +114,8 @@ func Error(sessionID string, turn int, err error) (Event, error) {
 // NewID returns a compact random identifier with a stable prefix.
 func NewID(prefix string) string {
 	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%s_%d", prefix, time.Now().UnixNano())
+	if _, err := cryptorand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%s_%020d_%016x%016x", prefix, time.Now().UnixNano(), mathrand.Uint64(), mathrand.Uint64())
 	}
 	return fmt.Sprintf("%s_%020d_%s", prefix, time.Now().UnixNano(), hex.EncodeToString(b[:]))
 }

@@ -145,7 +145,7 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 #### Scenario: schema 覆盖关键字段
 
 - **WHEN** 检查生成的 `schema/config.schema.json`
-- **THEN** schema `properties` 至少包含 `default_model`、`small_model`、`execution_mode`、`approval_agent`、`profiles`、`providers`、`tui`、`context`、`permissions`、`mcp_servers`、`lsp_servers`
+- **THEN** schema `properties` 至少包含 `default_model`、`default_provider`、`small_model`、`execution_mode`、`approval_agent`、`profiles`、`providers`、`tui`、`context`、`permissions`、`mcp_servers`、`lsp_servers`
 
 ### Requirement: Fake provider 脚本配置
 

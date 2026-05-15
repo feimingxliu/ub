@@ -75,6 +75,39 @@ func TestDoctorUsesDevProfile(t *testing.T) {
 	}
 }
 
+func TestDoctorPlainDisablesStyledOutput(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	styled := &bytes.Buffer{}
+	cmd.SetOut(styled)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"doctor"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor styled: %v", err)
+	}
+	if !strings.Contains(styled.String(), "\x1b[") {
+		t.Fatalf("styled doctor output has no ANSI sequences:\n%s", styled.String())
+	}
+
+	cmd = newRootCmd()
+	plain := &bytes.Buffer{}
+	cmd.SetOut(plain)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"doctor", "--plain"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor plain: %v", err)
+	}
+	if strings.Contains(plain.String(), "\x1b[") {
+		t.Fatalf("plain doctor output contains ANSI sequences:\n%s", plain.String())
+	}
+}
+
 func TestDoctorOpenAIMissingKeyDoesNotProbe(t *testing.T) {
 	probed := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

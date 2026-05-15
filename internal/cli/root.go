@@ -292,7 +292,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 		Messages: requestMessages,
 	})
 	if err != nil {
-		return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, fmt.Errorf("provider %q chat: %w", providerName, err))
+		return recordChatError(cmd, state, fmt.Errorf("provider %q chat: %w", providerName, err))
 	}
 	defer stream.Close()
 
@@ -312,17 +312,17 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 			if recordErr := recordAssistantMessage(cmd, state.rollout, state.sessionID, state.nextTurn, assistant.String()); recordErr != nil {
 				return recordErr
 			}
-			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, fmt.Errorf("provider %q stream: %w", providerName, err))
+			return recordChatError(cmd, state, fmt.Errorf("provider %q stream: %w", providerName, err))
 		}
 		switch event.Type {
 		case provider.EventTextDelta:
 			if _, err := io.WriteString(cmd.OutOrStdout(), event.Text); err != nil {
-				return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, err)
+				return recordChatError(cmd, state, err)
 			}
 			assistant.WriteString(event.Text)
 		case provider.EventUsage:
 			if event.Usage != nil {
-				usageEvent, err := rollout.Usage(state.sessionID, state.nextTurn, *event.Usage)
+				usageEvent, err := rollout.Usage(state.sessionID, state.nextTurn, event.Usage.InputTokens, event.Usage.OutputTokens)
 				if err != nil {
 					return err
 				}
@@ -346,7 +346,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 			} else {
 				toolErr = fmt.Errorf("ub chat does not execute tool calls yet: received %q", event.ToolName)
 			}
-			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, toolErr)
+			return recordChatError(cmd, state, toolErr)
 		case provider.EventError:
 			var eventErr error
 			if event.Err != nil {
@@ -354,9 +354,9 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 			} else {
 				eventErr = fmt.Errorf("provider returned error event")
 			}
-			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, eventErr)
+			return recordChatError(cmd, state, eventErr)
 		default:
-			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, fmt.Errorf("provider returned unsupported event type %q", event.Type))
+			return recordChatError(cmd, state, fmt.Errorf("provider returned unsupported event type %q", event.Type))
 		}
 	}
 }
@@ -482,13 +482,17 @@ func recordAssistantMessage(cmd *cobra.Command, ro *rollout.SQLite, sessionID st
 	return ro.Append(cmd.Context(), event)
 }
 
-func recordChatError(cmd *cobra.Command, ro *rollout.SQLite, sessionID string, turn int, chatErr error) error {
-	event, err := rollout.Error(sessionID, turn, chatErr)
+func recordChatError(cmd *cobra.Command, state *chatSessionState, chatErr error) error {
+	event, err := rollout.Error(state.sessionID, state.nextTurn, chatErr)
 	if err != nil {
 		return fmt.Errorf("record rollout error payload: %v; original error: %w", err, chatErr)
 	}
-	if err := ro.Append(cmd.Context(), event); err != nil {
+	if err := state.rollout.Append(cmd.Context(), event); err != nil {
 		return fmt.Errorf("record rollout error: %v; original error: %w", err, chatErr)
+	}
+	state.session.UpdatedAt = time.Now().UTC()
+	if err := state.store.UpdateSession(cmd.Context(), state.session); err != nil {
+		return fmt.Errorf("update session after chat error: %v; original error: %w", err, chatErr)
 	}
 	return chatErr
 }
@@ -510,10 +514,11 @@ func chatTitle(prompt string) string {
 		return "(empty prompt)"
 	}
 	const max = 60
-	if len(title) <= max {
+	runes := []rune(title)
+	if len(runes) <= max {
 		return title
 	}
-	return title[:max-3] + "..."
+	return string(runes[:max-3]) + "..."
 }
 
 func readChatPrompt(cmd *cobra.Command, promptArg string) (string, error) {
@@ -530,24 +535,30 @@ func readChatPrompt(cmd *cobra.Command, promptArg string) (string, error) {
 func selectChatProvider(cfg *config.Config, providerFlag, modelFlag string) (string, string, error) {
 	providerName := strings.TrimSpace(providerFlag)
 	model := strings.TrimSpace(modelFlag)
-	if model == "" && cfg != nil {
-		model = strings.TrimSpace(cfg.DefaultModel)
+	if cfg != nil {
+		if model == "" {
+			model = strings.TrimSpace(cfg.DefaultModel)
+		}
+		if providerName == "" {
+			providerName = strings.TrimSpace(cfg.DefaultProvider)
+		}
+		if providerName == "" {
+			providerName = firstConfiguredProvider(cfg.Providers)
+		}
 	}
 	if providerName == "" {
-		providerName = providerFromModel(model)
-	}
-	if providerName == "" {
-		return "", "", fmt.Errorf("provider required: set --provider or default_model as <provider>/<model>")
+		return "", "", fmt.Errorf("provider required: set --provider, default_provider, or configure at least one provider")
 	}
 	return providerName, model, nil
 }
 
-func providerFromModel(model string) string {
-	providerName, _, ok := strings.Cut(model, "/")
-	if !ok {
-		return ""
+func firstConfiguredProvider(providers map[string]config.ProviderConfig) string {
+	for _, name := range sortedProviderNames(providers) {
+		if strings.TrimSpace(providers[name].Type) != "" {
+			return name
+		}
 	}
-	return strings.TrimSpace(providerName)
+	return ""
 }
 
 func runSessionsLS(cmd *cobra.Command) error {

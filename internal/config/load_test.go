@@ -131,6 +131,7 @@ func TestLoadFromDirsAppliesSelectedProfile(t *testing.T) {
 	xdg := filepath.Join(temp, "xdg")
 	globalPath := filepath.Join(xdg, "ub", "config.yaml")
 	mustWriteConfig(t, globalPath, `default_model: fake/base
+default_provider: fake
 execution_mode: default
 providers:
   fake:
@@ -138,6 +139,7 @@ providers:
 profiles:
   dev:
     default_model: fake/dev
+    default_provider: fake
     execution_mode: plan
     providers:
       fake:
@@ -155,6 +157,9 @@ profiles:
 	if cfg.DefaultModel != "fake/dev" {
 		t.Fatalf("DefaultModel = %q", cfg.DefaultModel)
 	}
+	if cfg.DefaultProvider != "fake" {
+		t.Fatalf("DefaultProvider = %q", cfg.DefaultProvider)
+	}
 	if cfg.ExecutionMode != ModePlan {
 		t.Fatalf("ExecutionMode = %q", cfg.ExecutionMode)
 	}
@@ -167,7 +172,7 @@ func TestLoadFromDirsAppliesUBProfile(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")
 	globalPath := filepath.Join(xdg, "ub", "config.yaml")
-	mustWriteConfig(t, globalPath, "profiles:\n  dev:\n    default_model: fake/dev\n")
+	mustWriteConfig(t, globalPath, "profiles:\n  dev:\n    default_model: fake/dev\n    default_provider: fake\n")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("UB_PROFILE", "dev")
 
@@ -177,6 +182,9 @@ func TestLoadFromDirsAppliesUBProfile(t *testing.T) {
 	}
 	if cfg.DefaultModel != "fake/dev" {
 		t.Fatalf("DefaultModel = %q", cfg.DefaultModel)
+	}
+	if cfg.DefaultProvider != "fake" {
+		t.Fatalf("DefaultProvider = %q", cfg.DefaultProvider)
 	}
 }
 

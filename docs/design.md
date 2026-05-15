@@ -319,7 +319,8 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 `~/.config/ub/config.yaml` 示例：
 
 ```yaml
-default_model: anthropic/claude-sonnet-4-7
+default_provider: anthropic
+default_model: claude-sonnet-4-7
 small_model: openai/gpt-4o-mini   # 用于 summary、生成标题
 execution_mode: default            # default / plan / agent-approve
 
@@ -535,7 +536,8 @@ UI 流程：
 配置 `profiles:` 节：
 
 ```yaml
-default_model: anthropic/claude-sonnet-4-7
+default_provider: anthropic
+default_model: claude-sonnet-4-7
 
 providers:
   vllm-local:
@@ -545,8 +547,9 @@ providers:
 
 profiles:
   dev:
-    default_model: vllm-local/Qwen2.5-Coder-7B-Instruct
-    small_model:   vllm-local/Qwen2.5-Coder-7B-Instruct
+    default_provider: vllm-local
+    default_model: Qwen2.5-Coder-7B-Instruct
+    small_model:   Qwen2.5-Coder-7B-Instruct
     execution_mode: agent-approve
     permissions:
       auto_allow_safe: true

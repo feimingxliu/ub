@@ -30,20 +30,20 @@ func newDoctorCmd() *cobra.Command {
 }
 
 func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
-	_ = plain
 	cfg, _, err := loadConfigForCommand(cmd)
 	if err != nil {
 		return err
 	}
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
+	style := doctorStyle{plain: plain}
 
-	if _, err := fmt.Fprintln(out, "providers:"); err != nil {
+	if _, err := fmt.Fprintln(out, style.header("providers:")); err != nil {
 		return err
 	}
 	for _, name := range sortedProviderNames(cfg.Providers) {
 		result := checkProvider(ctx, name, cfg.Providers[name])
-		if _, err := fmt.Fprintf(out, "  %s\t%s\t%s\n", result.Name, result.Type, result.Status); err != nil {
+		if _, err := fmt.Fprintf(out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
 			return err
 		}
 		for _, model := range result.Models {
@@ -58,7 +58,7 @@ func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
 		}
 	}
 
-	if _, err := fmt.Fprintln(out, "commands:"); err != nil {
+	if _, err := fmt.Fprintln(out, style.header("commands:")); err != nil {
 		return err
 	}
 	for _, name := range []string{"rg", "gopls", "typescript-language-server", "npx"} {
@@ -66,7 +66,7 @@ func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
 		if path, err := exec.LookPath(name); err == nil {
 			status = "found " + path
 		}
-		if _, err := fmt.Fprintf(out, "  %s\t%s\n", name, status); err != nil {
+		if _, err := fmt.Fprintf(out, "  %s\t%s\n", name, style.status(status)); err != nil {
 			return err
 		}
 	}
@@ -76,6 +76,36 @@ func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
 		return err
 	}
 	return nil
+}
+
+type doctorStyle struct {
+	plain bool
+}
+
+func (s doctorStyle) header(text string) string {
+	if s.plain {
+		return text
+	}
+	return "\x1b[1m" + text + "\x1b[0m"
+}
+
+func (s doctorStyle) status(text string) string {
+	if s.plain {
+		return text
+	}
+	lower := strings.ToLower(text)
+	switch {
+	case lower == "reachable", lower == "configured", strings.HasPrefix(lower, "found "):
+		return "\x1b[32m" + text + "\x1b[0m"
+	case lower == "offline":
+		return "\x1b[36m" + text + "\x1b[0m"
+	case strings.HasPrefix(lower, "no_"), lower == "missing":
+		return "\x1b[33m" + text + "\x1b[0m"
+	case lower == "error", lower == "unknown_provider_type":
+		return "\x1b[31m" + text + "\x1b[0m"
+	default:
+		return text
+	}
 }
 
 type providerCheck struct {

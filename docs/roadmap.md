@@ -66,10 +66,11 @@
 - **关键签名**：
   ```go
   type Config struct {
-      DefaultModel string                    `yaml:"default_model"`
-      SmallModel   string                    `yaml:"small_model"`
-      Providers    map[string]ProviderConfig `yaml:"providers"`
-      Permissions  PermissionConfig          `yaml:"permissions"`
+      DefaultProvider string                    `yaml:"default_provider"`
+      DefaultModel    string                    `yaml:"default_model"`
+      SmallModel      string                    `yaml:"small_model"`
+      Providers       map[string]ProviderConfig `yaml:"providers"`
+      Permissions     PermissionConfig          `yaml:"permissions"`
       MCPServers   map[string]MCPServerConfig `yaml:"mcp_servers"`
       LSPServers   map[string]LSPServerConfig `yaml:"lsp_servers"`
       TUI          TUIConfig                 `yaml:"tui"`
@@ -319,6 +320,7 @@
 - **In Scope**：
   - `ub chat --session <id>` 在已有 session 上继续（叠加 history）
   - `ub chat --provider openai --model gpt-4o-mini "..."` 临时覆盖 default_model
+  - 未传 `--provider` 时使用 `default_provider`；没有配置时使用第一个可用 provider，不从 `default_model` 前缀推断
   - `ub chat --new` 强制开新 session
   - 错误处理：provider 不存在 / model 不存在 / 鉴权失败时的人话报错
 - **Out of Scope**：TUI 内的 `/model` 命令（Sprint 3）

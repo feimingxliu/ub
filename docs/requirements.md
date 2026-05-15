@@ -123,7 +123,7 @@
 ### 4.8 配置
 
 - F-CFG-1：默认配置位于 `~/.config/ub/config.yaml`；工作目录可有 `.ub/config.yaml` 覆盖
-- F-CFG-2：配置项：`providers`、`default_model`、`small_model`（用于 summary/title）、`execution_mode`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
+- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title）、`execution_mode`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
 - F-CFG-3：配置 schema 用 JSON Schema 描述，IDE 可补全
 - F-CFG-4：（V2）配置变更可通过 `/config reload` 热加载，无需重启。V1 改配置必须重启进程
 

@@ -165,17 +165,18 @@ func (c *Config) ApplyProfile(name string) error {
 
 func (p ProfileConfig) toConfig() *Config {
 	return &Config{
-		DefaultModel:  p.DefaultModel,
-		SmallModel:    p.SmallModel,
-		ExecutionMode: p.ExecutionMode,
-		ApprovalAgent: p.ApprovalAgent,
-		Providers:     p.Providers,
-		ToolsDisabled: p.ToolsDisabled,
-		TUI:           p.TUI,
-		Permissions:   p.Permissions,
-		MCPServers:    p.MCPServers,
-		LSPServers:    p.LSPServers,
-		Context:       p.Context,
+		DefaultModel:    p.DefaultModel,
+		DefaultProvider: p.DefaultProvider,
+		SmallModel:      p.SmallModel,
+		ExecutionMode:   p.ExecutionMode,
+		ApprovalAgent:   p.ApprovalAgent,
+		Providers:       p.Providers,
+		ToolsDisabled:   p.ToolsDisabled,
+		TUI:             p.TUI,
+		Permissions:     p.Permissions,
+		MCPServers:      p.MCPServers,
+		LSPServers:      p.LSPServers,
+		Context:         p.Context,
 	}
 }
 

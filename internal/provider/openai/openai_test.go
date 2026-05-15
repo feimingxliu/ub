@@ -14,7 +14,6 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
-	sdk "github.com/openai/openai-go"
 )
 
 func TestNewFromConfigRequiresAPIKey(t *testing.T) {
@@ -128,30 +127,6 @@ func TestChatSendsStreamingRequestAndReturnsEvents(t *testing.T) {
 	_, err = stream.Next(context.Background())
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("after done err = %v, want EOF", err)
-	}
-}
-
-func TestEventsFromCompletion(t *testing.T) {
-	events := eventsFromCompletion(&sdk.ChatCompletion{
-		Choices: []sdk.ChatCompletionChoice{{
-			Message: sdk.ChatCompletionMessage{Content: "pong"},
-		}},
-		Usage: sdk.CompletionUsage{
-			PromptTokens:     2,
-			CompletionTokens: 1,
-		},
-	})
-	if len(events) != 3 {
-		t.Fatalf("events len = %d, want 3: %#v", len(events), events)
-	}
-	if events[0].Type != provider.EventTextDelta || events[0].Text != "pong" {
-		t.Fatalf("text event = %#v", events[0])
-	}
-	if events[1].Type != provider.EventUsage || events[1].Usage.InputTokens != 2 || events[1].Usage.OutputTokens != 1 {
-		t.Fatalf("usage event = %#v", events[1])
-	}
-	if events[2].Type != provider.EventDone {
-		t.Fatalf("done event = %#v", events[2])
 	}
 }
 

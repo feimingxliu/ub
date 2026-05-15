@@ -139,59 +139,11 @@ func unsupportedBlock(blockType message.BlockType) error {
 	return fmt.Errorf("anthropic non-streaming text provider does not support content block %q", blockType)
 }
 
-func eventsFromMessage(msg *sdk.Message) []provider.Event {
-	events := make([]provider.Event, 0, len(msg.Content)+2)
-	for _, block := range msg.Content {
-		if block.Type == "text" {
-			events = append(events, provider.Event{
-				Type: provider.EventTextDelta,
-				Text: block.Text,
-			})
-		}
-	}
-	events = append(events, provider.Event{
-		Type: provider.EventUsage,
-		Usage: &provider.Usage{
-			InputTokens:  int(msg.Usage.InputTokens),
-			OutputTokens: int(msg.Usage.OutputTokens),
-		},
-	})
-	events = append(events, provider.Event{Type: provider.EventDone})
-	return events
-}
-
 func effectiveTimeout(timeout time.Duration) time.Duration {
 	if timeout > 0 {
 		return timeout
 	}
 	return 120 * time.Second
-}
-
-type staticStream struct {
-	events []provider.Event
-	next   int
-	closed bool
-}
-
-func newStream(events []provider.Event) *staticStream {
-	return &staticStream{events: cloneEvents(events)}
-}
-
-func (s *staticStream) Next(ctx context.Context) (provider.Event, error) {
-	if err := ctx.Err(); err != nil {
-		return provider.Event{}, err
-	}
-	if s.closed || s.next >= len(s.events) {
-		return provider.Event{}, io.EOF
-	}
-	event := s.events[s.next]
-	s.next++
-	return event, nil
-}
-
-func (s *staticStream) Close() error {
-	s.closed = true
-	return nil
 }
 
 type sdkStream struct {
@@ -264,16 +216,4 @@ func (s *sdkStream) Close() error {
 		return nil
 	}
 	return s.stream.Close()
-}
-
-func cloneEvents(events []provider.Event) []provider.Event {
-	out := make([]provider.Event, len(events))
-	for i, event := range events {
-		out[i] = event
-		if event.Usage != nil {
-			usage := *event.Usage
-			out[i].Usage = &usage
-		}
-	}
-	return out
 }

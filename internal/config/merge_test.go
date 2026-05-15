@@ -4,7 +4,8 @@ import "testing"
 
 func TestMergeScalarsMapsAndSlices(t *testing.T) {
 	base := &Config{
-		DefaultModel: "openai/gpt-4o",
+		DefaultModel:    "openai/gpt-4o",
+		DefaultProvider: "openai",
 		Providers: map[string]ProviderConfig{
 			"openai": {
 				Type:    "openai",
@@ -20,7 +21,8 @@ func TestMergeScalarsMapsAndSlices(t *testing.T) {
 		},
 	}
 	override := &Config{
-		DefaultModel: "anthropic/claude-sonnet-4-7",
+		DefaultModel:    "anthropic/claude-sonnet-4-7",
+		DefaultProvider: "anthropic",
 		Providers: map[string]ProviderConfig{
 			"openai": {
 				BaseURL: "C",
@@ -40,6 +42,9 @@ func TestMergeScalarsMapsAndSlices(t *testing.T) {
 	got := Merge(base, override)
 	if got.DefaultModel != "anthropic/claude-sonnet-4-7" {
 		t.Fatalf("DefaultModel = %q", got.DefaultModel)
+	}
+	if got.DefaultProvider != "anthropic" {
+		t.Fatalf("DefaultProvider = %q", got.DefaultProvider)
 	}
 	if got.Providers["openai"].APIKey != "" {
 		t.Fatalf("provider value should be replaced wholesale, got api_key %q", got.Providers["openai"].APIKey)

@@ -151,26 +151,6 @@ func unsupportedBlock(blockType message.BlockType) error {
 	return fmt.Errorf("openai text provider does not support content block %q", blockType)
 }
 
-func eventsFromCompletion(msg *sdk.ChatCompletion) []provider.Event {
-	if msg == nil {
-		return []provider.Event{{Type: provider.EventDone}}
-	}
-	events := make([]provider.Event, 0, len(msg.Choices)+2)
-	for _, choice := range msg.Choices {
-		if choice.Message.Content != "" {
-			events = append(events, provider.Event{
-				Type: provider.EventTextDelta,
-				Text: choice.Message.Content,
-			})
-		}
-	}
-	if usage := eventUsage(msg.Usage); usage != nil {
-		events = append(events, provider.Event{Type: provider.EventUsage, Usage: usage})
-	}
-	events = append(events, provider.Event{Type: provider.EventDone})
-	return events
-}
-
 func effectiveTimeout(timeout time.Duration) time.Duration {
 	if timeout > 0 {
 		return timeout
