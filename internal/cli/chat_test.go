@@ -559,6 +559,51 @@ func TestChatWithCompatProvider(t *testing.T) {
 	}
 }
 
+func TestChatSelectsFirstProviderModelWhenModelUnset(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/models":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":[{"id":"z-model"},{"id":"a-model"}]}`))
+		case "/chat/completions":
+			if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeOpenAIChatSSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"a-model","choices":[{"index":0,"delta":{"role":"assistant","content":"fallback-ok"},"finish_reason":null}]}`)
+			writeOpenAIChatSSE(t, w, `[DONE]`)
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  compat:
+    type: openai-compat
+    base_url: `+server.URL+`
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "compat", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat compat without model: %v", err)
+	}
+	if got := out.String(); got != "fallback-ok" {
+		t.Fatalf("stdout = %q, want fallback-ok", got)
+	}
+	if requestBody["model"] != "a-model" {
+		t.Fatalf("model = %#v, want a-model", requestBody["model"])
+	}
+}
+
 func TestChatWithOllamaProvider(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")

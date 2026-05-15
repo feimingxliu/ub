@@ -531,7 +531,8 @@
 
 - **目标**：基础工作流 hotkey
 - **依赖**：I-22 / I-14
-- **In Scope**：`/model`、`/mode`、`/clear`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
+- **In Scope**：`/model`、`/approval-model`、`/mode`、`/clear`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
+- **补充要求**：`/approval-model [model]` 只切换 auto 模式使用的审批模型；无参数时展示候选列表，显式指定时校验候选模型，切换后重建 approval agent 并只影响后续命令审批
 - **Out of Scope**：自定义 alias、命令补全
 - **验证**：手测每个命令；单测命令解析
 

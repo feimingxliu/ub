@@ -134,6 +134,22 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteWorkspaceSessions removes all sessions for a workspace.
+func (s *Store) DeleteWorkspaceSessions(ctx context.Context, workspace string) (int64, error) {
+	if workspace == "" {
+		return 0, errors.New("session workspace is empty")
+	}
+	res, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE workspace = ?", workspace)
+	if err != nil {
+		return 0, fmt.Errorf("delete workspace sessions %s: %w", workspace, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete workspace sessions %s rows affected: %w", workspace, err)
+	}
+	return n, nil
+}
+
 type sessionScanner interface {
 	Scan(dest ...any) error
 }

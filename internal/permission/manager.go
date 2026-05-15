@@ -3,6 +3,7 @@ package permission
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/feimingxliu/ub/internal/approval"
 	"github.com/feimingxliu/ub/internal/execution"
@@ -50,6 +51,14 @@ func NewManager(opts Options) (*Manager, error) {
 	}, nil
 }
 
+// SetApprovalAgent replaces the auto-mode approval agent for future requests.
+func (m *Manager) SetApprovalAgent(agent approval.Agent) {
+	if m == nil {
+		return
+	}
+	m.approvalAgent = agent
+}
+
 // Ask returns the permission decision for one tool call.
 func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 	mode, err := execution.ParseMode(string(req.Mode))
@@ -73,25 +82,36 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 		if rule, ok := matchRule(m.sessionRules, req, command); ok {
 			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(rule)}, nil
 		}
-		if mode == execution.ModeAuto && m.approvalAgent != nil {
-			agentRes, err := m.approvalAgent.ReviewCommand(ctx, approval.Request{
-				Tool:           req.Tool,
-				Args:           req.Args,
-				Risk:           req.Risk,
-				Mode:           req.Mode,
-				Command:        command,
-				Cwd:            cwdFromRequest(req),
-				ContextSummary: req.ContextSummary,
-			})
-			if err == nil && agentRes.Decision == approval.DecisionAllow {
-				return Result{Decision: DecisionAllow, Allowed: true, Source: SourceApprovalAgent, Reason: agentRes.Reason}, nil
-			}
-			if err != nil {
-				req.ApprovalReason = err.Error()
-			} else if agentRes.Reason != "" {
-				req.ApprovalReason = agentRes.Reason
+		if mode == execution.ModeAuto {
+			if m.approvalAgent == nil {
+				slog.Info("approval agent unavailable; falling back to human approval", "tool", req.Tool, "risk", req.Risk, "mode", req.Mode)
 			} else {
-				req.ApprovalReason = string(agentRes.Decision)
+				agentRes, err := m.approvalAgent.ReviewCommand(ctx, approval.Request{
+					Tool:           req.Tool,
+					Args:           req.Args,
+					Risk:           req.Risk,
+					Mode:           req.Mode,
+					Command:        command,
+					Cwd:            cwdFromRequest(req),
+					ContextSummary: req.ContextSummary,
+				})
+				if err == nil {
+					slog.Info("approval agent decision", "tool", req.Tool, "risk", req.Risk, "mode", req.Mode, "decision", agentRes.Decision, "reason", agentRes.Reason)
+					notifyApprovalObserver(req, agentRes.Decision, agentRes.Reason, nil)
+					if agentRes.Decision == approval.DecisionAllow {
+						return Result{Decision: DecisionAllow, Allowed: true, Source: SourceApprovalAgent, Reason: agentRes.Reason}, nil
+					}
+				} else {
+					slog.Warn("approval agent review failed", "tool", req.Tool, "risk", req.Risk, "mode", req.Mode, "err", err)
+					notifyApprovalObserver(req, "", "", err)
+				}
+				if err != nil {
+					req.ApprovalReason = err.Error()
+				} else if agentRes.Reason != "" {
+					req.ApprovalReason = agentRes.Reason
+				} else {
+					req.ApprovalReason = string(agentRes.Decision)
+				}
 			}
 		}
 	}
@@ -101,6 +121,17 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	return m.applyHumanDecision(decision, req, command)
+}
+
+func notifyApprovalObserver(req Request, decision approval.Decision, reason string, err error) {
+	if req.ApprovalObserver == nil {
+		return
+	}
+	req.ApprovalObserver(ApprovalObservation{
+		Decision: string(decision),
+		Reason:   reason,
+		Err:      err,
+	})
 }
 
 func (m *Manager) askHuman(ctx context.Context, req Request) (Decision, error) {

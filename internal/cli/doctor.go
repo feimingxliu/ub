@@ -146,9 +146,15 @@ func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) 
 	case "anthropic":
 		if strings.TrimSpace(cfg.APIKey) == "" {
 			result.Status = "NO_API_KEY"
-		} else {
-			result.Status = "configured"
+			return result
 		}
+		baseURL := strings.TrimSpace(cfg.BaseURL)
+		if baseURL == "" {
+			baseURL = "https://api.anthropic.com/v1"
+		} else {
+			baseURL = strings.TrimRight(baseURL, "/")
+		}
+		fillAnthropicModels(ctx, &result, baseURL, cfg)
 	default:
 		result.Status = "unknown_provider_type"
 	}
@@ -164,6 +170,36 @@ func fillOpenAIModels(ctx context.Context, result *providerCheck, baseURL string
 	}
 	if cfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := doDoctorJSON(req, &body, cfg.Timeout); err != nil {
+		result.Status = "error"
+		result.Message = err.Error()
+		return
+	}
+	result.Status = "reachable"
+	for _, item := range body.Data {
+		if item.ID != "" {
+			result.Models = append(result.Models, item.ID)
+		}
+	}
+	sort.Strings(result.Models)
+}
+
+func fillAnthropicModels(ctx context.Context, result *providerCheck, baseURL string, cfg config.ProviderConfig) {
+	req, err := newDoctorRequest(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", cfg)
+	if err != nil {
+		result.Status = "error"
+		result.Message = err.Error()
+		return
+	}
+	req.Header.Set("x-api-key", cfg.APIKey)
+	if req.Header.Get("anthropic-version") == "" {
+		req.Header.Set("anthropic-version", "2023-06-01")
 	}
 	var body struct {
 		Data []struct {

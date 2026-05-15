@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/feimingxliu/ub/internal/agent"
+	"github.com/feimingxliu/ub/internal/approval"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
+	logx "github.com/feimingxliu/ub/internal/log"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -17,13 +21,29 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) error {
+func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
+	logger, cleanupLog, logPath, err := logx.SetupTUIFromEnv(cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := cleanupLog(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close tui log: %w", closeErr)
+		}
+	}()
+	logger.Info("tui start", "log_file", logPath)
+	defer logger.Info("tui stop")
+
 	permBridge := tui.NewPermissionBridge()
 	runner, err := newTUIAgentRunner(cmd, cfg, permBridge)
 	if err != nil {
 		return err
 	}
-	defer runner.Close()
+	defer func() {
+		if closeErr := runner.Close(); closeErr != nil {
+			logger.Error("close tui runner", "err", closeErr)
+		}
+	}()
 
 	if strings.TrimSpace(resume) != "" {
 		sessionID, err := resolveResumeSessionID(cmd, resume)
@@ -39,29 +59,42 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) error {
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
-	return tui.Run(cmd.Context(), tui.Options{
-		Input:         cmd.InOrStdin(),
-		Output:        cmd.OutOrStdout(),
-		Runner:        runner,
-		Permissions:   permBridge.Requests(),
-		Model:         runner.model,
-		Models:        runner.Models(),
-		Messages:      runner.Messages(),
-		Turn:          runner.Turn(),
-		ExecutionMode: string(runner.mode),
-		Cwd:           cwd,
+	err = tui.Run(cmd.Context(), tui.Options{
+		Input:          cmd.InOrStdin(),
+		Output:         cmd.OutOrStdout(),
+		Runner:         runner,
+		Permissions:    permBridge.Requests(),
+		Model:          runner.model,
+		Models:         runner.Models(),
+		ApprovalModel:  runner.ApprovalModel(),
+		ApprovalModels: runner.ApprovalModels(),
+		Messages:       runner.Messages(),
+		Turn:           runner.Turn(),
+		ExecutionMode:  string(runner.mode),
+		Cwd:            cwd,
+		EventTimeout:   runner.eventTimeout,
 	})
+	if err != nil {
+		logger.Error("tui failed", "err", err)
+	}
+	return err
 }
 
 type tuiAgentRunner struct {
-	cmd         *cobra.Command
-	provider    provider.Provider
-	model       string
-	models      []string
-	mode        execution.Mode
-	permission  *permission.Manager
-	state       *chatSessionState
-	closedStore bool
+	cmd                  *cobra.Command
+	provider             provider.Provider
+	model                string
+	models               []string
+	approvalProviderName string
+	approvalProviderCfg  config.ProviderConfig
+	approvalModel        string
+	approvalModels       []string
+	mode                 execution.Mode
+	modeMu               sync.RWMutex
+	eventTimeout         time.Duration
+	permission           *permission.Manager
+	state                *chatSessionState
+	closedStore          bool
 }
 
 func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker) (*tuiAgentRunner, error) {
@@ -73,6 +106,10 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if !ok {
 		return nil, fmt.Errorf("provider %q not configured; check `ub config show`", providerName)
 	}
+	model, err = selectProviderModel(cmd.Context(), providerName, providerCfg, model)
+	if err != nil {
+		return nil, err
+	}
 	p, err := provider.New(providerName, providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider %q: %w", providerName, err)
@@ -82,18 +119,34 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	perm, err := permission.NewManager(permission.Options{Asker: asker})
+	approvalSetup, err := newApprovalAgentSetup(cmd.Context(), cfg, providerName, model)
+	if err != nil {
+		return nil, err
+	}
+	perm, err := permission.NewManager(permission.Options{Asker: asker, ApprovalAgent: approvalSetup.Agent})
 	if err != nil {
 		return nil, err
 	}
 	return &tuiAgentRunner{
-		cmd:        cmd,
-		provider:   p,
-		model:      model,
-		models:     models,
-		mode:       mode,
-		permission: perm,
+		cmd:                  cmd,
+		provider:             p,
+		model:                model,
+		models:               models,
+		approvalProviderName: approvalSetup.ProviderName,
+		approvalProviderCfg:  approvalSetup.ProviderConfig,
+		approvalModel:        approvalSetup.Model,
+		approvalModels:       approvalSetup.Models,
+		mode:                 mode,
+		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
+		permission:           perm,
 	}, nil
+}
+
+func effectiveTUIEventTimeout(timeout time.Duration) time.Duration {
+	if timeout > 0 {
+		return timeout
+	}
+	return 120 * time.Second
 }
 
 func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- tui.Event) error {
@@ -114,7 +167,8 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		Permission: r.permission,
 		Rollout:    r.state.rollout,
 		Model:      r.model,
-		Mode:       r.mode,
+		Mode:       r.currentMode(),
+		ModeFunc:   r.currentMode,
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},
@@ -240,13 +294,42 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	return nil
 }
 
+func (r *tuiAgentRunner) SetApprovalModel(model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("approval model cannot be empty")
+	}
+	if r.approvalProviderName == "" {
+		return fmt.Errorf("approval provider is not configured")
+	}
+	if !modelInList(r.approvalModels, model) {
+		return fmt.Errorf("approval model %q is not available for the current approval provider", model)
+	}
+	agent, err := r.newApprovalAgent(model)
+	if err != nil {
+		return err
+	}
+	r.permission.SetApprovalAgent(agent)
+	r.approvalModel = model
+	r.approvalModels = appendModelCandidate(r.approvalModels, model)
+	return nil
+}
+
 func (r *tuiAgentRunner) SetMode(mode string) error {
 	parsed, err := execution.ParseMode(mode)
 	if err != nil {
 		return err
 	}
+	r.modeMu.Lock()
+	defer r.modeMu.Unlock()
 	r.mode = parsed
 	return nil
+}
+
+func (r *tuiAgentRunner) currentMode() execution.Mode {
+	r.modeMu.RLock()
+	defer r.modeMu.RUnlock()
+	return r.mode
 }
 
 func (r *tuiAgentRunner) Models() []string {
@@ -254,6 +337,28 @@ func (r *tuiAgentRunner) Models() []string {
 		return nil
 	}
 	return append([]string(nil), r.models...)
+}
+
+func (r *tuiAgentRunner) ApprovalModel() string {
+	if r == nil {
+		return ""
+	}
+	return r.approvalModel
+}
+
+func (r *tuiAgentRunner) ApprovalModels() []string {
+	if r == nil {
+		return nil
+	}
+	return append([]string(nil), r.approvalModels...)
+}
+
+func (r *tuiAgentRunner) newApprovalAgent(model string) (approval.Agent, error) {
+	p, err := provider.New(r.approvalProviderName, r.approvalProviderCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create approval provider %q: %w", r.approvalProviderName, err)
+	}
+	return approval.NewProviderAgent(p, model)
 }
 
 func providerModels(ctx context.Context, providerName string, providerCfg config.ProviderConfig, current string) []string {
@@ -350,6 +455,15 @@ func convertAgentEvent(event agent.Event) tui.Event {
 		return tui.Event{Type: tui.EventToolCallStart, ToolName: event.ToolName}
 	case agent.EventToolCallEnd:
 		return tui.Event{Type: tui.EventToolCallEnd, ToolName: event.ToolName, Content: event.Content, IsError: event.IsError}
+	case agent.EventPermission:
+		return tui.Event{
+			Type:     tui.EventPermission,
+			ToolName: event.ToolName,
+			Decision: event.Decision,
+			Source:   event.Source,
+			Reason:   event.Reason,
+			Allowed:  event.Allowed,
+		}
 	case agent.EventDone:
 		return tui.Event{Type: tui.EventDone, Text: event.Text}
 	case agent.EventError:

@@ -7,14 +7,19 @@ type statusBar struct {
 	executionMode string
 	cwd           string
 	turn          int
-	running       bool
+	state         string
 	width         int
 }
 
+const (
+	statusIdle       = "idle"
+	statusThinking   = "thinking"
+	statusStreaming  = "streaming"
+	statusTool       = "tool"
+	statusFinalizing = "finalizing"
+)
+
 func (s statusBar) view(width int) string {
-	state := "idle"
-	if s.running {
-		state = "running"
-	}
+	state := defaultString(s.state, statusIdle)
 	return truncateText(fmt.Sprintf("model: %s | mode: %s | turn: %d | state: %s | cwd: %s", s.model, s.executionMode, s.turn, state, s.cwd), width)
 }

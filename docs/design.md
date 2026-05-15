@@ -275,6 +275,8 @@ type Event struct {
 
 **存储**：SQLite 表 `events(id, session_id, turn, time, type, payload BLOB)`，按 `(session_id, turn, time)` 建索引。写入策略：单条 `INSERT` 即 commit；DB 启用 `PRAGMA journal_mode=WAL` + `PRAGMA synchronous=NORMAL`。
 
+**清理**：V1 只做会话级手动清理。`sessions rm` / `sessions clear` 删除 `sessions` 记录时依赖 `ON DELETE CASCADE` 清理对应 `events`；没有自动 TTL、大小上限或后台 vacuum。
+
 **耐久性目标**（与 requirements F-SESS-4 对齐）：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 的事件；操作系统断电可能丢最后若干条尚未刷盘的事件。**不**为此牺牲性能逐条 fsync——agent 一轮会写数十条事件，每条 fsync 在 SSD 上也要几毫秒，TUI 流畅度会肉眼可见地下降。
 
 **用途**：
@@ -320,14 +322,15 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 
 ```yaml
 default_provider: anthropic
-default_model: claude-sonnet-4-7
-small_model: openai/gpt-4o-mini   # 用于 summary、生成标题
+default_model: claude-sonnet-4-7   # 可省略；provider 可列模型时自动选第一个
+small_model: openai/gpt-4o-mini   # 用于 summary、生成标题、approval fallback
 execution_mode: work               # work / plan / auto
 
 approval_agent:
   provider: openai
-  model: gpt-4o-mini
-  # 仅 auto 模式使用；失败或拒绝时回退到用户审批
+  model: gpt-4o-mini               # 可省略；优先 small_model，再按 provider 模型列表 fallback
+  # 仅 auto 模式使用；未配置时默认复用当前 provider + small_model/default_model；
+  # 失败或拒绝时记录日志并回退到用户审批
 
 providers:
   # 所有 provider 都支持 base_url / headers / timeout 覆盖
@@ -453,7 +456,7 @@ UI 流程：
 1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式拒绝所有 `write` 风险工具
 2. 若工具实现 PreviewableTool，先调 `Preview()`
 3. 对 `exec` 风险工具先查 global rules → 再查 session rules（match 则直接 Allow；黑名单除外）
-4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，返回 `deny`/`unsure`/error 时再向 TUI 发请求
+4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，并用 `slog` 记录 `allow`/`deny`/`unsure` 或错误原因；返回 `deny`/`unsure`/error 时再向 TUI 发请求
 5. TUI 弹 modal，以候选列表展示 5 个选项（与 F-PERM-3 对齐），每个选项都说明作用范围；上/下方向键移动，Enter 确认，`1`~`5` 仅作为快捷键：
    - Allow once：只允许本次请求，不保存规则
    - Deny：拒绝本次请求，不保存规则
@@ -462,6 +465,8 @@ UI 流程：
    - Always allow this tool (global)：写入 `~/.config/ub/permissions.yaml`，后续 session 生效
 6. 决策写入 rollout（`PermissionDecision` 事件，含 `source=rule|approval_agent|human`）；选 3/4 更新内存 rules；选 5 同时追加到磁盘 yaml
 7. dispatcher 拿到决策继续
+
+**approval 模型切换规划**：`/approval-model [model]` 只影响 auto 模式的命令审批模型，不改变主对话模型。无参数时展示 approval provider 的候选模型；显式指定时必须通过候选列表校验；切换成功后重建 `permission.Manager` 内的 approval agent，并仅影响后续 tool approval。
 
 **黑名单**：硬编码的强制再确认正则（`rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）。即使任意 always-rule match 也再弹一次。
 
@@ -494,7 +499,7 @@ UI 流程：
 | JSON Schema | `invopop/jsonschema` | tool schema 生成 |
 | SQLite | `modernc.org/sqlite` | 纯 Go |
 | Diff | `aymanbagabas/go-udiff` | Crush 同款 |
-| Log | `slog` 标准库 | |
+| Log | `slog` 标准库 | CLI 默认 stderr；TUI 默认 `$XDG_STATE_HOME/ub/ub.log` 或 `~/.local/state/ub/ub.log` |
 | Config | `goccy/go-yaml` + `env` 替换 | |
 | 进程管理 | `os/exec` + 自家 PG 控制 | |
 | LSP | `gopls.dev/protocol` 或自家精简实现 | 仅用 diagnostics/references |

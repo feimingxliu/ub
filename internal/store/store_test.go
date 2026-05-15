@@ -170,6 +170,48 @@ func TestListSessionsFiltersSortsAndLimits(t *testing.T) {
 	}
 }
 
+func TestDeleteWorkspaceSessionsCascadesEvents(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
+	defer st.Close()
+
+	base := time.UnixMilli(1_700_000_000_000).UTC()
+	for _, sess := range []Session{
+		{ID: "a1", Workspace: "/repo/a", Title: "a1", CreatedAt: base, UpdatedAt: base},
+		{ID: "a2", Workspace: "/repo/a", Title: "a2", CreatedAt: base, UpdatedAt: base},
+		{ID: "b1", Workspace: "/repo/b", Title: "b1", CreatedAt: base, UpdatedAt: base},
+	} {
+		if err := st.CreateSession(ctx, sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
+		}
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO events
+			(id, session_id, turn, time, type, payload)
+			VALUES (?, ?, 1, ?, 'user_message', ?)`,
+			"event-"+sess.ID, sess.ID, base.UnixMilli(), []byte(`{"text":"hi"}`)); err != nil {
+			t.Fatalf("insert event for %s: %v", sess.ID, err)
+		}
+	}
+
+	deleted, err := st.DeleteWorkspaceSessions(ctx, "/repo/a")
+	if err != nil {
+		t.Fatalf("DeleteWorkspaceSessions: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+
+	var remainingEvents int
+	if err := st.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events").Scan(&remainingEvents); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if remainingEvents != 1 {
+		t.Fatalf("remaining events = %d, want 1", remainingEvents)
+	}
+	if _, err := st.GetSession(ctx, "b1"); err != nil {
+		t.Fatalf("other workspace session should remain: %v", err)
+	}
+}
+
 func openTestStore(t *testing.T, path string) *Store {
 	t.Helper()
 	st, err := Open(path)

@@ -118,7 +118,7 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MessageFromEvent: %v", err)
 	}
-	if !ok || msg.Role != message.RoleUser || len(msg.Content) != 1 {
+	if !ok || msg.Role != message.RoleTool || len(msg.Content) != 1 {
 		t.Fatalf("message = %#v, ok=%v", msg, ok)
 	}
 	block := msg.Content[0]

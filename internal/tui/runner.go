@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +18,14 @@ type ControlRunner interface {
 	SetModel(model string) error
 	SetMode(mode string) error
 	Models() []string
+}
+
+// ApprovalControlRunner optionally lets slash commands update the approval
+// model used by auto mode.
+type ApprovalControlRunner interface {
+	SetApprovalModel(model string) error
+	ApprovalModel() string
+	ApprovalModels() []string
 }
 
 // InitialMessage is a persisted message rendered when a TUI session is loaded.
@@ -56,6 +65,7 @@ const (
 	EventDeltaText     EventType = "delta_text"
 	EventToolCallStart EventType = "tool_call_start"
 	EventToolCallEnd   EventType = "tool_call_end"
+	EventPermission    EventType = "permission"
 	EventDone          EventType = "done"
 	EventError         EventType = "error"
 )
@@ -66,6 +76,10 @@ type Event struct {
 	Text     string
 	ToolName string
 	Content  string
+	Decision string
+	Source   string
+	Reason   string
+	Allowed  bool
 	IsError  bool
 	Err      error
 }
@@ -73,12 +87,32 @@ type Event struct {
 type streamEventMsg struct {
 	event Event
 	ok    bool
+	runID int
 }
 
-func waitForEvent(events <-chan Event) tea.Cmd {
+func waitForEvent(events <-chan Event, runID int) tea.Cmd {
+	return waitForEventWithTimeout(events, runID, 0)
+}
+
+func waitForEventWithTimeout(events <-chan Event, runID int, timeout time.Duration) tea.Cmd {
 	return func() tea.Msg {
-		event, ok := <-events
-		return streamEventMsg{event: event, ok: ok}
+		if timeout <= 0 {
+			event, ok := <-events
+			return streamEventMsg{event: event, ok: ok, runID: runID}
+		}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		select {
+		case event, ok := <-events:
+			return streamEventMsg{event: event, ok: ok, runID: runID}
+		case <-timer.C:
+			err := fmt.Errorf("agent turn timed out after %s without progress", timeout)
+			return streamEventMsg{
+				event: Event{Type: EventError, Content: err.Error(), IsError: true, Err: err},
+				ok:    true,
+				runID: runID,
+			}
+		}
 	}
 }
 

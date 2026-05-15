@@ -3,9 +3,11 @@ package approval
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/provider/fake"
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
@@ -32,5 +34,90 @@ func TestAgentInterfaceAndJSON(t *testing.T) {
 	}
 	if req.Tool != "bash" || req.Command != "git status" {
 		t.Fatalf("request roundtrip = %#v", req)
+	}
+}
+
+func TestProviderAgentReviewCommandAllowsJSONResponse(t *testing.T) {
+	provider := fake.New(fake.Script{
+		fake.TextDelta(`{"decision":"allow","reason":"read-only inspection"}`),
+		fake.Done(),
+	})
+	agent, err := NewProviderAgent(provider, "fake/reviewer")
+	if err != nil {
+		t.Fatalf("NewProviderAgent: %v", err)
+	}
+	res, err := agent.ReviewCommand(context.Background(), Request{
+		Tool:    "bash",
+		Risk:    tool.RiskExec,
+		Mode:    execution.ModeAuto,
+		Command: "git status",
+	})
+	if err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	if res.Decision != DecisionAllow || res.Reason != "read-only inspection" {
+		t.Fatalf("result = %#v, want allow with reason", res)
+	}
+}
+
+func TestProviderAgentReviewCommandParsesFencedResponse(t *testing.T) {
+	provider := fake.New(fake.Script{
+		fake.TextDelta("```json\n{\"decision\":\"unsure\",\"reason\":\"needs context\"}\n```"),
+		fake.Done(),
+	})
+	agent, err := NewProviderAgent(provider, "fake/reviewer")
+	if err != nil {
+		t.Fatalf("NewProviderAgent: %v", err)
+	}
+	res, err := agent.ReviewCommand(context.Background(), Request{
+		Tool:    "bash",
+		Risk:    tool.RiskExec,
+		Mode:    execution.ModeAuto,
+		Command: "make deploy",
+	})
+	if err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	if res.Decision != DecisionUnsure || res.Reason != "needs context" {
+		t.Fatalf("result = %#v, want unsure with reason", res)
+	}
+}
+
+func TestProviderAgentRejectsInvalidDecision(t *testing.T) {
+	provider := fake.New(fake.Script{
+		fake.TextDelta(`{"decision":"maybe","reason":"bad"}`),
+		fake.Done(),
+	})
+	agent, err := NewProviderAgent(provider, "fake/reviewer")
+	if err != nil {
+		t.Fatalf("NewProviderAgent: %v", err)
+	}
+	_, err = agent.ReviewCommand(context.Background(), Request{
+		Tool:    "bash",
+		Risk:    tool.RiskExec,
+		Mode:    execution.ModeAuto,
+		Command: "git status",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid decision") {
+		t.Fatalf("error = %v, want invalid decision", err)
+	}
+}
+
+func TestProviderAgentRejectsToolCall(t *testing.T) {
+	provider := fake.New(fake.Script{
+		fake.ToolCall("bash", map[string]string{"command": "git status"}),
+	})
+	agent, err := NewProviderAgent(provider, "fake/reviewer")
+	if err != nil {
+		t.Fatalf("NewProviderAgent: %v", err)
+	}
+	_, err = agent.ReviewCommand(context.Background(), Request{
+		Tool:    "bash",
+		Risk:    tool.RiskExec,
+		Mode:    execution.ModeAuto,
+		Command: "git status",
+	})
+	if err == nil || !strings.Contains(err.Error(), "attempted tool call") {
+		t.Fatalf("error = %v, want tool call rejection", err)
 	}
 }

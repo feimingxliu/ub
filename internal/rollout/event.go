@@ -142,7 +142,7 @@ func MessageFromEvent(event Event) (message.Message, bool, error) {
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
 			return message.Message{}, false, fmt.Errorf("decode rollout tool_result event %s: %w", event.ID, err)
 		}
-		return message.New(message.RoleUser, message.ToolResultBlock(payload.ToolUseID, payload.Output, payload.IsError)), true, nil
+		return message.New(message.RoleTool, message.ToolResultBlock(payload.ToolUseID, payload.Output, payload.IsError)), true, nil
 	default:
 		return message.Message{}, false, nil
 	}

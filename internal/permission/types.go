@@ -33,15 +33,16 @@ const (
 
 // Request is the permission manager input for one tool call.
 type Request struct {
-	Tool           string
-	Args           json.RawMessage
-	Risk           tool.Risk
-	Mode           execution.Mode
-	Preview        *tool.Preview
-	Command        string
-	Cwd            string
-	ContextSummary string
-	ApprovalReason string
+	Tool             string
+	Args             json.RawMessage
+	Risk             tool.Risk
+	Mode             execution.Mode
+	Preview          *tool.Preview
+	Command          string
+	Cwd              string
+	ContextSummary   string
+	ApprovalReason   string
+	ApprovalObserver func(ApprovalObservation)
 }
 
 // Result is the permission manager output.
@@ -50,6 +51,14 @@ type Result struct {
 	Allowed  bool
 	Source   Source
 	Reason   string
+}
+
+// ApprovalObservation reports an auto-mode approval agent result before any
+// fallback to human approval.
+type ApprovalObservation struct {
+	Decision string
+	Reason   string
+	Err      error
 }
 
 // Asker asks the human approval UI.

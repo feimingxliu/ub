@@ -30,6 +30,7 @@ type Options struct {
 	Rollout    rollout.Writer
 	Model      string
 	Mode       execution.Mode
+	ModeFunc   func() execution.Mode
 	MaxTurns   int
 	Events     EventSink
 }
@@ -42,6 +43,7 @@ type Agent struct {
 	rollout    rollout.Writer
 	model      string
 	mode       execution.Mode
+	modeFunc   func() execution.Mode
 	maxTurns   int
 	events     EventSink
 }
@@ -95,6 +97,7 @@ func New(opts Options) (*Agent, error) {
 		rollout:    opts.Rollout,
 		model:      strings.TrimSpace(opts.Model),
 		mode:       mode,
+		modeFunc:   opts.ModeFunc,
 		maxTurns:   maxTurns,
 		events:     opts.Events,
 	}, nil
@@ -240,15 +243,27 @@ func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 		preview = &pv
 	}
 	if a.permission != nil {
+		approvalObserved := false
 		result, err := a.permission.Ask(ctx, permission.Request{
-			Tool:    call.Name,
-			Args:    call.Input,
-			Risk:    t.Risk(),
-			Mode:    a.mode,
-			Preview: preview,
+			Tool:             call.Name,
+			Args:             call.Input,
+			Risk:             t.Risk(),
+			Mode:             a.currentMode(),
+			Preview:          preview,
+			ApprovalObserver: a.permissionObserver(call.Name, &approvalObserved),
 		})
 		if err != nil {
 			return tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
+		}
+		if (t.Risk() == tool.RiskExec || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
+			a.emit(Event{
+				Type:     EventPermission,
+				ToolName: call.Name,
+				Decision: string(result.Decision),
+				Source:   string(result.Source),
+				Reason:   result.Reason,
+				Allowed:  result.Allowed,
+			})
 		}
 		if !result.Allowed {
 			reason := strings.TrimSpace(result.Reason)
@@ -263,6 +278,39 @@ func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 		return tool.Result{Content: err.Error(), IsError: true}
 	}
 	return result
+}
+
+func (a *Agent) permissionObserver(toolName string, observed *bool) func(permission.ApprovalObservation) {
+	return func(obs permission.ApprovalObservation) {
+		if observed != nil {
+			*observed = true
+		}
+		decision := strings.TrimSpace(obs.Decision)
+		reason := strings.TrimSpace(obs.Reason)
+		if obs.Err != nil {
+			decision = "error"
+			reason = obs.Err.Error()
+		}
+		a.emit(Event{
+			Type:     EventPermission,
+			ToolName: toolName,
+			Decision: decision,
+			Source:   string(permission.SourceApprovalAgent),
+			Reason:   reason,
+			Allowed:  obs.Err == nil && decision == "allow",
+		})
+	}
+}
+
+func (a *Agent) currentMode() execution.Mode {
+	if a.modeFunc == nil {
+		return a.mode
+	}
+	mode, err := execution.ParseMode(string(a.modeFunc()))
+	if err != nil {
+		return a.mode
+	}
+	return mode
 }
 
 func (a *Agent) append(ctx context.Context, sessionID string, build func() (rollout.Event, error)) error {

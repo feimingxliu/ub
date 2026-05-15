@@ -322,6 +322,10 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if !ok {
 		return fmt.Errorf("provider %q not configured; check `ub config show`", providerName)
 	}
+	model, err = selectProviderModel(cmd.Context(), providerName, providerCfg, model)
+	if err != nil {
+		return err
+	}
 	p, err := provider.New(providerName, providerCfg)
 	if err != nil {
 		return fmt.Errorf("create provider %q: %w", providerName, err)
@@ -334,7 +338,11 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
-	perm, err := permission.NewManager(permission.Options{Asker: autoAllowAsker{}})
+	approvalAgent, err := newApprovalAgentFromConfig(cmd.Context(), cfg, providerName, model)
+	if err != nil {
+		return err
+	}
+	perm, err := permission.NewManager(permission.Options{Asker: autoAllowAsker{}, ApprovalAgent: approvalAgent})
 	if err != nil {
 		return err
 	}
@@ -416,6 +424,10 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 	providerCfg, ok := cfg.Providers[providerName]
 	if !ok {
 		return fmt.Errorf("provider %q not configured; check `ub config show`", providerName)
+	}
+	model, err = selectProviderModel(cmd.Context(), providerName, providerCfg, model)
+	if err != nil {
+		return err
 	}
 	p, err := provider.New(providerName, providerCfg)
 	if err != nil {
@@ -796,16 +808,11 @@ func runSessionsClear(cmd *cobra.Command, yes bool) error {
 	if err != nil {
 		return fmt.Errorf("get cwd: %w", err)
 	}
-	sessions, err := st.ListSessions(cmd.Context(), cwd, 100)
+	deleted, err := st.DeleteWorkspaceSessions(cmd.Context(), cwd)
 	if err != nil {
 		return err
 	}
-	for _, sess := range sessions {
-		if err := st.DeleteSession(cmd.Context(), sess.ID); err != nil {
-			return err
-		}
-	}
-	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "deleted %d sessions\n", len(sessions)); err != nil {
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "deleted %d sessions\n", deleted); err != nil {
 		return err
 	}
 	return nil

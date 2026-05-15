@@ -7,6 +7,7 @@ const (
 	EventDeltaText     EventType = "delta_text"
 	EventToolCallStart EventType = "tool_call_start"
 	EventToolCallEnd   EventType = "tool_call_end"
+	EventPermission    EventType = "permission"
 	EventDone          EventType = "done"
 	EventError         EventType = "error"
 )
@@ -18,6 +19,10 @@ type Event struct {
 	ToolUseID string
 	ToolName  string
 	Content   string
+	Decision  string
+	Source    string
+	Reason    string
+	Allowed   bool
 	IsError   bool
 	Err       error
 }

@@ -108,3 +108,48 @@ func TestSetupFromEnvLogFileWritesJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultFilePathUsesXDGStateHome(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+
+	got, err := DefaultFilePath()
+	if err != nil {
+		t.Fatalf("DefaultFilePath: %v", err)
+	}
+	want := filepath.Join(state, "ub", "ub.log")
+	if got != want {
+		t.Fatalf("DefaultFilePath() = %q, want %q", got, want)
+	}
+}
+
+func TestSetupTUIFromEnvWritesDefaultLogFile(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("UB_LOG_LEVEL", "info")
+	t.Setenv("UB_LOG_FILE", "")
+
+	stderr := &bytes.Buffer{}
+	logger, cleanup, path, err := SetupTUIFromEnv(stderr)
+	if err != nil {
+		t.Fatalf("SetupTUIFromEnv: %v", err)
+	}
+	logger.Info("tui file only", "key", "value")
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr got structured logs: %s", stderr.String())
+	}
+	wantPath := filepath.Join(state, "ub", "ub.log")
+	if path != wantPath {
+		t.Fatalf("path = %q, want %q", path, wantPath)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log file: %v", err)
+	}
+	if !bytes.Contains(raw, []byte("tui file only")) {
+		t.Fatalf("log file missing message:\n%s", string(raw))
+	}
+}

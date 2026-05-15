@@ -93,7 +93,7 @@
 - F-MODE-1：每个 session MUST 有一个 `execution_mode`，可选值为 `work`、`plan`、`auto`；启动参数、配置和 TUI slash 命令均可切换（优先级：CLI flag > profile > config 默认值）
 - F-MODE-2：`work` 模式允许 agent 在当前 workspace 内读写文件；执行 `exec` 风险工具（`bash` / `job_run` / `job_kill`）时，若未被 session/global allow-rule 明确放行，MUST 弹出用户审批
 - F-MODE-3：`plan` 模式为只读规划模式；agent MUST NOT 调用 `write` 风险工具实际修改文件，写类 tool call MUST 被拦截并以 tool error 回灌给模型；执行命令仍按 `work` 模式要求用户审批
-- F-MODE-4：`auto` 模式允许一个额外的 approval agent 自动审批命令；若 approval agent 拒绝、无法判断或调用失败，系统 MUST 回退到用户显式审批，不能静默执行
+- F-MODE-4：`auto` 模式允许一个额外的 approval agent 自动审批命令；若 approval agent 拒绝、无法判断或调用失败，系统 MUST 回退到用户显式审批，不能静默执行；approval agent 的决策与原因 MUST 写入结构化日志
 - F-MODE-5：危险命令黑名单优先级高于所有模式；即使 allow-rule 或 approval agent 放行，仍 MUST 要求用户显式确认
 - F-MODE-6：当前执行模式 MUST 显示在 TUI 状态栏，并写入 rollout（含模式切换事件），便于会话恢复和调试
 
@@ -123,7 +123,8 @@
 ### 4.8 配置
 
 - F-CFG-1：默认配置位于 `~/.config/ub/config.yaml`；工作目录可有 `.ub/config.yaml` 覆盖
-- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title）、`execution_mode`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
+- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
+- F-CFG-5：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
 - F-CFG-3：配置 schema 用 JSON Schema 描述，IDE 可补全
 - F-CFG-4：（V2）配置变更可通过 `/config reload` 热加载，无需重启。V1 改配置必须重启进程
 
@@ -144,10 +145,10 @@
 ### 4.11 TUI
 
 - F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / context % / cwd）
-- F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式；聊天区支持 PageUp/PageDown 和鼠标滚轮滚动历史输出
+- F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式（包括运行中和审批弹窗中）；Esc 中断当前操作而不是退出；聊天区支持 PageUp/PageDown 和鼠标滚轮滚动历史输出
 - F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
-- F-TUI-5：命令：`/model`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session
+- F-TUI-5：命令：`/model`、`/approval-model`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session
 - F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
 
 ### 4.12 开发模式与环境诊断
@@ -172,7 +173,7 @@
 | 性能 | 启动 < 200ms；流式渲染无明显卡顿；后台 LLM 调用不阻塞 TUI |
 | 跨平台 | Linux、macOS 主力支持；Windows 至少可跑（不保证完美） |
 | 可测试 | 核心 agent loop / tool / provider 单元测试覆盖；vcr 录制集成测试 |
-| 可观测 | `slog` 结构化日志；`UB_LOG_LEVEL`、`UB_LOG_FILE` 环境变量；可选 pprof |
+| 可观测 | `slog` 结构化日志；`UB_LOG_LEVEL`、`UB_LOG_FILE` 环境变量；TUI 默认写入用户 state 目录日志文件；可选 pprof |
 | 安全 | `exec` 工具默认需审批；`plan` 模式拒绝写工具；API key 不出现在日志和 rollout 中 |
 | 兼容性 | 单二进制分发；无运行时依赖（除 LSP/MCP server 用户自备） |
 

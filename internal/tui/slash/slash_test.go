@@ -22,6 +22,16 @@ func TestParseExit(t *testing.T) {
 	}
 }
 
+func TestParseApprovalModel(t *testing.T) {
+	cmd, err := Parse("/approval-model fake/reviewer")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "approval-model" || len(cmd.Args) != 1 || cmd.Args[0] != "fake/reviewer" {
+		t.Fatalf("command = %#v, want approval-model fake/reviewer", cmd)
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	for _, input := range []string{"hello", "/", "/unknown"} {
 		t.Run(input, func(t *testing.T) {

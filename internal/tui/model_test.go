@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -85,6 +86,33 @@ func TestModelStreamsRunnerEvents(t *testing.T) {
 	}
 	if !strings.Contains(model.View(), "state: idle") {
 		t.Fatalf("view missing idle state:\n%s", model.View())
+	}
+}
+
+func TestModelDoneFinalizesUntilRunnerCloses(t *testing.T) {
+	events := make(chan Event)
+	model := NewModel(Options{Model: "fake/test"})
+	model.running = true
+	model.status.state = statusStreaming
+	model.events = events
+
+	updated, cmd := model.Update(streamEventMsg{event: Event{Type: EventDone}, ok: true})
+	if cmd == nil {
+		t.Fatalf("done returned nil command")
+	}
+	model = assertModel(t, updated)
+	if !model.Running() || !strings.Contains(model.View(), "state: finalizing") {
+		t.Fatalf("done should keep run finalizing: running=%v view=\n%s", model.Running(), model.View())
+	}
+
+	close(events)
+	updated, cmd = model.Update(cmd())
+	if cmd != nil {
+		t.Fatalf("closed stream returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if model.Running() || !strings.Contains(model.View(), "state: idle") {
+		t.Fatalf("closed stream should return idle: running=%v view=\n%s", model.Running(), model.View())
 	}
 }
 
@@ -321,6 +349,60 @@ func TestSlashModelWithoutArgsListsCandidates(t *testing.T) {
 	}
 }
 
+func TestSlashApprovalModelUpdatesRunner(t *testing.T) {
+	runner := &scriptedRunner{
+		approvalModel:  "fake/review-old",
+		approvalModels: []string{"fake/review-old", "fake/review-new"},
+	}
+	model := NewModel(Options{
+		Runner:         runner,
+		ApprovalModel:  runner.approvalModel,
+		ApprovalModels: runner.approvalModels,
+	})
+	model = sendText(t, model, "/approval-model fake/review-new")
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.approvalModel != "fake/review-new" {
+		t.Fatalf("approval model = %q, want fake/review-new", runner.approvalModel)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "approval model set to fake/review-new" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashApprovalModelWithoutArgsListsCandidates(t *testing.T) {
+	runner := &scriptedRunner{
+		approvalModel:  "fake/review-old",
+		approvalModels: []string{"fake/review-old", "fake/review-new"},
+	}
+	model := NewModel(Options{
+		Runner:         runner,
+		ApprovalModel:  runner.approvalModel,
+		ApprovalModels: runner.approvalModels,
+	})
+	model = sendText(t, model, "/approval-model")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash approval-model returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := model.View()
+	for _, want := range []string{"select model", "> fake/review-old", "  fake/review-new"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("approval model picker missing %q:\n%s", want, view)
+		}
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.approvalModel != "fake/review-new" {
+		t.Fatalf("approval model = %q, want fake/review-new", runner.approvalModel)
+	}
+}
+
 func TestSlashModelRejectsUnsupportedCandidate(t *testing.T) {
 	runner := &scriptedRunner{models: []string{"fake/old", "fake/new"}}
 	model := NewModel(Options{Runner: runner, Model: "fake/old", Models: runner.models})
@@ -334,6 +416,32 @@ func TestSlashModelRejectsUnsupportedCandidate(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, "model: fake/old") || !strings.Contains(view, "not available") {
 		t.Fatalf("invalid model handling failed:\n%s", view)
+	}
+}
+
+func TestPermissionEventRendersInConversation(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 4
+	model.events = make(chan Event)
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 4,
+		ok:    true,
+		event: Event{
+			Type:     EventPermission,
+			ToolName: "bash",
+			Source:   "approval_agent",
+			Decision: "allow",
+			Allowed:  true,
+			Reason:   "read-only command",
+		},
+	})
+	if cmd == nil {
+		t.Fatal("permission event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "approval_agent") || !strings.Contains(got[0], "read-only command") {
+		t.Fatalf("messages = %#v, want approval result", got)
 	}
 }
 
@@ -360,6 +468,55 @@ func TestShiftTabCyclesMode(t *testing.T) {
 	}
 	if got := model.MessageTexts(); len(got) != 0 {
 		t.Fatalf("messages = %#v, want no mode switch log", got)
+	}
+}
+
+func TestShiftTabCyclesModeWhileRunning(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
+	model.running = true
+	model.status.state = statusTool
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if cmd != nil {
+		t.Fatalf("shift+tab returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") || !model.Running() {
+		t.Fatalf("running mode switch failed: runner=%q running=%v view=\n%s", runner.mode, model.Running(), model.View())
+	}
+}
+
+func TestShiftTabCyclesModeDuringPermission(t *testing.T) {
+	response := make(chan permission.Decision, 1)
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
+	req := PermissionRequest{
+		Request: permission.Request{
+			Tool: "bash",
+			Risk: tool.RiskExec,
+			Mode: execution.ModeWork,
+		},
+		Response: response,
+	}
+	updated, _ := model.Update(permissionRequestMsg{request: req, ok: true})
+	model = assertModel(t, updated)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if cmd != nil {
+		t.Fatalf("shift+tab returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
+		t.Fatalf("permission mode switch failed: runner=%q view=\n%s", runner.mode, model.View())
+	}
+	if !strings.Contains(model.View(), "mode: plan") {
+		t.Fatalf("permission modal did not reflect mode switch:\n%s", model.View())
+	}
+	select {
+	case decision := <-response:
+		t.Fatalf("mode switch resolved permission unexpectedly: %q", decision)
+	default:
 	}
 }
 
@@ -482,6 +639,31 @@ func TestMessageAreaScrollsWithinWindow(t *testing.T) {
 	}
 }
 
+func TestMessageAreaScrollsDuringPermission(t *testing.T) {
+	var messages []InitialMessage
+	for _, text := range []string{"message-01", "message-02", "message-03", "message-04", "message-05", "message-06"} {
+		messages = append(messages, InitialMessage{Role: assistantRole, Text: text})
+	}
+	model := NewModel(Options{Messages: messages})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(permissionRequestMsg{request: PermissionRequest{
+		Request:  permission.Request{Tool: "bash", Risk: tool.RiskExec, Mode: execution.ModeWork},
+		Response: make(chan permission.Decision, 1),
+	}, ok: true})
+	model = assertModel(t, updated)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	if cmd != nil {
+		t.Fatalf("pgup returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := model.View()
+	if !strings.Contains(view, "message-03") {
+		t.Fatalf("pgup did not scroll while permission modal is open:\n%s", view)
+	}
+}
+
 func TestSlashSuggestionsRenderUsage(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "/m")
@@ -595,12 +777,111 @@ func TestModelCtrlCQuits(t *testing.T) {
 	}
 }
 
+func TestEscInterruptsRunningInsteadOfQuitting(t *testing.T) {
+	cancelled := false
+	model := NewModel(Options{})
+	model.running = true
+	model.status.state = statusStreaming
+	model.runID = 3
+	model.cancel = func() { cancelled = true }
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("esc returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !cancelled || model.Running() || !strings.Contains(model.View(), "state: idle") {
+		t.Fatalf("esc did not interrupt: cancelled=%v running=%v view=\n%s", cancelled, model.Running(), model.View())
+	}
+	if model.runID != 4 {
+		t.Fatalf("runID = %d, want 4", model.runID)
+	}
+}
+
+func TestEscDuringPermissionDeniesAndInterrupts(t *testing.T) {
+	response := make(chan permission.Decision, 1)
+	requests := make(chan PermissionRequest)
+	model := NewModel(Options{Permissions: requests})
+	model.running = true
+	model.cancel = func() {}
+	updated, _ := model.Update(permissionRequestMsg{request: PermissionRequest{
+		Request:  permission.Request{Tool: "bash", Risk: tool.RiskExec, Mode: execution.ModeWork},
+		Response: response,
+	}, ok: true})
+	model = assertModel(t, updated)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatalf("esc returned nil command")
+	}
+	model = assertModel(t, updated)
+	if model.pending != nil || model.Running() {
+		t.Fatalf("permission interrupt left pending/running: pending=%v running=%v", model.pending != nil, model.Running())
+	}
+	select {
+	case got := <-response:
+		if got != permission.DecisionDeny {
+			t.Fatalf("decision = %q, want deny", got)
+		}
+	default:
+		t.Fatal("no permission decision returned")
+	}
+}
+
+func TestStaleStreamEventsIgnoredAfterInterrupt(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 5
+	model.interruptCurrent()
+
+	updated, cmd := model.Update(streamEventMsg{
+		event: Event{Type: EventDeltaText, Text: "stale"},
+		ok:    true,
+		runID: 5,
+	})
+	if cmd != nil {
+		t.Fatalf("stale stream event returned command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("stale event changed messages: %#v", got)
+	}
+}
+
+func TestStreamWaitTimeoutCancelsRun(t *testing.T) {
+	cancelled := false
+	events := make(chan Event)
+	model := NewModel(Options{EventTimeout: time.Millisecond})
+	model.running = true
+	model.runID = 7
+	model.events = events
+	model.cancel = func() { cancelled = true }
+
+	msg := waitForEventWithTimeout(events, model.runID, model.timeout)()
+	updated, cmd := model.Update(msg)
+	if cmd != nil {
+		t.Fatalf("timeout event returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !cancelled || model.Running() {
+		t.Fatalf("timeout did not cancel run: cancelled=%v running=%v", cancelled, model.Running())
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "timed out") {
+		t.Fatalf("messages = %#v, want timeout error", got)
+	}
+	if !strings.Contains(model.View(), "state: idle") {
+		t.Fatalf("view missing idle state:\n%s", model.View())
+	}
+}
+
 type scriptedRunner struct {
 	events           []Event
 	calls            int
 	prompts          []string
 	model            string
 	models           []string
+	approvalModel    string
+	approvalModels   []string
 	mode             string
 	sessions         []SessionInfo
 	sessionStates    map[string]SessionState
@@ -628,6 +909,19 @@ func (r *scriptedRunner) SetMode(mode string) error {
 
 func (r *scriptedRunner) Models() []string {
 	return append([]string(nil), r.models...)
+}
+
+func (r *scriptedRunner) SetApprovalModel(model string) error {
+	r.approvalModel = model
+	return nil
+}
+
+func (r *scriptedRunner) ApprovalModel() string {
+	return r.approvalModel
+}
+
+func (r *scriptedRunner) ApprovalModels() []string {
+	return append([]string(nil), r.approvalModels...)
 }
 
 func (r *scriptedRunner) ListSessions(context.Context) ([]SessionInfo, error) {

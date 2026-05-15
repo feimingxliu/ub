@@ -12,6 +12,7 @@ import (
 
 	"github.com/invopop/jsonschema"
 
+	"github.com/feimingxliu/ub/internal/approval"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
@@ -201,6 +202,194 @@ func TestAgentPreviewPassesThroughPermissionAndExecuteAfterAllow(t *testing.T) {
 	}
 }
 
+func TestAgentEmitsPermissionDecisionEvent(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(&previewExecTool{}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+	asker := &recordingAsker{decision: permission.DecisionAllow}
+	perm := newPermissionManager(t, asker)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("preview_exec", map[string]any{"value": "x"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var got *Event
+	for i := range events {
+		if events[i].Type == EventPermission {
+			got = &events[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatalf("events = %#v, want permission event", events)
+	}
+	if got.ToolName != "preview_exec" || got.Source != string(permission.SourceHuman) || got.Decision != string(permission.DecisionAllow) || !got.Allowed {
+		t.Fatalf("permission event = %#v", *got)
+	}
+}
+
+func TestAgentEmitsApprovalAgentDecisionOnce(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(&previewExecTool{}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+	asker := &recordingAsker{decision: permission.DecisionDeny}
+	perm, err := permission.NewManager(permission.Options{
+		Asker:           asker,
+		ApprovalAgent:   approvalAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe read-only command"}},
+		GlobalRulesPath: filepath.Join(t.TempDir(), "permissions.yaml"),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("preview_exec", map[string]any{"value": "x"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeAuto,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var permissionEvents []Event
+	for _, event := range events {
+		if event.Type == EventPermission {
+			permissionEvents = append(permissionEvents, event)
+		}
+	}
+	if len(permissionEvents) != 1 {
+		t.Fatalf("permission events = %#v, want exactly one", permissionEvents)
+	}
+	got := permissionEvents[0]
+	if got.Source != string(permission.SourceApprovalAgent) || got.Decision != string(approval.DecisionAllow) || !got.Allowed || got.Reason != "safe read-only command" {
+		t.Fatalf("approval permission event = %#v", got)
+	}
+	if asker.calls != 0 {
+		t.Fatalf("asker calls = %d, want 0", asker.calls)
+	}
+}
+
+func TestAgentEmitsApprovalAgentFallbackAndHumanDecision(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(&previewExecTool{}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+	asker := &recordingAsker{decision: permission.DecisionAllow}
+	perm, err := permission.NewManager(permission.Options{
+		Asker:           asker,
+		ApprovalAgent:   approvalAgent{result: approval.Result{Decision: approval.DecisionUnsure, Reason: "needs user context"}},
+		GlobalRulesPath: filepath.Join(t.TempDir(), "permissions.yaml"),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("preview_exec", map[string]any{"value": "x"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeAuto,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var permissionEvents []Event
+	for _, event := range events {
+		if event.Type == EventPermission {
+			permissionEvents = append(permissionEvents, event)
+		}
+	}
+	if len(permissionEvents) != 2 {
+		t.Fatalf("permission events = %#v, want approval + human", permissionEvents)
+	}
+	if permissionEvents[0].Source != string(permission.SourceApprovalAgent) || permissionEvents[0].Decision != string(approval.DecisionUnsure) || permissionEvents[0].Allowed {
+		t.Fatalf("approval event = %#v", permissionEvents[0])
+	}
+	if permissionEvents[1].Source != string(permission.SourceHuman) || permissionEvents[1].Decision != string(permission.DecisionAllow) || !permissionEvents[1].Allowed {
+		t.Fatalf("human event = %#v", permissionEvents[1])
+	}
+}
+
+func TestAgentReadsModeAtToolPermissionTime(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(&previewExecTool{}); err != nil {
+		t.Fatalf("register tool: %v", err)
+	}
+	asker := &recordingAsker{decision: permission.DecisionAllow}
+	perm := newPermissionManager(t, asker)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("preview_exec", map[string]any{"value": "x"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	mode := execution.ModePlan
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		ModeFunc: func() execution.Mode {
+			return mode
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	}
+	if got := asker.requests[0].Mode; got != execution.ModePlan {
+		t.Fatalf("permission mode = %q, want plan", got)
+	}
+}
+
 func TestAgentWritesRolloutEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
@@ -307,6 +496,15 @@ func (a *recordingAsker) Ask(_ context.Context, req permission.Request) (permiss
 	a.calls++
 	a.requests = append(a.requests, req)
 	return a.decision, nil
+}
+
+type approvalAgent struct {
+	result approval.Result
+	err    error
+}
+
+func (a approvalAgent) ReviewCommand(context.Context, approval.Request) (approval.Result, error) {
+	return a.result, a.err
 }
 
 type previewExecTool struct {

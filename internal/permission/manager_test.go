@@ -1,10 +1,13 @@
 package permission
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/feimingxliu/ub/internal/approval"
@@ -174,6 +177,33 @@ func TestManagerAgentApproveAllowSkipsHuman(t *testing.T) {
 	}
 	if asker.calls != 0 {
 		t.Fatalf("asker calls = %d, want 0", asker.calls)
+	}
+}
+
+func TestManagerLogsApprovalAgentDecision(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	asker := &mockAsker{decision: DecisionDeny}
+	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe command"}}
+	manager, err := NewManager(Options{
+		Asker:           asker,
+		ApprovalAgent:   agent,
+		GlobalRulesPath: testRulesPath(t),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "git status")); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	got := logs.String()
+	for _, want := range []string{"approval agent decision", "decision=allow", "reason=\"safe command\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("logs missing %q:\n%s", want, got)
+		}
 	}
 }
 

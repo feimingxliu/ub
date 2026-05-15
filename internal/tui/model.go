@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,17 +19,20 @@ import (
 
 // Options configures the initial TUI shell.
 type Options struct {
-	Input         io.Reader
-	Output        io.Writer
-	Context       context.Context
-	Runner        Runner
-	Permissions   <-chan PermissionRequest
-	Model         string
-	Models        []string
-	Messages      []InitialMessage
-	Turn          int
-	ExecutionMode string
-	Cwd           string
+	Input          io.Reader
+	Output         io.Writer
+	Context        context.Context
+	Runner         Runner
+	Permissions    <-chan PermissionRequest
+	Model          string
+	Models         []string
+	ApprovalModel  string
+	ApprovalModels []string
+	Messages       []InitialMessage
+	Turn           int
+	ExecutionMode  string
+	Cwd            string
+	EventTimeout   time.Duration
 }
 
 // Run starts the terminal UI and blocks until it exits.
@@ -50,27 +54,32 @@ func Run(ctx context.Context, opts Options) error {
 
 // Model is the root Bubble Tea model for the chat shell.
 type Model struct {
-	input    textinput.Model
-	messages messageList
-	status   statusBar
-	runner   Runner
-	permReqs <-chan PermissionRequest
-	pending  *PermissionRequest
-	modal    permissiondialog.Model
-	ctx      context.Context
-	cancel   context.CancelFunc
-	running  bool
-	events   <-chan Event
-	models   []string
-	picker   *modelPicker
-	sessions *sessionPicker
-	slashIdx int
-	history  []string
-	histIdx  int
-	draft    string
-	scroll   int
-	width    int
-	height   int
+	input          textinput.Model
+	messages       messageList
+	status         statusBar
+	runner         Runner
+	permReqs       <-chan PermissionRequest
+	pending        *PermissionRequest
+	modal          permissiondialog.Model
+	ctx            context.Context
+	cancel         context.CancelFunc
+	running        bool
+	events         <-chan Event
+	models         []string
+	approvalModel  string
+	approvalModels []string
+	picker         *modelPicker
+	pickerTarget   string
+	sessions       *sessionPicker
+	slashIdx       int
+	history        []string
+	histIdx        int
+	draft          string
+	scroll         int
+	runID          int
+	timeout        time.Duration
+	width          int
+	height         int
 }
 
 // NewModel creates the root TUI model.
@@ -91,21 +100,35 @@ func NewModel(opts Options) Model {
 			models = runner.Models()
 		}
 	}
+	approvalModel := strings.TrimSpace(opts.ApprovalModel)
+	approvalModels := opts.ApprovalModels
+	if approvalRunner, ok := opts.Runner.(ApprovalControlRunner); ok {
+		if approvalModel == "" {
+			approvalModel = approvalRunner.ApprovalModel()
+		}
+		if len(approvalModels) == 0 {
+			approvalModels = approvalRunner.ApprovalModels()
+		}
+	}
 
 	m := Model{
-		input:    input,
-		messages: newMessageList(),
-		runner:   opts.Runner,
-		permReqs: opts.Permissions,
-		ctx:      ctx,
-		models:   normalizeModels(models, modelName),
-		history:  promptHistoryFromMessages(opts.Messages),
-		histIdx:  -1,
+		input:          input,
+		messages:       newMessageList(),
+		runner:         opts.Runner,
+		permReqs:       opts.Permissions,
+		ctx:            ctx,
+		models:         normalizeModels(models, modelName),
+		approvalModel:  approvalModel,
+		approvalModels: normalizeModels(approvalModels, approvalModel),
+		history:        promptHistoryFromMessages(opts.Messages),
+		histIdx:        -1,
+		timeout:        opts.EventTimeout,
 		status: statusBar{
 			model:         modelName,
 			executionMode: defaultString(opts.ExecutionMode, string(execution.ModeWork)),
 			cwd:           defaultString(opts.Cwd, "."),
 			turn:          opts.Turn,
+			state:         statusIdle,
 		},
 	}
 	m.messages.load(opts.Messages)
@@ -120,8 +143,34 @@ func (m Model) Init() tea.Cmd {
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.pending != nil {
+		if mouse, ok := msg.(tea.MouseMsg); ok {
+			switch mouse.Type {
+			case tea.MouseWheelUp:
+				m.scrollMessages(3)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollMessages(-3)
+				return m, nil
+			}
+		}
 		if key, ok := msg.(tea.KeyMsg); ok {
 			switch key.String() {
+			case "ctrl+c":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			case "esc":
+				m.interruptCurrent()
+				return m, waitForPermission(m.permReqs)
+			case "shift+tab":
+				return m.cycleMode()
+			case "pgup":
+				m.scrollMessages(m.pageScrollLines())
+				return m, nil
+			case "pgdown":
+				m.scrollMessages(-m.pageScrollLines())
+				return m, nil
 			case "d":
 				m.modal = m.modal.ToggleDiff()
 				return m, nil
@@ -158,7 +207,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				selected := m.picker.selected()
+				target := m.pickerTarget
 				m.picker = nil
+				m.pickerTarget = ""
+				if target == "approval" {
+					if err := m.setApprovalModel(selected); err != nil {
+						m.messages.append(systemRole, err.Error())
+						return m, nil
+					}
+					m.messages.append(systemRole, "approval model set to "+selected)
+					return m, nil
+				}
 				if err := m.setModel(selected); err != nil {
 					m.messages.append(systemRole, err.Error())
 					return m, nil
@@ -214,11 +273,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc":
+		case "ctrl+c":
 			if m.cancel != nil {
 				m.cancel()
 			}
 			return m, tea.Quit
+		case "esc":
+			if m.running {
+				m.interruptCurrent()
+			}
+			return m, nil
 		case "pgup":
 			m.scrollMessages(m.pageScrollLines())
 			return m, nil
@@ -240,9 +304,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "shift+tab":
-			if m.running {
-				return m, nil
-			}
 			return m.cycleMode()
 		case "tab":
 			if m.running {
@@ -276,20 +337,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.messages.startAssistant()
 				m.running = true
-				m.status.running = true
+				m.status.state = statusThinking
 				m.status.turn++
 				ctx, cancel := context.WithCancel(m.ctx)
 				m.cancel = cancel
 				events := make(chan Event, 64)
 				m.events = events
-				return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEvent(events))
+				m.runID++
+				runID := m.runID
+				return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
 			}
 			return m, nil
 		}
 	case streamEventMsg:
+		if msg.runID != m.runID {
+			return m, nil
+		}
 		if !msg.ok {
 			m.running = false
-			m.status.running = false
+			m.status.state = statusIdle
 			m.cancel = nil
 			return m, nil
 		}
@@ -390,7 +456,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "config":
-		m.messages.append(systemRole, fmt.Sprintf("model=%s mode=%s cwd=%s", m.status.model, m.status.executionMode, m.status.cwd))
+		approvalModel := defaultString(m.approvalModel, "none")
+		m.messages.append(systemRole, fmt.Sprintf("model=%s approval_model=%s mode=%s cwd=%s", m.status.model, approvalModel, m.status.executionMode, m.status.cwd))
 		return m, nil
 	case "sessions":
 		if len(cmd.Args) > 0 {
@@ -407,6 +474,7 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 	case "model":
 		if len(cmd.Args) == 0 {
 			m.picker = newModelPicker(m.models, m.status.model)
+			m.pickerTarget = "model"
 			return m, nil
 		}
 		model := strings.Join(cmd.Args, " ")
@@ -415,6 +483,23 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.messages.append(systemRole, "model set to "+model)
+		return m, nil
+	case "approval-model":
+		if len(cmd.Args) == 0 {
+			if len(m.approvalModels) == 0 {
+				m.messages.append(systemRole, "no approval models available")
+				return m, nil
+			}
+			m.picker = newModelPicker(m.approvalModels, m.approvalModel)
+			m.pickerTarget = "approval"
+			return m, nil
+		}
+		model := strings.Join(cmd.Args, " ")
+		if err := m.setApprovalModel(model); err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		m.messages.append(systemRole, "approval model set to "+model)
 		return m, nil
 	case "mode":
 		if len(cmd.Args) == 0 {
@@ -443,27 +528,53 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	switch event.Type {
 	case EventDeltaText:
 		m.messages.appendAssistantDelta(event.Text)
-		return waitForEvent(m.events)
+		m.status.state = statusStreaming
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallStart:
 		m.messages.appendToolStatus(event.ToolName, "started")
-		return waitForEvent(m.events)
+		m.status.state = statusTool
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallEnd:
 		m.messages.appendToolStatus(event.ToolName, "finished")
-		return waitForEvent(m.events)
+		m.status.state = statusThinking
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
+	case EventPermission:
+		m.messages.append(systemRole, permissionEventText(event))
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventDone:
-		m.running = false
-		m.status.running = false
+		m.status.state = statusFinalizing
 		m.cancel = nil
-		return nil
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventError:
+		if m.cancel != nil {
+			m.cancel()
+		}
 		m.messages.append(errorRole, defaultString(event.Content, "agent failed"))
 		m.running = false
-		m.status.running = false
+		m.status.state = statusIdle
 		m.cancel = nil
 		return nil
 	default:
-		return waitForEvent(m.events)
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	}
+}
+
+func permissionEventText(event Event) string {
+	source := defaultString(event.Source, "permission")
+	decision := defaultString(event.Decision, "unknown")
+	state := "denied"
+	if event.Allowed {
+		state = "allowed"
+	}
+	toolName := defaultString(event.ToolName, "tool")
+	text := fmt.Sprintf("permission %s %s %s", source, state, toolName)
+	if decision != "" && !((decision == "allow" && event.Allowed) || (decision == "deny" && !event.Allowed)) {
+		text += " (" + decision + ")"
+	}
+	if reason := strings.TrimSpace(event.Reason); reason != "" {
+		text += ": " + reason
+	}
+	return text
 }
 
 func defaultString(value, fallback string) string {
@@ -482,7 +593,30 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 		}
 	}
 	m.status.executionMode = next
+	if m.pending != nil {
+		mode := execution.Mode(next)
+		m.pending.Request.Mode = mode
+		m.modal.Request.Mode = mode
+	}
 	return m, nil
+}
+
+func (m *Model) interruptCurrent() {
+	if m.pending != nil && m.pending.Response != nil {
+		select {
+		case m.pending.Response <- permission.DecisionDeny:
+		default:
+		}
+	}
+	m.pending = nil
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.cancel = nil
+	m.running = false
+	m.status.state = statusIdle
+	m.events = nil
+	m.runID++
 }
 
 func nextExecutionMode(current string) string {
@@ -514,6 +648,24 @@ func (m *Model) setModel(model string) error {
 	}
 	m.status.model = model
 	m.models = normalizeModels(m.models, model)
+	return nil
+}
+
+func (m *Model) setApprovalModel(model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("approval model cannot be empty")
+	}
+	if !modelAllowed(m.approvalModels, model) {
+		return fmt.Errorf("approval model %q is not available for the current approval provider; use /approval-model to list candidates", model)
+	}
+	if runner, ok := m.runner.(ApprovalControlRunner); ok {
+		if err := runner.SetApprovalModel(model); err != nil {
+			return err
+		}
+	}
+	m.approvalModel = model
+	m.approvalModels = normalizeModels(m.approvalModels, model)
 	return nil
 }
 
@@ -587,6 +739,9 @@ func (m Model) slashSuggestions(width int) string {
 	if strings.HasPrefix(raw, "/model ") {
 		return m.modelSuggestions(strings.TrimSpace(strings.TrimPrefix(raw, "/model")), width)
 	}
+	if strings.HasPrefix(raw, "/approval-model ") {
+		return modelSuggestionsFrom(m.approvalModels, strings.TrimSpace(strings.TrimPrefix(raw, "/approval-model")), width, "approval model")
+	}
 	matches := slash.Match(value)
 	if len(matches) == 0 {
 		return truncateText("  no matching slash command", width)
@@ -621,9 +776,13 @@ func (m Model) sessionPickerView(width int) string {
 }
 
 func (m Model) modelSuggestions(prefix string, width int) string {
+	return modelSuggestionsFrom(m.models, prefix, width, "model")
+}
+
+func modelSuggestionsFrom(models []string, prefix string, width int, label string) string {
 	var b strings.Builder
 	matches := 0
-	for _, model := range m.models {
+	for _, model := range models {
 		if prefix != "" && !strings.Contains(strings.ToLower(model), strings.ToLower(prefix)) {
 			continue
 		}
@@ -637,7 +796,7 @@ func (m Model) modelSuggestions(prefix string, width int) string {
 		}
 	}
 	if matches == 0 {
-		return truncateText("  no matching model", width)
+		return truncateText("  no matching "+label, width)
 	}
 	return b.String()
 }
