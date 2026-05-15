@@ -4,6 +4,8 @@ go 1.25.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.43.0
+	github.com/aymanbagabas/go-udiff v0.4.1
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/invopop/jsonschema v0.13.0
 	github.com/openai/openai-go v1.12.0
