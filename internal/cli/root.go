@@ -228,6 +228,25 @@ func newSessionsCmd() *cobra.Command {
 			return runSessionsLS(cmd)
 		},
 	})
+	cmd.AddCommand(&cobra.Command{
+		Use:     "rm <session-id> [session-id...]",
+		Aliases: []string{"delete", "del"},
+		Short:   "Delete sessions by id",
+		Args:    cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSessionsRM(cmd, args)
+		},
+	})
+	var yes bool
+	clearCmd := &cobra.Command{
+		Use:   "clear",
+		Short: "Delete all sessions in the current workspace",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSessionsClear(cmd, yes)
+		},
+	}
+	clearCmd.Flags().BoolVar(&yes, "yes", false, "confirm deletion")
+	cmd.AddCommand(clearCmd)
 	return cmd
 }
 
@@ -608,6 +627,68 @@ func runSessionsLS(cmd *cobra.Command) error {
 		}
 	}
 	return w.Flush()
+}
+
+func runSessionsRM(cmd *cobra.Command, ids []string) error {
+	path, err := store.DefaultPath()
+	if err != nil {
+		return fmt.Errorf("locate session store: %w", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return fmt.Errorf("session id is empty")
+		}
+		if err := st.DeleteSession(cmd.Context(), id); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("session %q not found", id)
+			}
+			return err
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "deleted %s\n", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runSessionsClear(cmd *cobra.Command, yes bool) error {
+	if !yes {
+		return fmt.Errorf("refusing to delete sessions without --yes")
+	}
+	path, err := store.DefaultPath()
+	if err != nil {
+		return fmt.Errorf("locate session store: %w", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("get cwd: %w", err)
+	}
+	sessions, err := st.ListSessions(cmd.Context(), cwd, 100)
+	if err != nil {
+		return err
+	}
+	for _, sess := range sessions {
+		if err := st.DeleteSession(cmd.Context(), sess.ID); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "deleted %d sessions\n", len(sessions)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func notImplemented(iteration string) error {

@@ -107,3 +107,33 @@ Define how `ub` stores session metadata, applies SQLite schema migrations, and l
 - **GIVEN** 默认数据库中只存在其他工作目录的 session
 - **WHEN** 用户运行 `ub sessions ls`
 - **THEN** stdout 输出 `no sessions`
+
+### Requirement: `ub sessions rm` 子命令
+
+`ub sessions rm <session-id> [session-id...]` SHALL 打开默认 store，并按 ID 删除指定 session。命令 MUST 支持 `delete` 和 `del` 作为 alias。删除不存在的 session MUST 返回可读错误。
+
+#### Scenario: 删除指定 session
+
+- **GIVEN** 默认数据库中存在 ID 为 `sess_1` 的 session
+- **WHEN** 用户运行 `ub sessions rm sess_1`
+- **THEN** 该 session MUST 被删除，stdout MUST 包含 `deleted sess_1`
+
+#### Scenario: 删除不存在 session
+
+- **WHEN** 用户运行 `ub sessions delete missing`
+- **THEN** 命令 MUST 返回说明 session 不存在的可读错误
+
+### Requirement: `ub sessions clear` 子命令
+
+`ub sessions clear --yes` SHALL 删除当前工作目录下的所有 session。命令 MUST NOT 删除其他 workspace 的 session。未提供 `--yes` 时，命令 MUST 拒绝执行并返回可读错误。
+
+#### Scenario: 需要显式确认
+
+- **WHEN** 用户运行 `ub sessions clear`
+- **THEN** 命令 MUST 返回要求传入 `--yes` 的可读错误，且不删除任何 session
+
+#### Scenario: 清理当前 workspace
+
+- **GIVEN** 默认数据库中存在当前工作目录的两个 session，另一个工作目录的一个 session
+- **WHEN** 用户运行 `ub sessions clear --yes`
+- **THEN** 当前工作目录的两个 session MUST 被删除，另一个工作目录的 session MUST 保留，stdout MUST 包含 `deleted 2 sessions`
