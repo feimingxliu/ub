@@ -156,17 +156,13 @@ providers:
 
 func TestChatWithAnthropicProvider(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{
-			"id":"msg_1",
-			"type":"message",
-			"role":"assistant",
-			"model":"claude-test",
-			"content":[{"type":"text","text":"anthropic-ok"}],
-			"stop_reason":"end_turn",
-			"stop_sequence":null,
-			"usage":{"input_tokens":1,"output_tokens":1}
-		}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, w, "message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`)
+		writeSSE(t, w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+		writeSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"anthropic-ok"}}`)
+		writeSSE(t, w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
+		writeSSE(t, w, "message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":1}}`)
+		writeSSE(t, w, "message_stop", `{"type":"message_stop"}`)
 	}))
 	defer server.Close()
 
@@ -337,5 +333,15 @@ func assertEventTypes(t *testing.T, events []rollout.Event, want []rollout.Type)
 		if events[i].Type != typ {
 			t.Fatalf("event[%d].Type = %q, want %q; events=%#v", i, events[i].Type, typ, events)
 		}
+	}
+}
+
+func writeSSE(t *testing.T, w io.Writer, event, data string) {
+	t.Helper()
+	if _, err := io.WriteString(w, "event: "+event+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "data: "+data+"\n\n"); err != nil {
+		t.Fatal(err)
 	}
 }

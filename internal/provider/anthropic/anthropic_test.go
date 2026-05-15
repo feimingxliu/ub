@@ -37,8 +37,8 @@ func TestFactoryCreatesAnthropicProvider(t *testing.T) {
 	if p.Name() != "anthropic" {
 		t.Fatalf("Name() = %q", p.Name())
 	}
-	if p.Caps().SupportsStreaming {
-		t.Fatalf("I-08 provider should be non-streaming")
+	if !p.Caps().SupportsStreaming {
+		t.Fatalf("I-10 provider should support streaming")
 	}
 }
 
@@ -52,17 +52,14 @@ func TestChatSendsRequestAndReturnsEvents(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{
-			"id":"msg_1",
-			"type":"message",
-			"role":"assistant",
-			"model":"claude-test",
-			"content":[{"type":"text","text":"pong"}],
-			"stop_reason":"end_turn",
-			"stop_sequence":null,
-			"usage":{"input_tokens":2,"output_tokens":1}
-		}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeAnthropicSSE(t, w, "message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":0}}}`)
+		writeAnthropicSSE(t, w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"po"}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ng"}}`)
+		writeAnthropicSSE(t, w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
+		writeAnthropicSSE(t, w, "message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":2,"output_tokens":1}}`)
+		writeAnthropicSSE(t, w, "message_stop", `{"type":"message_stop"}`)
 	}))
 	defer server.Close()
 
@@ -97,6 +94,9 @@ func TestChatSendsRequestAndReturnsEvents(t *testing.T) {
 	if requestBody["model"] != "claude-test" {
 		t.Fatalf("model = %#v", requestBody["model"])
 	}
+	if requestBody["stream"] != true {
+		t.Fatalf("stream = %#v, want true", requestBody["stream"])
+	}
 	messages := requestBody["messages"].([]any)
 	first := messages[0].(map[string]any)
 	if first["role"] != "user" {
@@ -112,7 +112,11 @@ func TestChatSendsRequestAndReturnsEvents(t *testing.T) {
 	}
 
 	event, err := stream.Next(context.Background())
-	if err != nil || event.Type != provider.EventTextDelta || event.Text != "pong" {
+	if err != nil || event.Type != provider.EventTextDelta || event.Text != "po" {
+		t.Fatalf("text event = %#v, err=%v", event, err)
+	}
+	event, err = stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventTextDelta || event.Text != "ng" {
 		t.Fatalf("text event = %#v, err=%v", event, err)
 	}
 	event, err = stream.Next(context.Background())
@@ -126,6 +130,21 @@ func TestChatSendsRequestAndReturnsEvents(t *testing.T) {
 	_, err = stream.Next(context.Background())
 	if !errors.Is(err, io.EOF) {
 		t.Fatalf("after done err = %v, want EOF", err)
+	}
+}
+
+func TestStreamCancelAndClose(t *testing.T) {
+	stream := newSDKStream(nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := stream.Next(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Next canceled err = %v", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
 	}
 }
 
@@ -164,5 +183,15 @@ func TestChatRequiresModelAndMessages(t *testing.T) {
 	}
 	if _, err := p.Chat(context.Background(), provider.Request{Model: "claude-test"}); err == nil || !strings.Contains(err.Error(), "at least one") {
 		t.Fatalf("missing message error = %v", err)
+	}
+}
+
+func writeAnthropicSSE(t *testing.T, w io.Writer, event, data string) {
+	t.Helper()
+	if _, err := io.WriteString(w, "event: "+event+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, "data: "+data+"\n\n"); err != nil {
+		t.Fatal(err)
 	}
 }

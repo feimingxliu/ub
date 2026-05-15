@@ -12,6 +12,7 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/ssestream"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -55,18 +56,17 @@ func (p *Provider) Name() string {
 	return p.name
 }
 
-// Caps returns Anthropic capabilities available in I-08.
+// Caps returns Anthropic capabilities available in I-10.
 func (p *Provider) Caps() provider.Caps {
 	return provider.Caps{
-		SupportsStreaming: false,
+		SupportsStreaming: true,
 		SupportsTools:     false,
 		MaxContextTokens:  200_000,
 		SupportsVision:    false,
 	}
 }
 
-// Chat performs one non-streaming Anthropic Messages call and wraps the result
-// in a provider stream.
+// Chat creates a streaming Anthropic Messages request.
 func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Stream, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, errors.New("anthropic model is required")
@@ -75,11 +75,7 @@ func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Str
 	if err != nil {
 		return nil, err
 	}
-	msg, err := p.client.Messages.New(ctx, params)
-	if err != nil {
-		return nil, err
-	}
-	return newStream(eventsFromMessage(msg)), nil
+	return newSDKStream(p.client.Messages.NewStreaming(ctx, params)), nil
 }
 
 func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
@@ -171,17 +167,17 @@ func effectiveTimeout(timeout time.Duration) time.Duration {
 	return 120 * time.Second
 }
 
-type stream struct {
+type staticStream struct {
 	events []provider.Event
 	next   int
 	closed bool
 }
 
-func newStream(events []provider.Event) *stream {
-	return &stream{events: cloneEvents(events)}
+func newStream(events []provider.Event) *staticStream {
+	return &staticStream{events: cloneEvents(events)}
 }
 
-func (s *stream) Next(ctx context.Context) (provider.Event, error) {
+func (s *staticStream) Next(ctx context.Context) (provider.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return provider.Event{}, err
 	}
@@ -193,9 +189,81 @@ func (s *stream) Next(ctx context.Context) (provider.Event, error) {
 	return event, nil
 }
 
-func (s *stream) Close() error {
+func (s *staticStream) Close() error {
 	s.closed = true
 	return nil
+}
+
+type sdkStream struct {
+	stream *ssestream.Stream[sdk.MessageStreamEventUnion]
+	queue  []provider.Event
+	usage  *provider.Usage
+	closed bool
+}
+
+func newSDKStream(stream *ssestream.Stream[sdk.MessageStreamEventUnion]) *sdkStream {
+	return &sdkStream{stream: stream}
+}
+
+func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
+	if err := ctx.Err(); err != nil {
+		_ = s.Close()
+		return provider.Event{}, err
+	}
+	if s.closed {
+		return provider.Event{}, io.EOF
+	}
+	if len(s.queue) > 0 {
+		event := s.queue[0]
+		s.queue = s.queue[1:]
+		return event, nil
+	}
+	for s.stream.Next() {
+		event := s.stream.Current()
+		switch event.Type {
+		case "content_block_start":
+			if event.ContentBlock.Type != "" && event.ContentBlock.Type != "text" {
+				return provider.Event{}, fmt.Errorf("anthropic streaming content block %q is not supported", event.ContentBlock.Type)
+			}
+		case "content_block_delta":
+			delta := event.AsContentBlockDelta().Delta
+			if delta.Type != "text_delta" {
+				return provider.Event{}, fmt.Errorf("anthropic streaming delta %q is not supported", delta.Type)
+			}
+			return provider.Event{Type: provider.EventTextDelta, Text: delta.Text}, nil
+		case "message_delta":
+			s.usage = &provider.Usage{
+				InputTokens:  int(event.Usage.InputTokens),
+				OutputTokens: int(event.Usage.OutputTokens),
+			}
+		case "message_stop":
+			if s.usage != nil {
+				s.queue = append(s.queue, provider.Event{Type: provider.EventUsage, Usage: s.usage})
+				s.usage = nil
+			}
+			s.queue = append(s.queue, provider.Event{Type: provider.EventDone})
+			return s.Next(ctx)
+		}
+		if err := ctx.Err(); err != nil {
+			_ = s.Close()
+			return provider.Event{}, err
+		}
+	}
+	if err := s.stream.Err(); err != nil {
+		return provider.Event{}, err
+	}
+	return provider.Event{}, io.EOF
+}
+
+func (s *sdkStream) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.stream == nil {
+		return nil
+	}
+	return s.stream.Close()
 }
 
 func cloneEvents(events []provider.Event) []provider.Event {

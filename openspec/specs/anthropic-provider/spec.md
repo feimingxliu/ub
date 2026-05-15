@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the Anthropic provider adapter for non-streaming Messages API calls, configuration handling, message conversion, and provider stream output.
+Define the Anthropic provider adapter for Messages API calls, configuration handling, message conversion, and provider stream output.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ Define the Anthropic provider adapter for non-streaming Messages API calls, conf
 
 ### Requirement: Anthropic 非流式 Chat
 
-Anthropic provider 的 `Chat` SHALL 使用非流式 Messages API 完成一次请求，并返回 provider stream。stream MUST 至少按顺序返回文本 delta、usage（如响应包含 token 用量）和 done 事件。
+Anthropic provider 的 `Chat` SHALL 使用 Anthropic Messages API 完成一次请求，并返回 provider stream。I-10 起默认 MUST 使用 streaming API；非流式响应转换 helper MAY 保留用于测试或未来 fallback。stream MUST 至少按顺序返回文本 delta、usage（如响应包含 token 用量）和 done 事件。
 
 #### Scenario: 文本响应转换
 
