@@ -66,7 +66,7 @@ ub/
 │   ├── mcp/                           # MCP client（stdio/http/sse）
 │   ├── lsp/                           # LSP client + 工具桥接
 │   ├── permission/                    # 风险判定、always-rules、UI 回调
-│   ├── approval/                      # agent-approve 模式下的命令审批 agent
+│   ├── approval/                      # auto 模式下的命令审批 agent
 │   ├── session/                       # session CRUD
 │   ├── rollout/                       # 事件类型、append writer、reader
 │   ├── store/                         # SQLite 封装（sqlc 或手写）
@@ -191,13 +191,13 @@ type Result struct {
 2. tool := registry.Get(name)
 3. mode gate:
      - plan + write risk: 拒绝，回灌 ToolResult{IsError, Content="plan mode is read-only"}
-     - default / agent-approve + write risk: 继续
+     - work / auto + write risk: 继续
 4. if pt, ok := tool.(PreviewableTool); ok:
        preview = pt.Preview(ctx, args)
 5. exec risk:
      - allow-rule match: 直接 Allow（黑名单除外）
-     - default / plan: permission.AskHuman(call, preview)
-     - agent-approve: permission.AskApprovalAgent(call)；拒绝 / 不确定 / 错误时回退 AskHuman
+     - work / plan: permission.AskHuman(call, preview)
+     - auto: permission.AskApprovalAgent(call)；拒绝 / 不确定 / 错误时回退 AskHuman
 6. if decision != Allow: 回灌 ToolResult{IsError, Content="denied"} 给模型
 7. else: result = tool.Execute(ctx, args)
 ```
@@ -322,12 +322,12 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 default_provider: anthropic
 default_model: claude-sonnet-4-7
 small_model: openai/gpt-4o-mini   # 用于 summary、生成标题
-execution_mode: default            # default / plan / agent-approve
+execution_mode: work               # work / plan / auto
 
 approval_agent:
   provider: openai
   model: gpt-4o-mini
-  # 仅 agent-approve 模式使用；失败或拒绝时回退到用户审批
+  # 仅 auto 模式使用；失败或拒绝时回退到用户审批
 
 providers:
   # 所有 provider 都支持 base_url / headers / timeout 覆盖
@@ -405,9 +405,9 @@ context:
 ```go
 type Mode string
 const (
-    ModeDefault      Mode = "default"
-    ModePlan         Mode = "plan"
-    ModeAgentApprove Mode = "agent-approve"
+    ModeWork Mode = "work"
+    ModePlan Mode = "plan"
+    ModeAuto Mode = "auto"
 )
 
 type ModePolicy struct {
@@ -417,9 +417,9 @@ type ModePolicy struct {
 ```
 
 **三种模式**：
-- `default`：允许 workspace 内文件读写；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
+- `work`：允许 workspace 内文件读写；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
 - `plan`：只读规划；`write` 风险工具在 dispatcher 层直接拒绝并把错误回灌给模型；`exec` 风险工具仍走用户审批，审批弹窗必须提示 Plan 模式下命令可能有副作用。
-- `agent-approve`：文件读写策略同 `default`；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
+- `auto`：文件读写策略同 `work`；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
 
 **approval agent** 是一个受限的二级 agent，只输出 `allow` / `deny` / `unsure` 与一句理由，不执行工具、不修改上下文、不写文件。它的输入只包含命令文本、cwd、风险等级、当前 mode、最近相关上下文摘要和已命中的规则信息；API key 等 secret 不传入。黑名单命令不进入 approval agent，直接走用户确认。
 
@@ -453,7 +453,7 @@ UI 流程：
 1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式拒绝所有 `write` 风险工具
 2. 若工具实现 PreviewableTool，先调 `Preview()`
 3. 对 `exec` 风险工具先查 global rules → 再查 session rules（match 则直接 Allow；黑名单除外）
-4. 不 match 时按 mode 选择审批路径：`default`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`agent-approve` 先调 approval agent，返回 `deny`/`unsure`/error 时再向 TUI 发请求
+4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，返回 `deny`/`unsure`/error 时再向 TUI 发请求
 5. TUI 弹 modal，以候选列表展示 5 个选项（与 F-PERM-3 对齐），每个选项都说明作用范围；上/下方向键移动，Enter 确认，`1`~`5` 仅作为快捷键：
    - Allow once：只允许本次请求，不保存规则
    - Deny：拒绝本次请求，不保存规则
@@ -550,7 +550,7 @@ profiles:
     default_provider: vllm-local
     default_model: Qwen2.5-Coder-7B-Instruct
     small_model:   Qwen2.5-Coder-7B-Instruct
-    execution_mode: agent-approve
+    execution_mode: auto
     permissions:
       auto_allow_safe: true
       auto_allow_write: true   # 开发期免审批

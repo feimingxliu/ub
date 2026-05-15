@@ -59,7 +59,7 @@ func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {
 		{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
 		{fake.TextDelta("main function found"), fake.Done()},
 	}}
-	a := newTestAgent(t, p, reg, perm, execution.ModeDefault)
+	a := newTestAgent(t, p, reg, perm, execution.ModeWork)
 
 	res, err := a.Run(context.Background(), Request{Prompt: "read main.go", Turn: 1})
 	if err != nil {
@@ -104,7 +104,7 @@ func TestAgentEmitsRuntimeEvents(t *testing.T) {
 		Tools:      reg,
 		Permission: perm,
 		Model:      "fake/model",
-		Mode:       execution.ModeDefault,
+		Mode:       execution.ModeWork,
 		Events: func(event Event) {
 			events = append(events, event)
 		},
@@ -185,7 +185,7 @@ func TestAgentPreviewPassesThroughPermissionAndExecuteAfterAllow(t *testing.T) {
 		{fake.ToolCall("preview_exec", map[string]any{"value": "x"}), fake.Done()},
 		{fake.TextDelta("done"), fake.Done()},
 	}}
-	a := newTestAgent(t, p, reg, perm, execution.ModeDefault)
+	a := newTestAgent(t, p, reg, perm, execution.ModeWork)
 
 	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -222,7 +222,7 @@ func TestAgentWritesRolloutEvents(t *testing.T) {
 		Permission: perm,
 		Rollout:    writer,
 		Model:      "fake/model",
-		Mode:       execution.ModeDefault,
+		Mode:       execution.ModeWork,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

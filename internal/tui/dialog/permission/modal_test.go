@@ -102,7 +102,7 @@ func TestModalNavigatesDiffFiles(t *testing.T) {
 	req := permission.Request{
 		Tool: "edit",
 		Risk: tool.RiskWrite,
-		Mode: execution.ModeDefault,
+		Mode: execution.ModeWork,
 		Preview: &tool.Preview{
 			Summary: "two files",
 			Files: []tool.FileDiff{

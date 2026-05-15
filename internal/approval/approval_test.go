@@ -20,7 +20,7 @@ func TestAgentInterfaceAndJSON(t *testing.T) {
 	raw, err := json.Marshal(Request{
 		Tool:    "bash",
 		Risk:    tool.RiskExec,
-		Mode:    execution.ModeAgentApprove,
+		Mode:    execution.ModeAuto,
 		Command: "git status",
 	})
 	if err != nil {

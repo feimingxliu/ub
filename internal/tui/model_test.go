@@ -137,7 +137,7 @@ func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 		Request: permission.Request{
 			Tool: "bash",
 			Risk: tool.RiskExec,
-			Mode: execution.ModeDefault,
+			Mode: execution.ModeWork,
 		},
 		Response: response,
 	}
@@ -179,7 +179,7 @@ func TestModelPermissionSelectionReturnsDecision(t *testing.T) {
 		Request: permission.Request{
 			Tool: "bash",
 			Risk: tool.RiskExec,
-			Mode: execution.ModeDefault,
+			Mode: execution.ModeWork,
 		},
 		Response: response,
 	}
@@ -287,6 +287,9 @@ func TestSlashModelAndModeUpdateRunner(t *testing.T) {
 	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
 		t.Fatalf("mode update failed: runner=%q view=\n%s", runner.mode, model.View())
 	}
+	if got, want := model.MessageTexts(), []string{"model set to fake/new"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
 }
 
 func TestSlashModelWithoutArgsListsCandidates(t *testing.T) {
@@ -336,7 +339,7 @@ func TestSlashModelRejectsUnsupportedCandidate(t *testing.T) {
 
 func TestShiftTabCyclesMode(t *testing.T) {
 	runner := &scriptedRunner{}
-	model := NewModel(Options{Runner: runner, ExecutionMode: "default"})
+	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
 
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	if cmd != nil {
@@ -346,17 +349,23 @@ func TestShiftTabCyclesMode(t *testing.T) {
 	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
 		t.Fatalf("first shift+tab failed: runner=%q view=\n%s", runner.mode, model.View())
 	}
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("messages = %#v, want no mode switch log", got)
+	}
 
 	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	model = assertModel(t, updated)
-	if runner.mode != "agent-approve" || !strings.Contains(model.View(), "mode: agent-approve") {
+	if runner.mode != "auto" || !strings.Contains(model.View(), "mode: auto") {
 		t.Fatalf("second shift+tab failed: runner=%q view=\n%s", runner.mode, model.View())
+	}
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("messages = %#v, want no mode switch log", got)
 	}
 }
 
 func TestTabCompletesSlashCommand(t *testing.T) {
 	runner := &scriptedRunner{}
-	model := NewModel(Options{Runner: runner, ExecutionMode: "default"})
+	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
 	model = sendText(t, model, "/m")
 
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
@@ -367,7 +376,7 @@ func TestTabCompletesSlashCommand(t *testing.T) {
 	if got := model.InputValue(); got != "/model " {
 		t.Fatalf("input = %q, want /model ", got)
 	}
-	if runner.mode != "" || !strings.Contains(model.View(), "mode: default") {
+	if runner.mode != "" || !strings.Contains(model.View(), "mode: work") {
 		t.Fatalf("tab unexpectedly changed mode: runner=%q view=\n%s", runner.mode, model.View())
 	}
 }
@@ -377,7 +386,7 @@ func TestArrowSelectsSlashSuggestion(t *testing.T) {
 	model = sendText(t, model, "/m")
 
 	view := model.View()
-	if !strings.Contains(view, "> /model [model]") || !strings.Contains(view, "  /mode <default|plan|agent-approve>") {
+	if !strings.Contains(view, "> /model [model]") || !strings.Contains(view, "  /mode <work|plan|auto>") {
 		t.Fatalf("initial slash selection missing:\n%s", view)
 	}
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -386,7 +395,7 @@ func TestArrowSelectsSlashSuggestion(t *testing.T) {
 	}
 	model = assertModel(t, updated)
 	view = model.View()
-	if !strings.Contains(view, "  /model [model]") || !strings.Contains(view, "> /mode <default|plan|agent-approve>") {
+	if !strings.Contains(view, "  /model [model]") || !strings.Contains(view, "> /mode <work|plan|auto>") {
 		t.Fatalf("down did not move slash selection:\n%s", view)
 	}
 

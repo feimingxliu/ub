@@ -37,7 +37,7 @@ func TestMatchReturnsUsage(t *testing.T) {
 	if len(matches) != 2 {
 		t.Fatalf("matches = %#v, want model and mode", matches)
 	}
-	if matches[0].Usage != "/model [model]" || matches[1].Usage != "/mode <default|plan|agent-approve>" {
+	if matches[0].Usage != "/model [model]" || matches[1].Usage != "/mode <work|plan|auto>" {
 		t.Fatalf("matches = %#v", matches)
 	}
 }

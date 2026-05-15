@@ -120,7 +120,7 @@ func newRootCmd() *cobra.Command {
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringVar(&opts.profile, "profile", "", "configuration profile to apply")
 	root.PersistentFlags().BoolVar(&opts.dev, "dev", false, "use the dev profile")
-	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: default, plan, or agent-approve")
+	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: work, plan, or auto")
 	root.Flags().StringVar(&opts.resume, "resume", "", "resume the latest TUI session, or the specified id with --resume=<id>")
 	root.Flags().Lookup("resume").NoOptDefVal = latestResume
 

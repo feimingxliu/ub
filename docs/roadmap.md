@@ -295,7 +295,7 @@
 - **In Scope**：
   - 配置新增 `profiles:` 节（design §12.2），加载时按 `--profile <name>` / `--dev` / `UB_PROFILE` 选择并叠加
   - 配置新增 `execution_mode` 与 `approval_agent` 字段；`profiles:` 可覆盖 execution mode
-  - CLI：`--profile`、`--dev`（= `--profile dev`）、`--mode default|plan|agent-approve` 全局标志位
+  - CLI：`--profile`、`--dev`（= `--profile dev`）、`--mode work|plan|auto` 全局标志位
   - `ub doctor` 子命令（design §12.3）：
     - 探测各 provider 的 `base_url` 可达性（GET `${base_url}/models` 或 Anthropic 轻量 ping）
     - 列出可用模型 + 标注哪些声明支持 tool calling
@@ -404,7 +404,7 @@
 - **目标**：审批回调机制 + 3 种 execution mode + approval agent 命令审批 + 5 种 Decision + global 规则的磁盘持久化
 - **依赖**：I-13 / I-15 / I-18
 - **In Scope**：
-  - `internal/execution/`：`Mode`（default / plan / agent-approve）、mode 解析、mode policy、mode switch 事件 payload
+  - `internal/execution/`：`Mode`（work / plan / auto）、mode 解析、mode policy、mode switch 事件 payload
   - `internal/permission/`：`Manager`、`Decision`（5 种：Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysGlobal）、`Rule`
   - `internal/approval/`：approval agent 接口；输入为 command/cwd/risk/mode/context summary/rule match 信息，输出 allow/deny/unsure + reason
   - 两层规则存储：
@@ -412,12 +412,12 @@
     - **global 级**（AlwaysGlobal）：序列化到 `~/.config/ub/permissions.yaml`，启动时加载
   - 黑名单正则（硬编码 `rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）：即便 always-rule match 也强制再问
   - `Manager.Ask(ctx, req)` 按 mode 调用注入的 human `Asker` 或 approval agent
-  - 查询顺序：mode gate → 黑名单 → global rules → session rules → approval agent（agent-approve only）→ human Asker
+  - 查询顺序：mode gate → 黑名单 → global rules → session rules → approval agent（auto only）→ human Asker
   - Asker 收到的请求包含可选的 `Preview`（来自 PreviewableTool）
 - **Out of Scope**：TUI 弹窗实现（I-24）
 - **关键签名**：
   ```go
-  type Mode string // default / plan / agent-approve
+  type Mode string // work / plan / auto
   type Asker interface {
       Ask(ctx context.Context, req Request) (Decision, error)
   }
@@ -438,8 +438,8 @@
 - **验证**：
   - 单测：mock Asker，跑 5 种 Decision 路径
   - 单测：`plan` 模式拒绝 write 风险工具且不触发 Execute
-  - 单测：`default` 模式下未命中 allow-rule 的 exec 工具走 human Asker
-  - 单测：`agent-approve` 模式下 approval agent allow 时不问用户；deny/unsure/error 时回退 human Asker
+  - 单测：`work` 模式下未命中 allow-rule 的 exec 工具走 human Asker
+  - 单测：`auto` 模式下 approval agent allow 时不问用户；deny/unsure/error 时回退 human Asker
   - 黑名单优先级测试（即便 global rule match 也再弹）
   - 持久化：写入 AlwaysGlobal → 重启加载 → 同样 call 不再问 Asker
   - 原子写：模拟写入中途 panic → permissions.yaml 不被破坏（用临时文件 + rename）
@@ -501,7 +501,7 @@
   - `internal/tui/dialog/permission`：modal 显示工具名、参数预览、风险等级
   - 若 `Request.Preview != nil`：在 modal 中嵌入 diff 摘要（一行 summary + 折叠 unified diff，按 `d` 展开）
   - Plan 模式下的 exec 审批必须显示 "Plan mode: command may still have side effects"
-  - agent-approve 模式下若 approval agent 拒绝 / 不确定 / 出错，modal 展示 approval agent reason 后要求用户显式决策
+  - auto 模式下若 approval agent 拒绝 / 不确定 / 出错，modal 展示 approval agent reason 后要求用户显式决策
   - 5 个审批候选以列表展示，说明每个选项的作用范围；方向键选择，Enter 确认，数字键仅保留为快捷键：
     - Allow once
     - Deny
@@ -512,7 +512,7 @@
   - Permission Manager 的 Asker 切换为 TUI 实现
 - **Out of Scope**：完整 diff 渲染（I-25 做带语法高亮的 diffview）
 - **验证**：
-  - 手测让模型跑 bash，弹框正常；agent-approve 拒绝时能回退人工弹框
+  - 手测让模型跑 bash，弹框正常；auto 拒绝时能回退人工弹框
   - 手测让模型 edit 文件 → modal 里能看到 Preview 摘要
   - `teatest` 单测 5 个选项的按键流：选 `5` 后磁盘文件出现对应规则
 

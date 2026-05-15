@@ -103,7 +103,7 @@ func NewModel(opts Options) Model {
 		histIdx:  -1,
 		status: statusBar{
 			model:         modelName,
-			executionMode: defaultString(opts.ExecutionMode, "default"),
+			executionMode: defaultString(opts.ExecutionMode, string(execution.ModeWork)),
 			cwd:           defaultString(opts.Cwd, "."),
 			turn:          opts.Turn,
 		},
@@ -418,7 +418,6 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "mode":
 		if len(cmd.Args) == 0 {
-			m.messages.append(systemRole, "mode: "+m.status.executionMode)
 			return m, nil
 		}
 		mode, err := execution.ParseMode(cmd.Args[0])
@@ -433,7 +432,6 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.status.executionMode = string(mode)
-		m.messages.append(systemRole, "mode set to "+string(mode))
 		return m, nil
 	default:
 		m.messages.append(systemRole, "unknown slash command "+cmd.Name)
@@ -484,22 +482,21 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 		}
 	}
 	m.status.executionMode = next
-	m.messages.append(systemRole, "mode set to "+next)
 	return m, nil
 }
 
 func nextExecutionMode(current string) string {
 	order := []string{
-		string(execution.ModeDefault),
+		string(execution.ModeWork),
 		string(execution.ModePlan),
-		string(execution.ModeAgentApprove),
+		string(execution.ModeAuto),
 	}
 	for i, mode := range order {
 		if current == mode {
 			return order[(i+1)%len(order)]
 		}
 	}
-	return string(execution.ModeDefault)
+	return string(execution.ModeWork)
 }
 
 func (m *Model) setModel(model string) error {

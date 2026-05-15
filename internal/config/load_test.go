@@ -130,24 +130,24 @@ func TestLoadFromDirsAppliesSelectedProfile(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")
 	globalPath := filepath.Join(xdg, "ub", "config.yaml")
-	mustWriteConfig(t, globalPath, `default_model: fake/base
-default_provider: fake
-execution_mode: default
-providers:
-  fake:
-    type: fake
-profiles:
-  dev:
-    default_model: fake/dev
-    default_provider: fake
-    execution_mode: plan
-    providers:
-      fake:
-        type: fake
-        script:
-          - type: text_delta
-            text: dev
-`)
+	mustWriteConfig(t, globalPath,
+		"default_model: fake/base\n"+
+			"default_provider: fake\n"+
+			"execution_mode: work\n"+
+			"providers:\n"+
+			"  fake:\n"+
+			"    type: fake\n"+
+			"profiles:\n"+
+			"  dev:\n"+
+			"    default_model: fake/dev\n"+
+			"    default_provider: fake\n"+
+			"    execution_mode: plan\n"+
+			"    providers:\n"+
+			"      fake:\n"+
+			"        type: fake\n"+
+			"        script:\n"+
+			"          - type: text_delta\n"+
+			"            text: dev\n")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
 	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev"})
@@ -192,14 +192,14 @@ func TestLoadFromDirsModeOverrideAndValidation(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")
 	globalPath := filepath.Join(xdg, "ub", "config.yaml")
-	mustWriteConfig(t, globalPath, "execution_mode: default\nprofiles:\n  dev:\n    execution_mode: plan\n")
+	mustWriteConfig(t, globalPath, "execution_mode: work\nprofiles:\n  dev:\n    execution_mode: plan\n")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
-	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev", ExecutionMode: ModeAgentApprove})
+	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev", ExecutionMode: ModeAuto})
 	if err != nil {
 		t.Fatalf("loadFromDirsWithOptions: %v", err)
 	}
-	if cfg.ExecutionMode != ModeAgentApprove {
+	if cfg.ExecutionMode != ModeAuto {
 		t.Fatalf("ExecutionMode = %q", cfg.ExecutionMode)
 	}
 

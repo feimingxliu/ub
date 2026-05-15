@@ -1,5 +1,5 @@
 // Package approval defines the secondary approval-agent interface used by
-// agent-approve execution mode.
+// auto execution mode.
 package approval
 
 import (

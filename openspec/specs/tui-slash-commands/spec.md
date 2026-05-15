@@ -24,7 +24,7 @@
 #### Scenario: slash 候选提示
 
 - **WHEN** 用户在输入框输入 `/m`
-- **THEN** TUI SHOULD 显示 `/model [model]` 和 `/mode <default|plan|agent-approve>` 的候选说明
+- **THEN** TUI SHOULD 显示 `/model [model]` 和 `/mode <work|plan|auto>` 的候选说明
 
 #### Scenario: Tab 补全 slash 命令
 

@@ -13,10 +13,10 @@ func TestParseMode(t *testing.T) {
 		raw  string
 		want Mode
 	}{
-		{name: "empty", raw: "", want: ModeDefault},
-		{name: "default", raw: "default", want: ModeDefault},
+		{name: "empty", raw: "", want: ModeWork},
+		{name: "work", raw: "work", want: ModeWork},
 		{name: "plan", raw: " plan ", want: ModePlan},
-		{name: "agent approve", raw: "agent-approve", want: ModeAgentApprove},
+		{name: "auto", raw: "auto", want: ModeAuto},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestGatePlanRejectsWrite(t *testing.T) {
 }
 
 func TestGateAllowsExecForApproval(t *testing.T) {
-	for _, mode := range []Mode{ModeDefault, ModePlan, ModeAgentApprove} {
+	for _, mode := range []Mode{ModeWork, ModePlan, ModeAuto} {
 		if err := Gate(mode, tool.RiskExec); err != nil {
 			t.Fatalf("Gate(%s, exec): %v", mode, err)
 		}

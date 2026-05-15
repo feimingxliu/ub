@@ -44,19 +44,19 @@ CLI SHALL 提供全局 `--profile <name>`、`--dev` 和 `--mode <mode>` flags。
 
 ### Requirement: Execution mode 配置
 
-系统 SHALL 支持 `execution_mode` 字段，可选值为 `default`、`plan`、`agent-approve`。最终执行模式优先级 MUST 为 CLI `--mode` 高于 profile 高于配置默认值。
+系统 SHALL 支持 `execution_mode` 字段，可选值为 `work`、`plan`、`auto`。最终执行模式优先级 MUST 为 CLI `--mode` 高于 profile 高于配置默认值。
 
 #### Scenario: profile 覆盖 mode
 
-- **GIVEN** 顶层配置 `execution_mode=default` 且 `profiles.dev.execution_mode=plan`
+- **GIVEN** 顶层配置 `execution_mode=work` 且 `profiles.dev.execution_mode=plan`
 - **WHEN** 应用 `dev` profile
 - **THEN** 最终 `Config.ExecutionMode` MUST 等于 `plan`
 
 #### Scenario: CLI mode 覆盖 profile
 
 - **GIVEN** `profiles.dev.execution_mode=plan`
-- **WHEN** 用户传入 `--dev --mode agent-approve`
-- **THEN** 最终 `Config.ExecutionMode` MUST 等于 `agent-approve`
+- **WHEN** 用户传入 `--dev --mode auto`
+- **THEN** 最终 `Config.ExecutionMode` MUST 等于 `auto`
 
 #### Scenario: 非法 mode
 

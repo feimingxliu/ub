@@ -23,7 +23,7 @@ type Spec struct {
 
 var specs = []Spec{
 	{Name: "model", Usage: "/model [model]", Description: "show models or switch to a supported model"},
-	{Name: "mode", Usage: "/mode <default|plan|agent-approve>", Description: "switch execution mode"},
+	{Name: "mode", Usage: "/mode <work|plan|auto>", Description: "switch execution mode"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
 	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},
 	{Name: "help", Usage: "/help", Description: "show slash command help"},

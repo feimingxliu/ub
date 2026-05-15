@@ -22,7 +22,7 @@ Define tool permission decisions, approval routing, allow-rules, and dangerous c
 
 #### Scenario: approval reason 传给 human
 
-- **GIVEN** agent-approve 模式下 approval agent 返回 unsure 并带 reason
+- **GIVEN** auto 模式下 approval agent 返回 unsure 并带 reason
 - **WHEN** Manager 回退 human Asker
 - **THEN** Asker 收到的 Request MUST 包含该 approval agent reason
 
@@ -38,23 +38,23 @@ Define tool permission decisions, approval routing, allow-rules, and dangerous c
 
 ### Requirement: exec 审批路径
 
-权限 Manager SHALL 对 `RiskExec` 请求执行审批。`default` 和 `plan` 模式下，若未命中 allow-rule，MUST 调用 human Asker。`agent-approve` 模式下，若未命中 allow-rule，MUST 先调用 approval agent；approval agent 返回 allow 时 MUST 不调用 human Asker；返回 deny、unsure 或错误时 MUST 回退 human Asker。
+权限 Manager SHALL 对 `RiskExec` 请求执行审批。`work` 和 `plan` 模式下，若未命中 allow-rule，MUST 调用 human Asker。`auto` 模式下，若未命中 allow-rule，MUST 先调用 approval agent；approval agent 返回 allow 时 MUST 不调用 human Asker；返回 deny、unsure 或错误时 MUST 回退 human Asker。
 
-#### Scenario: default exec 询问 human
+#### Scenario: work exec 询问 human
 
-- **GIVEN** `default` 模式的 exec 请求未命中规则
+- **GIVEN** `work` 模式的 exec 请求未命中规则
 - **WHEN** Manager 处理该请求
 - **THEN** Manager MUST 调用 human Asker 并采用其决策
 
 #### Scenario: approval agent allow
 
-- **GIVEN** `agent-approve` 模式的 exec 请求未命中规则，approval agent 返回 allow
+- **GIVEN** `auto` 模式的 exec 请求未命中规则，approval agent 返回 allow
 - **WHEN** Manager 处理该请求
 - **THEN** Manager MUST 返回 allowed 结果，且 MUST NOT 调用 human Asker
 
 #### Scenario: approval agent unsure 回退 human
 
-- **GIVEN** `agent-approve` 模式的 exec 请求未命中规则，approval agent 返回 unsure
+- **GIVEN** `auto` 模式的 exec 请求未命中规则，approval agent 返回 unsure
 - **WHEN** Manager 处理该请求
 - **THEN** Manager MUST 调用 human Asker 并采用 human 决策
 
@@ -102,7 +102,7 @@ Define tool permission decisions, approval routing, allow-rules, and dangerous c
 
 #### Scenario: 黑名单绕过 approval agent
 
-- **GIVEN** `agent-approve` 模式且 approval agent 会返回 allow
+- **GIVEN** `auto` 模式且 approval agent 会返回 allow
 - **WHEN** 提交 command 为 `dd if=a of=/dev/sda` 的 exec 请求
 - **THEN** Manager MUST 不调用 approval agent，必须调用 human Asker
 

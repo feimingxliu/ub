@@ -86,7 +86,7 @@ profiles:
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--dev", "--mode", "agent-approve", "config", "show"})
+	cmd.SetArgs([]string{"--dev", "--mode", "auto", "config", "show"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("config show --dev: %v", err)
@@ -94,7 +94,7 @@ profiles:
 	if !strings.Contains(out.String(), "default_model: fake/dev") {
 		t.Fatalf("profile default model missing:\n%s", out.String())
 	}
-	if !strings.Contains(out.String(), "execution_mode: agent-approve") {
+	if !strings.Contains(out.String(), "execution_mode: auto") {
 		t.Fatalf("mode override missing:\n%s", out.String())
 	}
 }

@@ -73,7 +73,7 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 		if rule, ok := matchRule(m.sessionRules, req, command); ok {
 			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(rule)}, nil
 		}
-		if mode == execution.ModeAgentApprove && m.approvalAgent != nil {
+		if mode == execution.ModeAuto && m.approvalAgent != nil {
 			agentRes, err := m.approvalAgent.ReviewCommand(ctx, approval.Request{
 				Tool:           req.Tool,
 				Args:           req.Args,

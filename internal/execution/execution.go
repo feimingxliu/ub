@@ -12,17 +12,17 @@ import (
 type Mode string
 
 const (
-	ModeDefault      Mode = "default"
-	ModePlan         Mode = "plan"
-	ModeAgentApprove Mode = "agent-approve"
+	ModeWork Mode = "work"
+	ModePlan Mode = "plan"
+	ModeAuto Mode = "auto"
 )
 
-// ParseMode parses a user/config mode string. Empty means default.
+// ParseMode parses a user/config mode string. Empty means work.
 func ParseMode(raw string) (Mode, error) {
 	switch mode := Mode(strings.TrimSpace(raw)); mode {
 	case "":
-		return ModeDefault, nil
-	case ModeDefault, ModePlan, ModeAgentApprove:
+		return ModeWork, nil
+	case ModeWork, ModePlan, ModeAuto:
 		return mode, nil
 	default:
 		return "", fmt.Errorf("unknown execution mode %q", raw)

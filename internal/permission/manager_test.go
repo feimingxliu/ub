@@ -90,7 +90,7 @@ func TestManagerHumanDecisionPaths(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewManager: %v", err)
 			}
-			res, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "git status"))
+			res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status"))
 			if err != nil {
 				t.Fatalf("Ask: %v", err)
 			}
@@ -139,7 +139,7 @@ func TestManagerDefaultExecUsesHumanAsker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "git status"))
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status"))
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestManagerAgentApproveAllowSkipsHuman(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAgentApprove, "git status"))
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "git status"))
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestManagerAgentApproveFallbacksToHuman(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewManager: %v", err)
 			}
-			res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAgentApprove, "git status"))
+			res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "git status"))
 			if err != nil {
 				t.Fatalf("Ask: %v", err)
 			}
@@ -227,7 +227,7 @@ func TestManagerPassesApprovalReasonToHuman(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeAgentApprove, "git status")); err != nil {
+	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "git status")); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 	if asker.calls != 1 {
@@ -248,11 +248,11 @@ func TestManagerSessionRules(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewManager: %v", err)
 		}
-		if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "git status")); err != nil {
+		if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status")); err != nil {
 			t.Fatalf("first Ask: %v", err)
 		}
 		asker.decision = DecisionDeny
-		res, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "git status"))
+		res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status"))
 		if err != nil {
 			t.Fatalf("second Ask: %v", err)
 		}
@@ -273,11 +273,11 @@ func TestManagerSessionRules(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewManager: %v", err)
 		}
-		if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "git status")); err != nil {
+		if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status")); err != nil {
 			t.Fatalf("first Ask: %v", err)
 		}
 		asker.decision = DecisionDeny
-		res, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "go test ./..."))
+		res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "go test ./..."))
 		if err != nil {
 			t.Fatalf("second Ask: %v", err)
 		}
@@ -300,7 +300,7 @@ func TestManagerBlacklistBypassesGlobalRule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "rm -rf /"))
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "rm -rf /"))
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestManagerBlacklistBypassesApprovalAgent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAgentApprove, "dd if=file of=/dev/sda"))
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "dd if=file of=/dev/sda"))
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestManagerAlwaysGlobalAcrossManagers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeDefault, "git status")); err != nil {
+	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status")); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 
@@ -360,7 +360,7 @@ func TestManagerAlwaysGlobalAcrossManagers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager next: %v", err)
 	}
-	res, err := nextManager.Ask(context.Background(), execReq(t, execution.ModeDefault, "go test ./..."))
+	res, err := nextManager.Ask(context.Background(), execReq(t, execution.ModeWork, "go test ./..."))
 	if err != nil {
 		t.Fatalf("Ask next: %v", err)
 	}
@@ -392,7 +392,7 @@ func TestManagerPreviewPassedToAsker(t *testing.T) {
 		Tool:    "edit",
 		Args:    json.RawMessage(`{"path":"notes.txt"}`),
 		Risk:    tool.RiskExec,
-		Mode:    execution.ModeDefault,
+		Mode:    execution.ModeWork,
 		Preview: preview,
 	})
 	if err != nil {

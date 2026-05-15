@@ -59,7 +59,7 @@ type ProfileConfig struct {
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 }
 
-// ApprovalAgentConfig selects the secondary model used by agent-approve mode.
+// ApprovalAgentConfig selects the secondary model used by auto mode.
 type ApprovalAgentConfig struct {
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 	Model    string `yaml:"model,omitempty"    json:"model,omitempty"`
