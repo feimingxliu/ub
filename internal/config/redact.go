@@ -1,6 +1,9 @@
 package config
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+)
 
 // redactedMask is what every field tagged `secret:"true"` is replaced
 // with when rendered for human inspection (e.g. `ub config show`).
@@ -49,7 +52,11 @@ func redactValue(dst, src reflect.Value) {
 			v := iter.Value()
 			// Map values are not addressable; create a writable copy.
 			newV := reflect.New(v.Type()).Elem()
-			redactValue(newV, v)
+			if isSensitiveStringMapEntry(src.Type(), k, v) {
+				newV.SetString(redactedMask)
+			} else {
+				redactValue(newV, v)
+			}
 			dst.SetMapIndex(k, newV)
 		}
 	case reflect.Slice:
@@ -76,5 +83,20 @@ func redactValue(dst, src reflect.Value) {
 		if src.IsValid() && dst.CanSet() {
 			dst.Set(src)
 		}
+	}
+}
+
+func isSensitiveStringMapEntry(mapType reflect.Type, key, value reflect.Value) bool {
+	if mapType.Key().Kind() != reflect.String || mapType.Elem().Kind() != reflect.String {
+		return false
+	}
+	if value.String() == "" {
+		return false
+	}
+	switch strings.ToLower(key.String()) {
+	case "authorization", "proxy-authorization", "api-key", "x-api-key", "x-auth-token", "x-api-token", "cookie", "set-cookie":
+		return true
+	default:
+		return false
 	}
 }

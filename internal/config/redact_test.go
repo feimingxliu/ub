@@ -10,6 +10,10 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 				Type:    "anthropic",
 				APIKey:  "sk-real-key",
 				BaseURL: "https://example.test",
+				Headers: map[string]string{
+					"Authorization":     "Bearer sk-real-key",
+					"anthropic-version": "2023-06-01",
+				},
 			},
 		},
 		Unknown: map[string]any{
@@ -24,8 +28,17 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 	if got.Providers["anthropic"].BaseURL != "https://example.test" {
 		t.Fatalf("base_url changed: %q", got.Providers["anthropic"].BaseURL)
 	}
+	if got.Providers["anthropic"].Headers["Authorization"] != redactedMask {
+		t.Fatalf("authorization header = %q", got.Providers["anthropic"].Headers["Authorization"])
+	}
+	if got.Providers["anthropic"].Headers["anthropic-version"] != "2023-06-01" {
+		t.Fatalf("non-secret header changed: %q", got.Providers["anthropic"].Headers["anthropic-version"])
+	}
 	if cfg.Providers["anthropic"].APIKey != "sk-real-key" {
 		t.Fatalf("original config was mutated")
+	}
+	if cfg.Providers["anthropic"].Headers["Authorization"] != "Bearer sk-real-key" {
+		t.Fatalf("original headers were mutated")
 	}
 	if got.Unknown["profiles"] == nil {
 		t.Fatalf("unknown fields were not copied")
