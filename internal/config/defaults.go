@@ -5,6 +5,7 @@ package config
 // user configuration at all.
 func Defaults() *Config {
 	return &Config{
+		ExecutionMode: "default",
 		TUI: TUIConfig{
 			Theme: "dark",
 		},

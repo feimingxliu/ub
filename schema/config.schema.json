@@ -2,6 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/feimingxliu/ub/internal/config/config",
   "$defs": {
+    "ApprovalAgentConfig": {
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ContextConfig": {
       "properties": {
         "trigger_ratio": {
@@ -78,6 +90,57 @@
         },
         "auto_allow_exec": {
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ProfileConfig": {
+      "properties": {
+        "default_model": {
+          "type": "string"
+        },
+        "small_model": {
+          "type": "string"
+        },
+        "execution_mode": {
+          "type": "string"
+        },
+        "approval_agent": {
+          "$ref": "#/$defs/ApprovalAgentConfig"
+        },
+        "providers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ProviderConfig"
+          },
+          "type": "object"
+        },
+        "tools_disabled": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tui": {
+          "$ref": "#/$defs/TUIConfig"
+        },
+        "permissions": {
+          "$ref": "#/$defs/PermissionConfig"
+        },
+        "mcp_servers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/MCPServerConfig"
+          },
+          "type": "object"
+        },
+        "lsp_servers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LSPServerConfig"
+          },
+          "type": "object"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextConfig"
         }
       },
       "additionalProperties": false,
@@ -161,11 +224,29 @@
     "small_model": {
       "type": "string"
     },
+    "execution_mode": {
+      "type": "string"
+    },
+    "approval_agent": {
+      "$ref": "#/$defs/ApprovalAgentConfig"
+    },
     "providers": {
       "additionalProperties": {
         "$ref": "#/$defs/ProviderConfig"
       },
       "type": "object"
+    },
+    "profiles": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ProfileConfig"
+      },
+      "type": "object"
+    },
+    "tools_disabled": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
     },
     "tui": {
       "$ref": "#/$defs/TUIConfig"

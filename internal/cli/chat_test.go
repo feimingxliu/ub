@@ -154,6 +154,41 @@ providers:
 	}
 }
 
+func TestChatAppliesDevProfile(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: fake/base
+providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: base
+profiles:
+  dev:
+    default_model: fake/dev
+    providers:
+      fake:
+        type: fake
+        script:
+          - type: text_delta
+            text: dev
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--dev", "chat", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat dev profile: %v", err)
+	}
+	if got := out.String(); got != "dev" {
+		t.Fatalf("stdout = %q, want dev", got)
+	}
+}
+
 func TestChatWithAnthropicProvider(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

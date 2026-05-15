@@ -22,7 +22,7 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 
 ### Requirement: 分层合并
 
-系统 SHALL 按"内置默认 → 全局（`~/.config/ub/config.yaml`）→ 本地（当前工作目录向上最多 5 层找到的第一个 `.ub/config.yaml`）→ 环境变量覆盖"的顺序加载并合并配置。后加载层 MUST 整字段覆盖（map 按 key 替换 value、slice 整体替换、标量按非零值覆盖）。系统 MUST 容忍任一层缺失，不视为错误。
+系统 SHALL 按"内置默认 → 全局（`~/.config/ub/config.yaml`）→ 本地（当前工作目录向上最多 5 层找到的第一个 `.ub/config.yaml`）→ profile 覆盖 → CLI mode 覆盖"的顺序加载并合并配置。后加载层 MUST 整字段覆盖（map 按 key 替换 value、slice 整体替换、标量按非零值覆盖）。系统 MUST 容忍任一配置文件层缺失，不视为错误。
 
 #### Scenario: 本地覆盖全局
 
@@ -43,6 +43,11 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 
 - **WHEN** 当前工作目录为 `/a/b/c/d/e`，`/a/b/.ub/config.yaml` 存在，`/a/.ub/config.yaml` 也存在
 - **THEN** `config.Load()` 使用 `/a/b/.ub/config.yaml`，不使用 `/a/.ub/config.yaml`
+
+#### Scenario: profile 覆盖本地配置
+
+- **WHEN** 本地配置含 `default_model: fake/base`，且应用的 profile 含 `default_model: fake/dev`
+- **THEN** 最终 `Config.DefaultModel` 等于 `fake/dev`
 
 ### Requirement: 环境变量替换
 
@@ -140,7 +145,7 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 #### Scenario: schema 覆盖关键字段
 
 - **WHEN** 检查生成的 `schema/config.schema.json`
-- **THEN** schema `properties` 至少包含 `default_model`、`small_model`、`providers`、`tui`、`context`、`permissions`、`mcp_servers`、`lsp_servers`
+- **THEN** schema `properties` 至少包含 `default_model`、`small_model`、`execution_mode`、`approval_agent`、`profiles`、`providers`、`tui`、`context`、`permissions`、`mcp_servers`、`lsp_servers`
 
 ### Requirement: Fake provider 脚本配置
 
@@ -158,12 +163,12 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 
 ### Requirement: 不支持本迭代之外的能力
 
-系统 MUST NOT 在本迭代内实现 `profiles:` 配置节、`/config reload` 热加载、配置写回、JSON 配置语言支持。这些被显式推迟到 I-13（profiles）或 V2（其余）。
+系统 MUST NOT 在本迭代内实现 `/config reload` 热加载、配置写回、JSON 配置语言支持。这些能力被显式推迟到 V2。系统 SHALL 在本迭代内正式支持 `profiles:` 配置节。
 
-#### Scenario: profiles 节存在时不报错也不生效
+#### Scenario: profiles 节生效
 
-- **WHEN** 用户在 YAML 中放 `profiles: {dev: {default_model: x}}`
-- **THEN** `config.Load()` 不报错（未知顶层键容忍），但 `Config` 上无 profile 行为
+- **WHEN** 用户在 YAML 中放 `profiles: {dev: {default_model: fake/dev}}` 并选择 `dev` profile
+- **THEN** `config.LoadWithOptions()` MUST 应用该 profile 并更新有效配置
 
 #### Scenario: 不接受 JSON 文件
 

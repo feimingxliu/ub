@@ -57,7 +57,13 @@ func TestMergeScalarsMapsAndSlices(t *testing.T) {
 
 func TestMergeDefaults(t *testing.T) {
 	got := Merge(Defaults(), &Config{
-		TUI: TUIConfig{Theme: "light"},
+		TUI:           TUIConfig{Theme: "light"},
+		ExecutionMode: ModePlan,
+		ApprovalAgent: ApprovalAgentConfig{
+			Provider: "openai",
+			Model:    "gpt-test",
+		},
+		ToolsDisabled: []string{"bash"},
 		Context: ContextConfig{
 			TriggerRatio:    0.9,
 			KeepRecentTurns: 5,
@@ -67,6 +73,15 @@ func TestMergeDefaults(t *testing.T) {
 
 	if got.TUI.Theme != "light" {
 		t.Fatalf("theme = %q", got.TUI.Theme)
+	}
+	if got.ExecutionMode != ModePlan {
+		t.Fatalf("execution mode = %q", got.ExecutionMode)
+	}
+	if got.ApprovalAgent.Provider != "openai" || got.ApprovalAgent.Model != "gpt-test" {
+		t.Fatalf("approval agent = %#v", got.ApprovalAgent)
+	}
+	if len(got.ToolsDisabled) != 1 || got.ToolsDisabled[0] != "bash" {
+		t.Fatalf("tools disabled = %#v", got.ToolsDisabled)
 	}
 	if got.Context.TriggerRatio != 0.9 || got.Context.KeepRecentTurns != 5 {
 		t.Fatalf("context = %#v", got.Context)

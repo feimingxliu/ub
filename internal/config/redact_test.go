@@ -16,8 +16,18 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 				},
 			},
 		},
+		Profiles: map[string]ProfileConfig{
+			"dev": {
+				Providers: map[string]ProviderConfig{
+					"openai": {
+						Type:   "openai",
+						APIKey: "sk-profile-key",
+					},
+				},
+			},
+		},
 		Unknown: map[string]any{
-			"profiles": map[string]any{"dev": "ignored"},
+			"future": map[string]any{"dev": "ignored"},
 		},
 	}
 
@@ -40,7 +50,10 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 	if cfg.Providers["anthropic"].Headers["Authorization"] != "Bearer sk-real-key" {
 		t.Fatalf("original headers were mutated")
 	}
-	if got.Unknown["profiles"] == nil {
+	if got.Profiles["dev"].Providers["openai"].APIKey != redactedMask {
+		t.Fatalf("profile api_key = %q", got.Profiles["dev"].Providers["openai"].APIKey)
+	}
+	if got.Unknown["future"] == nil {
 		t.Fatalf("unknown fields were not copied")
 	}
 }

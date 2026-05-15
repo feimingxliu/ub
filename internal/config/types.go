@@ -7,10 +7,11 @@
 //  3. <cwd-or-ancestor>/.ub/config.yaml - per-project local
 //  4. Environment variable substitution via ${VAR} / ${VAR:-default} in
 //     the YAML byte stream before parsing
+//  5. Optional profile overlay selected by CLI flags or UB_PROFILE
+//  6. Optional CLI execution_mode override
 //
-// The package does NOT support hot reload, config write-back, JSON config
-// files, or the `profiles:` section - see docs/roadmap.md for what's
-// scheduled where.
+// The package does NOT support hot reload, config write-back, or JSON config
+// files - see docs/roadmap.md for what's scheduled where.
 package config
 
 import "time"
@@ -21,20 +22,45 @@ import "time"
 // goccy/go-yaml (used at load time) and invopop/jsonschema (used to
 // generate schema/config.schema.json) see the same shape.
 //
-// The `Unknown` inline field swallows unknown top-level keys such as
-// `profiles:` so YAML containing forward-compatible config doesn't fail
-// to parse - matching the spec requirement "未知顶层键容忍".
+// The `Unknown` inline field swallows unknown top-level keys so YAML
+// containing forward-compatible config doesn't fail to parse.
 type Config struct {
-	DefaultModel string                     `yaml:"default_model,omitempty" json:"default_model,omitempty"`
-	SmallModel   string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
-	Providers    map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
-	TUI          TUIConfig                  `yaml:"tui,omitempty"           json:"tui,omitempty"`
-	Permissions  PermissionConfig           `yaml:"permissions,omitempty"   json:"permissions,omitempty"`
-	MCPServers   map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
-	LSPServers   map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
-	Context      ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
+	DefaultModel  string                     `yaml:"default_model,omitempty" json:"default_model,omitempty"`
+	SmallModel    string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
+	ExecutionMode string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	ApprovalAgent ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
+	Providers     map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
+	Profiles      map[string]ProfileConfig   `yaml:"profiles,omitempty"      json:"profiles,omitempty"`
+	ToolsDisabled []string                   `yaml:"tools_disabled,omitempty" json:"tools_disabled,omitempty"`
+	TUI           TUIConfig                  `yaml:"tui,omitempty"           json:"tui,omitempty"`
+	Permissions   PermissionConfig           `yaml:"permissions,omitempty"   json:"permissions,omitempty"`
+	MCPServers    map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
+	LSPServers    map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
+	Context       ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 
 	Unknown map[string]any `yaml:",inline" json:"-"`
+}
+
+// ProfileConfig describes a runtime profile overlay. It intentionally mirrors
+// the top-level runtime fields without nesting profiles recursively.
+type ProfileConfig struct {
+	DefaultModel  string                     `yaml:"default_model,omitempty" json:"default_model,omitempty"`
+	SmallModel    string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
+	ExecutionMode string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	ApprovalAgent ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
+	Providers     map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
+	ToolsDisabled []string                   `yaml:"tools_disabled,omitempty" json:"tools_disabled,omitempty"`
+	TUI           TUIConfig                  `yaml:"tui,omitempty"           json:"tui,omitempty"`
+	Permissions   PermissionConfig           `yaml:"permissions,omitempty"   json:"permissions,omitempty"`
+	MCPServers    map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
+	LSPServers    map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
+	Context       ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
+}
+
+// ApprovalAgentConfig selects the secondary model used by agent-approve mode.
+type ApprovalAgentConfig struct {
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Model    string `yaml:"model,omitempty"    json:"model,omitempty"`
 }
 
 // ProviderConfig describes one LLM provider entry. The set of fields is

@@ -107,7 +107,7 @@ func TestLoadFromDirsParsesFakeProviderScript(t *testing.T) {
 	}
 }
 
-func TestLoadFromDirsToleratesUnknownTopLevelKeys(t *testing.T) {
+func TestLoadFromDirsParsesProfilesWithoutSelectingThem(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")
 	globalPath := filepath.Join(xdg, "ub", "config.yaml")
@@ -120,6 +120,98 @@ func TestLoadFromDirsToleratesUnknownTopLevelKeys(t *testing.T) {
 	}
 	if cfg.DefaultModel != "" {
 		t.Fatalf("profiles should not affect Config.DefaultModel, got %q", cfg.DefaultModel)
+	}
+	if cfg.Profiles["dev"].DefaultModel != "fake/model" {
+		t.Fatalf("profile not parsed: %#v", cfg.Profiles)
+	}
+}
+
+func TestLoadFromDirsAppliesSelectedProfile(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `default_model: fake/base
+execution_mode: default
+providers:
+  fake:
+    type: fake
+profiles:
+  dev:
+    default_model: fake/dev
+    execution_mode: plan
+    providers:
+      fake:
+        type: fake
+        script:
+          - type: text_delta
+            text: dev
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev"})
+	if err != nil {
+		t.Fatalf("loadFromDirsWithOptions: %v", err)
+	}
+	if cfg.DefaultModel != "fake/dev" {
+		t.Fatalf("DefaultModel = %q", cfg.DefaultModel)
+	}
+	if cfg.ExecutionMode != ModePlan {
+		t.Fatalf("ExecutionMode = %q", cfg.ExecutionMode)
+	}
+	if got := cfg.Providers["fake"].Script[0].Text; got != "dev" {
+		t.Fatalf("profile provider replacement failed: %q", got)
+	}
+}
+
+func TestLoadFromDirsAppliesUBProfile(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, "profiles:\n  dev:\n    default_model: fake/dev\n")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("UB_PROFILE", "dev")
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.DefaultModel != "fake/dev" {
+		t.Fatalf("DefaultModel = %q", cfg.DefaultModel)
+	}
+}
+
+func TestLoadFromDirsModeOverrideAndValidation(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, "execution_mode: default\nprofiles:\n  dev:\n    execution_mode: plan\n")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev", ExecutionMode: ModeAgentApprove})
+	if err != nil {
+		t.Fatalf("loadFromDirsWithOptions: %v", err)
+	}
+	if cfg.ExecutionMode != ModeAgentApprove {
+		t.Fatalf("ExecutionMode = %q", cfg.ExecutionMode)
+	}
+
+	_, _, err = loadFromDirsWithOptions(temp, LoadOptions{ExecutionMode: "invalid"})
+	if err == nil || !strings.Contains(err.Error(), "execution_mode") {
+		t.Fatalf("invalid mode error = %v", err)
+	}
+}
+
+func TestLoadFromDirsProfileErrors(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "xdg"))
+
+	_, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "prod"})
+	if err == nil || !strings.Contains(err.Error(), "profile") {
+		t.Fatalf("missing profile error = %v", err)
+	}
+	_, _, err = loadFromDirsWithOptions(temp, LoadOptions{Profile: "prod", Dev: true})
+	if err == nil || !strings.Contains(err.Error(), "--dev") {
+		t.Fatalf("conflicting profile error = %v", err)
 	}
 }
 

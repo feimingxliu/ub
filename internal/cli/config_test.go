@@ -64,6 +64,60 @@ func TestConfigShowRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestConfigShowAppliesProfileFlags(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	configPath := filepath.Join(xdg, "ub", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`default_model: fake/base
+profiles:
+  dev:
+    default_model: fake/dev
+    execution_mode: plan
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--dev", "--mode", "agent-approve", "config", "show"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("config show --dev: %v", err)
+	}
+	if !strings.Contains(out.String(), "default_model: fake/dev") {
+		t.Fatalf("profile default model missing:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "execution_mode: agent-approve") {
+		t.Fatalf("mode override missing:\n%s", out.String())
+	}
+}
+
+func TestConfigShowRejectsProfileAndDevTogether(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "xdg"))
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--profile", "prod", "--dev", "config", "show"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected conflict error")
+	}
+	if !strings.Contains(err.Error(), "--dev") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestConfigPath(t *testing.T) {
 	temp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "empty-xdg"))

@@ -40,13 +40,30 @@ func mergeInto(dst, src *Config) {
 	if src.SmallModel != "" {
 		dst.SmallModel = src.SmallModel
 	}
+	if src.ExecutionMode != "" {
+		dst.ExecutionMode = src.ExecutionMode
+	}
+	mergeApprovalAgent(&dst.ApprovalAgent, src.ApprovalAgent)
 	mergeProviderMap(&dst.Providers, src.Providers)
+	mergeProfileMap(&dst.Profiles, src.Profiles)
+	if len(src.ToolsDisabled) > 0 {
+		dst.ToolsDisabled = append([]string(nil), src.ToolsDisabled...)
+	}
 	mergeMCPMap(&dst.MCPServers, src.MCPServers)
 	mergeLSPMap(&dst.LSPServers, src.LSPServers)
 	mergeTUI(&dst.TUI, src.TUI)
 	mergePermissions(&dst.Permissions, src.Permissions)
 	mergeContext(&dst.Context, src.Context)
 	mergeUnknown(&dst.Unknown, src.Unknown)
+}
+
+func mergeApprovalAgent(dst *ApprovalAgentConfig, src ApprovalAgentConfig) {
+	if src.Provider != "" {
+		dst.Provider = src.Provider
+	}
+	if src.Model != "" {
+		dst.Model = src.Model
+	}
 }
 
 func mergeProviderMap(dst *map[string]ProviderConfig, src map[string]ProviderConfig) {
@@ -58,6 +75,18 @@ func mergeProviderMap(dst *map[string]ProviderConfig, src map[string]ProviderCon
 	}
 	for k, v := range src {
 		(*dst)[k] = v // wholesale value replacement, see Merge doc
+	}
+}
+
+func mergeProfileMap(dst *map[string]ProfileConfig, src map[string]ProfileConfig) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string]ProfileConfig, len(src))
+	}
+	for k, v := range src {
+		(*dst)[k] = v
 	}
 }
 

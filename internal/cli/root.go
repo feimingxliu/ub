@@ -77,6 +77,7 @@ func runWithFactory(args []string, stdout, stderr io.Writer, cmdFactory func() *
 }
 
 func newRootCmd() *cobra.Command {
+	var opts runtimeOptions
 	root := &cobra.Command{
 		Use:           "ub",
 		Short:         "ub — Ulimited Blade, a coding agent in your terminal",
@@ -86,13 +87,23 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
+	root.PersistentFlags().StringVar(&opts.profile, "profile", "", "configuration profile to apply")
+	root.PersistentFlags().BoolVar(&opts.dev, "dev", false, "use the dev profile")
+	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: default, plan, or agent-approve")
 
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newChatCmd())
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newSessionsCmd())
 
 	return root
+}
+
+type runtimeOptions struct {
+	profile string
+	dev     bool
+	mode    string
 }
 
 func newRunCmd() *cobra.Command {
@@ -131,7 +142,7 @@ func newConfigCmd() *cobra.Command {
 		Use:   "show",
 		Short: "Print the merged effective configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, _, err := config.Load()
+			cfg, _, err := loadConfigForCommand(cmd)
 			if err != nil {
 				return err
 			}
@@ -148,7 +159,7 @@ func newConfigCmd() *cobra.Command {
 		Use:   "path",
 		Short: "List configuration files used in the current invocation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, files, err := config.Load()
+			_, files, err := loadConfigForCommand(cmd)
 			if err != nil {
 				return err
 			}
@@ -165,6 +176,35 @@ func newConfigCmd() *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func loadConfigForCommand(cmd *cobra.Command) (*config.Config, []string, error) {
+	opts, err := loadOptionsForCommand(cmd)
+	if err != nil {
+		return nil, nil, err
+	}
+	return config.LoadWithOptions(opts)
+}
+
+func loadOptionsForCommand(cmd *cobra.Command) (config.LoadOptions, error) {
+	root := cmd.Root()
+	profile, err := root.PersistentFlags().GetString("profile")
+	if err != nil {
+		return config.LoadOptions{}, err
+	}
+	dev, err := root.PersistentFlags().GetBool("dev")
+	if err != nil {
+		return config.LoadOptions{}, err
+	}
+	mode, err := root.PersistentFlags().GetString("mode")
+	if err != nil {
+		return config.LoadOptions{}, err
+	}
+	return config.LoadOptions{
+		Profile:       profile,
+		Dev:           dev,
+		ExecutionMode: mode,
+	}, nil
 }
 
 func newSessionsCmd() *cobra.Command {
@@ -188,7 +228,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) erro
 		return err
 	}
 
-	cfg, _, err := config.Load()
+	cfg, _, err := loadConfigForCommand(cmd)
 	if err != nil {
 		return err
 	}
