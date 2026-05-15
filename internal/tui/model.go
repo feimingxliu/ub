@@ -8,6 +8,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+
+	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
 )
 
 // Options configures the initial TUI shell.
@@ -16,6 +18,7 @@ type Options struct {
 	Output        io.Writer
 	Context       context.Context
 	Runner        Runner
+	Permissions   <-chan PermissionRequest
 	Model         string
 	ExecutionMode string
 	Cwd           string
@@ -44,6 +47,9 @@ type Model struct {
 	messages messageList
 	status   statusBar
 	runner   Runner
+	permReqs <-chan PermissionRequest
+	pending  *PermissionRequest
+	modal    permissiondialog.Model
 	ctx      context.Context
 	cancel   context.CancelFunc
 	running  bool
@@ -67,6 +73,7 @@ func NewModel(opts Options) Model {
 		input:    input,
 		messages: newMessageList(),
 		runner:   opts.Runner,
+		permReqs: opts.Permissions,
 		ctx:      ctx,
 		status: statusBar{
 			model:         defaultString(opts.Model, "unknown"),
@@ -78,11 +85,28 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return textinput.Blink
+	return tea.Batch(textinput.Blink, waitForPermission(m.permReqs))
 }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.pending != nil {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.String() {
+			case "d":
+				m.modal = m.modal.ToggleDiff()
+				return m, nil
+			default:
+				if decision, ok := permissiondialog.DecisionForKey(key.String()); ok {
+					m.pending.Response <- decision
+					m.pending = nil
+					return m, waitForPermission(m.permReqs)
+				}
+			}
+		}
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -127,6 +151,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmd := waitForEventFromUpdate(msg.event, &m)
 		return m, cmd
+	case permissionRequestMsg:
+		if !msg.ok {
+			return m, nil
+		}
+		m.pending = &msg.request
+		m.modal = permissiondialog.New(msg.request.Request)
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -142,6 +173,10 @@ func (m Model) View() string {
 	b.WriteString(m.input.View())
 	b.WriteByte('\n')
 	b.WriteString(m.status.view())
+	if m.pending != nil {
+		b.WriteString("\n\n")
+		b.WriteString(m.modal.View())
+	}
 	return b.String()
 }
 

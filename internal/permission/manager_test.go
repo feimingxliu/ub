@@ -216,6 +216,28 @@ func TestManagerAgentApproveFallbacksToHuman(t *testing.T) {
 	}
 }
 
+func TestManagerPassesApprovalReasonToHuman(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionUnsure, Reason: "needs repo context"}}
+	manager, err := NewManager(Options{
+		Asker:           asker,
+		ApprovalAgent:   agent,
+		GlobalRulesPath: testRulesPath(t),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeAgentApprove, "git status")); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	}
+	if got := asker.requests[0].ApprovalReason; got != "needs repo context" {
+		t.Fatalf("approval reason = %q, want needs repo context", got)
+	}
+}
+
 func TestManagerSessionRules(t *testing.T) {
 	t.Run("always command matches exact command", func(t *testing.T) {
 		asker := &mockAsker{decision: DecisionAlwaysCmd}

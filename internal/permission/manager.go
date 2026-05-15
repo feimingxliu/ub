@@ -86,6 +86,13 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 			if err == nil && agentRes.Decision == approval.DecisionAllow {
 				return Result{Decision: DecisionAllow, Allowed: true, Source: SourceApprovalAgent, Reason: agentRes.Reason}, nil
 			}
+			if err != nil {
+				req.ApprovalReason = err.Error()
+			} else if agentRes.Reason != "" {
+				req.ApprovalReason = agentRes.Reason
+			} else {
+				req.ApprovalReason = string(agentRes.Decision)
+			}
 		}
 	}
 

@@ -41,6 +41,7 @@ type Request struct {
 	Command        string
 	Cwd            string
 	ContextSummary string
+	ApprovalReason string
 }
 
 // Result is the permission manager output.

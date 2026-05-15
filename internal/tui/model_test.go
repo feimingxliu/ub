@@ -7,6 +7,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/permission"
+	"github.com/feimingxliu/ub/internal/tool"
 )
 
 func TestModelEchoesInputOnEnter(t *testing.T) {
@@ -123,6 +127,48 @@ func TestModelRendersToolEvents(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestModelPermissionRequestReturnsDecision(t *testing.T) {
+	response := make(chan permission.Decision, 1)
+	model := NewModel(Options{})
+	req := PermissionRequest{
+		Request: permission.Request{
+			Tool: "bash",
+			Risk: tool.RiskExec,
+			Mode: execution.ModeDefault,
+		},
+		Response: response,
+	}
+
+	updated, cmd := model.Update(permissionRequestMsg{request: req, ok: true})
+	if cmd != nil {
+		t.Fatalf("permission request returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "Permission required") || !strings.Contains(model.View(), "tool: bash") {
+		t.Fatalf("view missing modal:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(permissionRequestMsg); ok {
+			t.Fatalf("unexpected immediate permission request: %#v", msg)
+		}
+	}
+	select {
+	case got := <-response:
+		if got != permission.DecisionAlwaysGlobal {
+			t.Fatalf("decision = %q, want always global", got)
+		}
+	default:
+		t.Fatalf("no decision returned")
+	}
+	if strings.Contains(model.View(), "Permission required") {
+		t.Fatalf("modal still visible:\n%s", model.View())
 	}
 }
 

@@ -15,7 +15,8 @@ import (
 )
 
 func runTUI(cmd *cobra.Command, cfg *config.Config) error {
-	runner, err := newTUIAgentRunner(cmd, cfg)
+	permBridge := tui.NewPermissionBridge()
+	runner, err := newTUIAgentRunner(cmd, cfg, permBridge)
 	if err != nil {
 		return err
 	}
@@ -29,6 +30,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config) error {
 		Input:         cmd.InOrStdin(),
 		Output:        cmd.OutOrStdout(),
 		Runner:        runner,
+		Permissions:   permBridge.Requests(),
 		Model:         runner.model,
 		ExecutionMode: string(runner.mode),
 		Cwd:           cwd,
@@ -45,7 +47,7 @@ type tuiAgentRunner struct {
 	closedStore bool
 }
 
-func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config) (*tuiAgentRunner, error) {
+func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker) (*tuiAgentRunner, error) {
 	providerName, model, err := selectChatProvider(cfg, "", "")
 	if err != nil {
 		return nil, err
@@ -62,7 +64,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config) (*tuiAgentRunner,
 	if err != nil {
 		return nil, err
 	}
-	perm, err := permission.NewManager(permission.Options{Asker: denyAsker{}})
+	perm, err := permission.NewManager(permission.Options{Asker: asker})
 	if err != nil {
 		return nil, err
 	}
@@ -122,12 +124,6 @@ func (r *tuiAgentRunner) Close() error {
 	}
 	r.closedStore = true
 	return r.state.store.Close()
-}
-
-type denyAsker struct{}
-
-func (denyAsker) Ask(context.Context, permission.Request) (permission.Decision, error) {
-	return permission.DecisionDeny, nil
 }
 
 func convertAgentEvent(event agent.Event) tui.Event {
