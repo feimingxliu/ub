@@ -23,6 +23,7 @@
 ### Requirement: 基础聊天布局
 
 TUI SHALL 渲染消息列表、输入框和状态栏三个区域。状态栏 MUST 至少显示当前模型、执行模式、工作目录、turn 序号和运行状态。
+消息列表和状态栏 MUST 按当前终端宽度渲染，不得让长文本只能在右侧不可见区域查看。消息列表 MUST 在 TUI 内部支持滚动查看历史输出，并 SHOULD 支持 PageUp/PageDown 和鼠标滚轮滚动聊天区。消息列表 SHOULD 使用紧凑前缀区分用户、Agent、工具和系统提示，不得直接显示 `user` 或 `assistant` 作为消息标签。
 
 #### Scenario: 初始界面显示基础区域
 
@@ -34,9 +35,28 @@ TUI SHALL 渲染消息列表、输入框和状态栏三个区域。状态栏 MUS
 - **WHEN** TUI 完成一次用户发送
 - **THEN** 状态栏 MUST 显示当前 turn 序号
 
+#### Scenario: 长文本按终端宽度换行
+
+- **GIVEN** 当前终端宽度小于一条消息的显示宽度
+- **WHEN** TUI 渲染消息列表
+- **THEN** 长消息 MUST 在可见宽度内换行
+
+#### Scenario: 长输出可在 TUI 内滚动
+
+- **GIVEN** 消息列表高度超过当前终端可见区域
+- **WHEN** 用户按 PageUp 或向上滚动鼠标滚轮
+- **THEN** TUI MUST 在聊天区显示更早的消息内容
+- **THEN** 终端宿主 scrollback 不应成为查看历史输出的主要机制
+
+#### Scenario: 消息标签紧凑显示
+
+- **WHEN** TUI 渲染用户和 Agent 消息
+- **THEN** 输出 SHOULD 使用紧凑前缀区分来源
+- **THEN** 输出 MUST NOT 把消息来源明文渲染为 `user` 或 `assistant`
+
 ### Requirement: 输入回显
 
-TUI SHALL 在用户输入非空文本并按 Enter 后，把普通文本作为用户消息追加到消息列表，并清空输入框。若输入以 `/` 开头，TUI MUST 作为 slash command 本地执行，不得把该输入发送给 Agent。
+TUI SHALL 在用户输入非空文本并按 Enter 后，把普通文本作为用户消息追加到消息列表，并清空输入框。若输入以 `/` 开头，TUI MUST 作为 slash command 本地执行，不得把该输入发送给 Agent。默认输入状态下，TUI SHOULD 支持使用上下方向键浏览此前发送的用户消息，并把选中的历史消息填回输入框。
 
 #### Scenario: 发送普通文本
 
@@ -54,6 +74,44 @@ TUI SHALL 在用户输入非空文本并按 Enter 后，把普通文本作为用
 - **WHEN** 用户输入 `/help` 并按 Enter
 - **THEN** TUI MUST 执行 help 命令
 - **THEN** Agent runner MUST NOT 被调用
+
+#### Scenario: 上下方向键浏览历史输入
+
+- **GIVEN** 用户已经发送过 `first` 和 `second`
+- **WHEN** 用户在默认输入状态按上方向键
+- **THEN** 输入框 SHOULD 填入 `second`
+- **WHEN** 用户再次按上方向键
+- **THEN** 输入框 SHOULD 填入 `first`
+- **WHEN** 用户按下方向键
+- **THEN** 输入框 SHOULD 回到较新的历史输入
+
+### Requirement: 快捷键切换执行模式
+
+TUI SHALL 在主输入界面支持按 Shift+Tab 在 `default`、`plan`、`agent-approve` 三种执行模式之间循环切换，并同步状态栏和后续 Agent turn。Tab MUST 保留给输入补全交互，不得在普通输入状态下切换模式。
+
+#### Scenario: Shift+Tab 切换模式
+
+- **GIVEN** 当前执行模式为 `default`
+- **WHEN** 用户按 Shift+Tab
+- **THEN** TUI MUST 切换为 `plan`
+- **WHEN** 用户再次按 Shift+Tab
+- **THEN** TUI MUST 切换为 `agent-approve`
+
+### Requirement: TUI session 恢复
+
+系统 SHALL 支持在 TUI 启动时恢复已有 session。`ub --resume` MUST 恢复当前 workspace 最近更新的 session；`ub --resume=<id>` 或 `ub --resume <id>` MUST 恢复指定 session。恢复后 TUI MUST 渲染可显示的历史消息，并让下一轮 Agent turn 继续使用该 session 的 rollout 历史。
+
+#### Scenario: 启动恢复最近 session
+
+- **GIVEN** 当前 workspace 已存在历史 session
+- **WHEN** 用户运行 `ub --resume`
+- **THEN** TUI MUST 加载最近更新的 session 历史
+
+#### Scenario: 启动恢复指定 session
+
+- **GIVEN** 当前 workspace 存在 ID 为 `sess_1` 的 session
+- **WHEN** 用户运行 `ub --resume=sess_1` 或 `ub --resume sess_1`
+- **THEN** TUI MUST 加载 `sess_1` 的历史和下一轮 turn
 
 ### Requirement: TUI 退出
 

@@ -88,6 +88,7 @@ func runWithFactory(args []string, stdout, stderr io.Writer, cmdFactory func() *
 
 func newRootCmd() *cobra.Command {
 	var opts runtimeOptions
+	const latestResume = "latest"
 	root := &cobra.Command{
 		Use:           "ub",
 		Short:         "ub — Ulimited Blade, a coding agent in your terminal",
@@ -95,18 +96,33 @@ func newRootCmd() *cobra.Command {
 		Version:       Version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if opts.resume == latestResume && len(args) <= 1 {
+				return nil
+			}
+			if len(args) == 0 {
+				return nil
+			}
+			return fmt.Errorf("unknown command %q", args[0])
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, _, err := loadConfigForCommand(cmd)
 			if err != nil {
 				return err
 			}
-			return runTUI(cmd, cfg)
+			resume := opts.resume
+			if resume == latestResume && len(args) == 1 {
+				resume = args[0]
+			}
+			return runTUI(cmd, cfg, resume)
 		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringVar(&opts.profile, "profile", "", "configuration profile to apply")
 	root.PersistentFlags().BoolVar(&opts.dev, "dev", false, "use the dev profile")
 	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: default, plan, or agent-approve")
+	root.Flags().StringVar(&opts.resume, "resume", "", "resume the latest TUI session, or the specified id with --resume=<id>")
+	root.Flags().Lookup("resume").NoOptDefVal = latestResume
 
 	root.AddCommand(newRunCmd())
 	root.AddCommand(newChatCmd())
@@ -121,6 +137,7 @@ type runtimeOptions struct {
 	profile string
 	dev     bool
 	mode    string
+	resume  string
 }
 
 func newRunCmd() *cobra.Command {

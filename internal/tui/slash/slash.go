@@ -14,16 +14,26 @@ type Command struct {
 	Raw  string
 }
 
-var supported = map[string]struct{}{
-	"model":    {},
-	"mode":     {},
-	"clear":    {},
-	"sessions": {},
-	"help":     {},
-	"quit":     {},
-	"config":   {},
-	"profile":  {},
+// Spec describes a supported slash command for help and completions.
+type Spec struct {
+	Name        string
+	Usage       string
+	Description string
 }
+
+var specs = []Spec{
+	{Name: "model", Usage: "/model [model]", Description: "show models or switch to a supported model"},
+	{Name: "mode", Usage: "/mode <default|plan|agent-approve>", Description: "switch execution mode"},
+	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
+	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},
+	{Name: "help", Usage: "/help", Description: "show slash command help"},
+	{Name: "quit", Usage: "/quit", Description: "exit the TUI"},
+	{Name: "exit", Usage: "/exit", Description: "exit the TUI"},
+	{Name: "config", Usage: "/config", Description: "show current model, mode, and cwd"},
+	{Name: "profile", Usage: "/profile <name>", Description: "show profile restart guidance"},
+}
+
+var supported = supportedSet(specs)
 
 // Parse parses input that starts with '/'.
 func Parse(input string) (Command, error) {
@@ -45,5 +55,38 @@ func Parse(input string) (Command, error) {
 
 // Supported returns the supported command names in display order.
 func Supported() []string {
-	return []string{"model", "mode", "clear", "sessions", "help", "quit", "config", "profile"}
+	out := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, spec.Name)
+	}
+	return out
+}
+
+// Specs returns command metadata in display order.
+func Specs() []Spec {
+	return append([]Spec(nil), specs...)
+}
+
+// Match returns command metadata whose name has the supplied prefix.
+func Match(prefix string) []Spec {
+	prefix = strings.TrimPrefix(strings.TrimSpace(prefix), "/")
+	if strings.Contains(prefix, " ") {
+		prefix = strings.Fields(prefix)[0]
+	}
+	prefix = strings.ToLower(prefix)
+	var out []Spec
+	for _, spec := range specs {
+		if prefix == "" || strings.HasPrefix(spec.Name, prefix) {
+			out = append(out, spec)
+		}
+	}
+	return out
+}
+
+func supportedSet(specs []Spec) map[string]struct{} {
+	out := make(map[string]struct{}, len(specs))
+	for _, spec := range specs {
+		out[spec.Name] = struct{}{}
+	}
+	return out
 }

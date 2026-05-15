@@ -144,10 +144,11 @@
 ### 4.11 TUI
 
 - F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / context % / cwd）
-- F-TUI-2：输入框支持多行编辑、命令补全（`/` 开头）
+- F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式；聊天区支持 PageUp/PageDown 和鼠标滚轮滚动历史输出
 - F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
-- F-TUI-5：命令：`/model`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`
+- F-TUI-5：命令：`/model`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session
+- F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
 
 ### 4.12 开发模式与环境诊断
 

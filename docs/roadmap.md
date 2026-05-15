@@ -620,7 +620,8 @@
 - **依赖**：I-09 / I-22
 - **In Scope**：
   - `ub --resume`（拉最近一个 session）
-  - `ub --resume <id>`
+  - `ub --resume=<id>` / `ub --resume <id>`
+  - TUI 内 `/sessions` 选择或切换历史 session
   - TUI 启动时如果有最近 session 询问是否 resume
   - 恢复 session 时还原最近一次 `ModeSwitch`，否则使用当前 CLI/config mode
 - **Out of Scope**：跨设备同步

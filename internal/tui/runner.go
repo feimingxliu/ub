@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -13,8 +14,39 @@ type Runner interface {
 
 // ControlRunner optionally lets slash commands update future runs.
 type ControlRunner interface {
-	SetModel(model string)
+	SetModel(model string) error
 	SetMode(mode string) error
+	Models() []string
+}
+
+// InitialMessage is a persisted message rendered when a TUI session is loaded.
+type InitialMessage struct {
+	Role string
+	Text string
+}
+
+// SessionInfo is one selectable persisted session.
+type SessionInfo struct {
+	ID        string
+	Title     string
+	Model     string
+	UpdatedAt time.Time
+	Current   bool
+}
+
+// SessionState is the restored state for a selected session.
+type SessionState struct {
+	ID       string
+	Model    string
+	Turn     int
+	Messages []InitialMessage
+}
+
+// SessionRunner optionally lets slash commands list and switch persisted sessions.
+type SessionRunner interface {
+	ListSessions(ctx context.Context) ([]SessionInfo, error)
+	SwitchSession(ctx context.Context, id string) (SessionState, error)
+	CurrentSessionID() string
 }
 
 // EventType identifies a TUI stream event.

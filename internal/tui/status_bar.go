@@ -11,10 +11,10 @@ type statusBar struct {
 	width         int
 }
 
-func (s statusBar) view() string {
+func (s statusBar) view(width int) string {
 	state := "idle"
 	if s.running {
 		state = "running"
 	}
-	return fmt.Sprintf("model: %s | mode: %s | turn: %d | state: %s | cwd: %s", s.model, s.executionMode, s.turn, state, s.cwd)
+	return truncateText(fmt.Sprintf("model: %s | mode: %s | turn: %d | state: %s | cwd: %s", s.model, s.executionMode, s.turn, state, s.cwd), width)
 }

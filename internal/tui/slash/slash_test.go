@@ -12,6 +12,16 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseExit(t *testing.T) {
+	cmd, err := Parse("/exit")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "exit" {
+		t.Fatalf("command = %#v, want exit", cmd)
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	for _, input := range []string{"hello", "/", "/unknown"} {
 		t.Run(input, func(t *testing.T) {
@@ -19,5 +29,15 @@ func TestParseErrors(t *testing.T) {
 				t.Fatalf("Parse(%q) returned nil error", input)
 			}
 		})
+	}
+}
+
+func TestMatchReturnsUsage(t *testing.T) {
+	matches := Match("/m")
+	if len(matches) != 2 {
+		t.Fatalf("matches = %#v, want model and mode", matches)
+	}
+	if matches[0].Usage != "/model [model]" || matches[1].Usage != "/mode <default|plan|agent-approve>" {
+		t.Fatalf("matches = %#v", matches)
 	}
 }

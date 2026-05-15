@@ -8,7 +8,8 @@
 
 ### Requirement: Slash 命令解析
 
-系统 SHALL 在 TUI 中识别以 `/` 开头的输入，并解析为 slash command。支持的命令 MUST 至少包含 `model`、`mode`、`clear`、`sessions`、`help`、`quit`、`config`、`profile`。未知命令 MUST 返回可读错误，不得发送给 Agent。
+系统 SHALL 在 TUI 中识别以 `/` 开头的输入，并解析为 slash command。支持的命令 MUST 至少包含 `model`、`mode`、`clear`、`sessions`、`help`、`quit`、`exit`、`config`、`profile`。未知命令 MUST 返回可读错误，不得发送给 Agent。
+当输入框内容以 `/` 开头但尚未提交时，TUI SHOULD 显示匹配命令候选和每条命令的用法说明。候选存在时，上下方向键 SHOULD 移动候选选中项，Tab SHOULD 补全当前选中的命令名，而不是切换执行模式。对于未补全成完整命令的 slash 输入，Enter SHOULD 先选择当前候选，不得直接执行或报未知命令。
 
 #### Scenario: 解析 model 命令
 
@@ -20,9 +21,28 @@
 - **WHEN** 用户输入 `/unknown`
 - **THEN** TUI MUST 显示未知命令错误，且不调用 Agent
 
+#### Scenario: slash 候选提示
+
+- **WHEN** 用户在输入框输入 `/m`
+- **THEN** TUI SHOULD 显示 `/model [model]` 和 `/mode <default|plan|agent-approve>` 的候选说明
+
+#### Scenario: Tab 补全 slash 命令
+
+- **WHEN** 用户在输入框输入 `/m`
+- **WHEN** 用户按 Tab
+- **THEN** TUI SHOULD 把输入补全为一个匹配的 slash 命令名
+
+#### Scenario: 方向键选择 slash 候选
+
+- **WHEN** 用户在输入框输入 `/m`
+- **WHEN** 用户按下方向键
+- **THEN** TUI SHOULD 移动 slash 命令候选选中项
+- **WHEN** 用户按 Enter
+- **THEN** TUI SHOULD 把输入补全为选中的 slash 命令名
+
 ### Requirement: 本地命令执行
 
-TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表；`/help` MUST 显示支持的命令；`/quit` MUST 退出 TUI。
+TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表；`/help` MUST 显示支持的命令；`/quit` 和 `/exit` MUST 退出 TUI。
 
 #### Scenario: clear 清空消息
 
@@ -35,18 +55,60 @@ TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表；`/h
 - **WHEN** 用户输入 `/quit`
 - **THEN** TUI MUST 返回退出命令
 
+#### Scenario: exit 退出
+
+- **WHEN** 用户输入 `/exit`
+- **THEN** TUI MUST 返回退出命令
+
 ### Requirement: 运行时状态命令
 
-`/model <id>` 和 `/mode <mode>` SHALL 更新 TUI 状态栏，并在 runner 支持时同步到后续 Agent turn。`/config`、`/sessions`、`/profile` SHALL 输出当前状态或明确操作提示。
+`/model <id>`、`/mode <mode>` 和 `/sessions` SHALL 更新 TUI 状态栏或会话状态，并在 runner 支持时同步到后续 Agent turn。`/model` 不带参数时 MUST 打开当前 provider 的可选模型选择列表，不得把模型切为空值。显式指定模型时，TUI MUST 校验该模型属于当前 provider 的候选列表；非法模型 MUST 保持当前模型不变并显示错误。`/sessions` 不带参数时 MUST 打开当前 workspace 的 session 选择列表；`/sessions <id>` MUST 切换到指定 session。`/config`、`/profile` SHALL 输出当前状态或明确操作提示。
 
 #### Scenario: model 切换
 
+- **GIVEN** 当前 provider 的候选模型包含 `fake/next`
 - **WHEN** 用户输入 `/model fake/next`
 - **THEN** 状态栏 MUST 显示 `fake/next`
 - **THEN** 后续 Agent turn MUST 使用该 model
+
+#### Scenario: model 无参数打开选择列表
+
+- **WHEN** 用户输入 `/model`
+- **THEN** TUI MUST 显示当前 provider 的候选模型选择列表
+- **THEN** 当前模型 MUST 保持不变
+
+#### Scenario: model 选择列表生效
+
+- **GIVEN** `/model` 已打开候选模型选择列表
+- **WHEN** 用户选择一个候选模型并确认
+- **THEN** 状态栏 MUST 显示被选中的 model
+- **THEN** 后续 Agent turn MUST 使用该 model
+
+#### Scenario: 非法 model 不生效
+
+- **GIVEN** 当前 provider 的候选模型不包含 `fake/missing`
+- **WHEN** 用户输入 `/model fake/missing`
+- **THEN** TUI MUST 显示错误
+- **THEN** 当前模型 MUST 保持不变
 
 #### Scenario: mode 切换
 
 - **WHEN** 用户输入 `/mode plan`
 - **THEN** 状态栏 MUST 显示 `plan`
 - **THEN** 后续 Agent turn MUST 使用 plan execution mode
+
+#### Scenario: sessions 选择列表切换
+
+- **GIVEN** 当前 workspace 存在多个 session
+- **WHEN** 用户输入 `/sessions`
+- **THEN** TUI MUST 显示 session 选择列表
+- **WHEN** 用户选择一个 session 并确认
+- **THEN** TUI MUST 加载该 session 的历史
+- **THEN** 后续 Agent turn MUST 继续该 session
+
+#### Scenario: sessions 指定 ID 切换
+
+- **GIVEN** 当前 workspace 存在 ID 为 `sess_1` 的 session
+- **WHEN** 用户输入 `/sessions sess_1`
+- **THEN** TUI MUST 加载 `sess_1` 的历史
+- **THEN** 后续 Agent turn MUST 继续 `sess_1`
