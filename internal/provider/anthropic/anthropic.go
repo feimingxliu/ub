@@ -261,6 +261,13 @@ func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
 			switch event.ContentBlock.Type {
 			case "", "text":
 				continue
+			case "thinking":
+				if event.ContentBlock.Thinking != "" {
+					return provider.Event{Type: provider.EventReasoningDelta, Reasoning: event.ContentBlock.Thinking}, nil
+				}
+				continue
+			case "redacted_thinking":
+				continue
 			case "tool_use":
 				s.startToolUse(event.Index, event.ContentBlock)
 			default:
@@ -273,6 +280,10 @@ func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
 				return provider.Event{Type: provider.EventTextDelta, Text: delta.Text}, nil
 			case "input_json_delta":
 				s.appendToolInput(event.Index, delta.PartialJSON)
+			case "thinking_delta":
+				return provider.Event{Type: provider.EventReasoningDelta, Reasoning: delta.Thinking}, nil
+			case "signature_delta":
+				continue
 			default:
 				return provider.Event{}, fmt.Errorf("anthropic streaming delta %q is not supported", delta.Type)
 			}

@@ -145,6 +145,42 @@ func TestStreamCancelAndClose(t *testing.T) {
 	}
 }
 
+func TestChatStreamsReasoningContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"checking"},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("openai", config.ProviderConfig{
+		Type:    "openai",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model:    "gpt-test",
+		Messages: []message.Message{message.Text(message.RoleUser, "think")},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	event, err := stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventReasoningDelta || event.Reasoning != "checking" {
+		t.Fatalf("reasoning event = %#v, err=%v", event, err)
+	}
+	event, err = stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventTextDelta || event.Text != "answer" {
+		t.Fatalf("text event = %#v, err=%v", event, err)
+	}
+}
+
 func TestChatSendsToolsAndToolMessages(t *testing.T) {
 	var requestBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

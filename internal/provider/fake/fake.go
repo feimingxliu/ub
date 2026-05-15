@@ -101,6 +101,11 @@ func TextDelta(text string) provider.Event {
 	return provider.Event{Type: provider.EventTextDelta, Text: text}
 }
 
+// ReasoningDelta creates a reasoning_delta script event.
+func ReasoningDelta(text string) provider.Event {
+	return provider.Event{Type: provider.EventReasoningDelta, Reasoning: text}
+}
+
 // ToolCall creates a tool_call script event.
 func ToolCall(name string, input any) provider.Event {
 	raw, err := json.Marshal(input)
@@ -166,6 +171,12 @@ func eventFromConfig(item config.ProviderScriptEvent) (provider.Event, error) {
 	switch strings.TrimSpace(item.Type) {
 	case string(provider.EventTextDelta):
 		return TextDelta(item.Text), nil
+	case string(provider.EventReasoningDelta):
+		text := item.Reasoning
+		if text == "" {
+			text = item.Text
+		}
+		return ReasoningDelta(text), nil
 	case string(provider.EventToolCall):
 		raw, err := json.Marshal(item.Input)
 		if err != nil {

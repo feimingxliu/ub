@@ -139,6 +139,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **loop detection**：Crush 有 `loop_detection.go`（同一 tool call 重复 N 次抑制），V2 引入
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
 - **执行模式**：`mode` 从 session / CLI / profile 注入，影响 write/exec tool 的放行路径；模式切换写 `ModeSwitch` 事件
+- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；工具 activity 只展示白名单摘要、截断长文本并遮蔽 secret。
 
 ## 4. Tool 系统
 
@@ -233,7 +234,7 @@ type ModelInfo struct {
 }
 
 type Stream interface {
-    Next(ctx context.Context) (Event, error)  // text delta / tool call / usage / done
+    Next(ctx context.Context) (Event, error)  // text delta / reasoning delta / tool call / usage / done
     Close() error
 }
 ```
@@ -521,6 +522,7 @@ UI 流程：
       type: fake
       script:
         - { type: text_delta, text: "Looking at the file...\n" }
+        - { type: reasoning_delta, reasoning: "checking which file to read" }
         - { type: tool_call, name: "fs.read", input: {path: "main.go"} }
         - { type: text_delta, text: "Found 3 functions." }
         - { type: done }
@@ -529,6 +531,7 @@ UI 流程：
   ```go
   p := fake.New(fake.Script{
       fake.TextDelta("hi"),
+      fake.ReasoningDelta("checking context"),
       fake.ToolCall("fs.read", map[string]any{"path": "x"}),
       fake.Done(),
   })

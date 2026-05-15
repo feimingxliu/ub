@@ -132,7 +132,7 @@ func TestModelIgnoresSecondEnterWhileRunning(t *testing.T) {
 	if secondCmd != nil {
 		t.Fatalf("second enter returned unexpected command")
 	}
-	if got, want := model.MessageTexts(), []string{"first", ""}; !reflect.DeepEqual(got, want) {
+	if got, want := model.MessageTexts(), []string{"first", "Thinking..."}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("messages = %#v, want %#v", got, want)
 	}
 }
@@ -155,6 +155,64 @@ func TestModelRendersToolEvents(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestModelRendersActivityEvents(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "checking repository context"},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "running", Summary: "path=main.go"},
+		{Type: EventActivity, ActivityKind: "permission", ToolName: "bash", Source: "approval_agent", Decision: "allow", Allowed: true, Reason: "read-only command"},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "done", Summary: "path=main.go", Content: "package main"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "inspect")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	view := model.View()
+	for _, want := range []string{
+		"~ thinking: checking repository context",
+		"~ Read path=main.go",
+		"~ permission approval_agent allow bash: read-only command",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "assistant:") || strings.Contains(view, "user:") {
+		t.Fatalf("view should not render explicit role labels:\n%s", view)
+	}
+}
+
+func TestToolActivityUpdatesInPlace(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 1
+	model.events = make(chan Event)
+
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "queued", Summary: "path=main.go"},
+	})
+	if cmd == nil {
+		t.Fatal("activity event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	updated, _ = model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "done", Summary: "path=main.go", Content: "file content"},
+	})
+	model = assertModel(t, updated)
+
+	got := model.MessageTexts()
+	if len(got) != 1 || got[0] != "Read path=main.go" {
+		t.Fatalf("messages = %#v, want single updated tool activity", got)
 	}
 }
 
@@ -428,12 +486,13 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 		runID: 4,
 		ok:    true,
 		event: Event{
-			Type:     EventPermission,
-			ToolName: "bash",
-			Source:   "approval_agent",
-			Decision: "allow",
-			Allowed:  true,
-			Reason:   "read-only command",
+			Type:         EventActivity,
+			ActivityKind: "permission",
+			ToolName:     "bash",
+			Source:       "approval_agent",
+			Decision:     "allow",
+			Allowed:      true,
+			Reason:       "read-only command",
 		},
 	})
 	if cmd == nil {
@@ -639,6 +698,26 @@ func TestMessageAreaScrollsWithinWindow(t *testing.T) {
 	}
 }
 
+func TestActivityMessagesScrollWithinWindow(t *testing.T) {
+	model := NewModel(Options{})
+	for _, text := range []string{"activity-01", "activity-02", "activity-03", "activity-04", "activity-05", "activity-06"} {
+		model.messages.append(activityRole, text)
+	}
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	model = assertModel(t, updated)
+
+	view := model.View()
+	if !strings.Contains(view, "activity-06") || strings.Contains(view, "activity-01") {
+		t.Fatalf("initial view should show bottom of activity messages:\n%s", view)
+	}
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	model = assertModel(t, updated)
+	view = model.View()
+	if !strings.Contains(view, "activity-03") || strings.Contains(view, "activity-06") {
+		t.Fatalf("pgup did not scroll activity messages:\n%s", view)
+	}
+}
+
 func TestMessageAreaScrollsDuringPermission(t *testing.T) {
 	var messages []InitialMessage
 	for _, text := range []string{"message-01", "message-02", "message-03", "message-04", "message-05", "message-06"} {
@@ -743,6 +822,30 @@ func TestViewWrapsLongMessagesToWidth(t *testing.T) {
 	}
 	if !strings.Contains(view, "> abcdefghijklmnopqrstuv") || !strings.Contains(view, "  wxyz") {
 		t.Fatalf("wrapped message missing expected fragments:\n%s", view)
+	}
+}
+
+func TestViewWrapsLongActivityAndKeepsRedaction(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.append(activityRole, activityEventText(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolName:     "bash",
+		Status:       "running",
+		Summary:      "cmd=[redacted], cwd=/workspace, detail=abcdefghijklmnopqrstuvwxyz",
+	}))
+
+	view := model.View()
+	if strings.Contains(view, "secret-token") {
+		t.Fatalf("view leaked secret:\n%s", view)
+	}
+	if !strings.Contains(view, "[redacted]") || !strings.Contains(view, "~ Writing command...") {
+		t.Fatalf("activity view missing summary:\n%s", view)
+	}
+	if strings.Contains(view, "~ Writing command... cmd=[redacted], cwd=/workspace, detail=abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("activity line was not wrapped:\n%s", view)
 	}
 }
 

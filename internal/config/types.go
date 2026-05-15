@@ -82,6 +82,7 @@ type ProviderConfig struct {
 type ProviderScriptEvent struct {
 	Type         string `yaml:"type,omitempty"          json:"type,omitempty"`
 	Text         string `yaml:"text,omitempty"          json:"text,omitempty"`
+	Reasoning    string `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
 	ToolUseID    string `yaml:"tool_use_id,omitempty"   json:"tool_use_id,omitempty"`
 	ToolName     string `yaml:"tool_name,omitempty"     json:"tool_name,omitempty"`
 	Input        any    `yaml:"input,omitempty"         json:"input,omitempty"`

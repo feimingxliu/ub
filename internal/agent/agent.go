@@ -153,13 +153,6 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 		}
 		for _, call := range consumed.toolCalls {
 			result := a.runTool(ctx, call)
-			a.emit(Event{
-				Type:      EventToolCallEnd,
-				ToolUseID: call.ID,
-				ToolName:  call.Name,
-				Content:   result.Content,
-				IsError:   result.IsError,
-			})
 			messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
 			if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 				return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
@@ -187,6 +180,8 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 		case provider.EventTextDelta:
 			text.WriteString(event.Text)
 			a.emit(Event{Type: EventDeltaText, Text: event.Text})
+		case provider.EventReasoningDelta:
+			a.emitThinkingActivity(reasoningText(event.Reasoning, event.Text))
 		case provider.EventToolCall:
 			call := toolCall{
 				ID:    strings.TrimSpace(event.ToolUseID),
@@ -198,7 +193,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			}
 			calls = append(calls, call)
 			blocks = append(blocks, message.ToolUseBlock(call.ID, call.Name, call.Input))
-			a.emit(Event{Type: EventToolCallStart, ToolUseID: call.ID, ToolName: call.Name})
+			a.emitToolActivity(call, "queued", summarizeToolInput(call.Name, call.Input), "", false)
 		case provider.EventUsage:
 			if event.Usage != nil {
 				if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
@@ -232,13 +227,17 @@ done:
 func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
-		return tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
+		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
+		a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		return result
 	}
 	var preview *tool.Preview
 	if previewable, ok := t.(tool.PreviewableTool); ok {
 		pv, err := previewable.Preview(ctx, call.Input)
 		if err != nil {
-			return tool.Result{Content: fmt.Sprintf("preview %q: %v", call.Name, err), IsError: true}
+			result := tool.Result{Content: fmt.Sprintf("preview %q: %v", call.Name, err), IsError: true}
+			a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			return result
 		}
 		preview = &pv
 	}
@@ -253,30 +252,36 @@ func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 			ApprovalObserver: a.permissionObserver(call.Name, &approvalObserved),
 		})
 		if err != nil {
-			return tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
+			a.emitPermissionActivity(call.Name, "permission", "error", err.Error(), false)
+			result := tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
+			a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			return result
 		}
 		if (t.Risk() == tool.RiskExec || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
-			a.emit(Event{
-				Type:     EventPermission,
-				ToolName: call.Name,
-				Decision: string(result.Decision),
-				Source:   string(result.Source),
-				Reason:   result.Reason,
-				Allowed:  result.Allowed,
-			})
+			a.emitPermissionActivity(call.Name, string(result.Source), string(result.Decision), result.Reason, result.Allowed)
 		}
 		if !result.Allowed {
 			reason := strings.TrimSpace(result.Reason)
 			if reason == "" {
 				reason = string(result.Decision)
 			}
-			return tool.Result{Content: fmt.Sprintf("permission denied for %q: %s", call.Name, reason), IsError: true}
+			result := tool.Result{Content: fmt.Sprintf("permission denied for %q: %s", call.Name, reason), IsError: true}
+			a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			return result
 		}
 	}
+	a.emitToolActivity(call, "running", summarizeToolInput(call.Name, call.Input), "", false)
 	result, err := t.Execute(ctx, call.Input)
 	if err != nil {
-		return tool.Result{Content: err.Error(), IsError: true}
+		result := tool.Result{Content: err.Error(), IsError: true}
+		a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		return result
 	}
+	status := "done"
+	if result.IsError {
+		status = "failed"
+	}
+	a.emitToolActivity(call, status, summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), result.IsError)
 	return result
 }
 
@@ -291,14 +296,7 @@ func (a *Agent) permissionObserver(toolName string, observed *bool) func(permiss
 			decision = "error"
 			reason = obs.Err.Error()
 		}
-		a.emit(Event{
-			Type:     EventPermission,
-			ToolName: toolName,
-			Decision: decision,
-			Source:   string(permission.SourceApprovalAgent),
-			Reason:   reason,
-			Allowed:  obs.Err == nil && decision == "allow",
-		})
+		a.emitPermissionActivity(toolName, string(permission.SourceApprovalAgent), decision, reason, obs.Err == nil && decision == "allow")
 	}
 }
 

@@ -483,6 +483,8 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 				return recordChatError(cmd, state, err)
 			}
 			assistant.WriteString(event.Text)
+		case provider.EventReasoningDelta:
+			continue
 		case provider.EventUsage:
 			if event.Usage != nil {
 				usageEvent, err := rollout.Usage(state.sessionID, state.nextTurn, event.Usage.InputTokens, event.Usage.OutputTokens)

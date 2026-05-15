@@ -15,6 +15,7 @@ import (
 func TestScriptEmitsEventsInOrder(t *testing.T) {
 	p := New(Script{
 		TextDelta("hi"),
+		ReasoningDelta("thinking"),
 		ToolCall("fs.read", map[string]any{"path": "main.go"}),
 		Usage(3, 5),
 		Done(),
@@ -31,6 +32,10 @@ func TestScriptEmitsEventsInOrder(t *testing.T) {
 	ev, err := stream.Next(context.Background())
 	if err != nil || ev.Type != provider.EventTextDelta || ev.Text != "hi" {
 		t.Fatalf("text event = %#v, err=%v", ev, err)
+	}
+	ev, err = stream.Next(context.Background())
+	if err != nil || ev.Type != provider.EventReasoningDelta || ev.Reasoning != "thinking" {
+		t.Fatalf("reasoning event = %#v, err=%v", ev, err)
 	}
 	ev, err = stream.Next(context.Background())
 	if err != nil || ev.Type != provider.EventToolCall || ev.ToolName != "fs.read" {
@@ -59,6 +64,7 @@ func TestFromConfigScript(t *testing.T) {
 		Type: "fake",
 		Script: []config.ProviderScriptEvent{
 			{Type: "text_delta", Text: "configured"},
+			{Type: "reasoning_delta", Reasoning: "configured thinking"},
 			{Type: "done"},
 		},
 	})
@@ -72,6 +78,10 @@ func TestFromConfigScript(t *testing.T) {
 	ev, err := stream.Next(context.Background())
 	if err != nil || ev.Text != "configured" {
 		t.Fatalf("configured event = %#v, err=%v", ev, err)
+	}
+	ev, err = stream.Next(context.Background())
+	if err != nil || ev.Type != provider.EventReasoningDelta || ev.Reasoning != "configured thinking" {
+		t.Fatalf("configured reasoning event = %#v, err=%v", ev, err)
 	}
 }
 

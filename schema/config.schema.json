@@ -187,6 +187,9 @@
         "text": {
           "type": "string"
         },
+        "reasoning": {
+          "type": "string"
+        },
         "tool_use_id": {
           "type": "string"
         },

@@ -451,6 +451,21 @@ func convertAgentEvent(event agent.Event) tui.Event {
 	switch event.Type {
 	case agent.EventDeltaText:
 		return tui.Event{Type: tui.EventDeltaText, Text: event.Text}
+	case agent.EventActivity:
+		return tui.Event{
+			Type:         tui.EventActivity,
+			ToolUseID:    event.ToolUseID,
+			ToolName:     event.ToolName,
+			Content:      event.Content,
+			ActivityKind: string(event.ActivityKind),
+			Status:       event.Status,
+			Summary:      event.Summary,
+			Decision:     event.Decision,
+			Source:       event.Source,
+			Reason:       event.Reason,
+			Allowed:      event.Allowed,
+			IsError:      event.IsError,
+		}
 	case agent.EventToolCallStart:
 		return tui.Event{Type: tui.EventToolCallStart, ToolName: event.ToolName}
 	case agent.EventToolCallEnd:

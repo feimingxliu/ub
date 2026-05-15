@@ -53,11 +53,12 @@ type Stream interface {
 type EventType string
 
 const (
-	EventTextDelta EventType = "text_delta"
-	EventToolCall  EventType = "tool_call"
-	EventUsage     EventType = "usage"
-	EventDone      EventType = "done"
-	EventError     EventType = "error"
+	EventTextDelta      EventType = "text_delta"
+	EventReasoningDelta EventType = "reasoning_delta"
+	EventToolCall       EventType = "tool_call"
+	EventUsage          EventType = "usage"
+	EventDone           EventType = "done"
+	EventError          EventType = "error"
 )
 
 // Usage reports token usage when a provider exposes it.
@@ -70,6 +71,7 @@ type Usage struct {
 type Event struct {
 	Type      EventType       `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Reasoning string          `json:"reasoning,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	ToolName  string          `json:"tool_name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`

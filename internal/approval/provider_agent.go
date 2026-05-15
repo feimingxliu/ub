@@ -71,6 +71,8 @@ func (a *ProviderAgent) ReviewCommand(ctx context.Context, req Request) (Result,
 		switch event.Type {
 		case provider.EventTextDelta:
 			raw.WriteString(event.Text)
+		case provider.EventReasoningDelta:
+			continue
 		case provider.EventDone:
 			return parseReviewResult(raw.String())
 		case provider.EventError:

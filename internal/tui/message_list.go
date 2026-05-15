@@ -8,6 +8,7 @@ import (
 
 const userRole = "user"
 const assistantRole = "assistant"
+const activityRole = "activity"
 const toolRole = "tool"
 const systemRole = "system"
 const errorRole = "error"
@@ -15,6 +16,7 @@ const errorRole = "error"
 type message struct {
 	role string
 	text string
+	key  string
 }
 
 type messageList struct {
@@ -27,6 +29,34 @@ func newMessageList() messageList {
 
 func (l *messageList) append(role, text string) {
 	l.items = append(l.items, message{role: role, text: text})
+}
+
+func (l *messageList) appendOrUpdate(role, key, text string) {
+	if strings.TrimSpace(key) == "" {
+		l.append(role, text)
+		return
+	}
+	for i := len(l.items) - 1; i >= 0; i-- {
+		item := &l.items[i]
+		if item.role == role && item.key == key {
+			item.text = text
+			return
+		}
+	}
+	l.items = append(l.items, message{role: role, text: text, key: key})
+}
+
+func (l *messageList) removeKey(role, key string) {
+	if strings.TrimSpace(key) == "" {
+		return
+	}
+	for i := len(l.items) - 1; i >= 0; i-- {
+		if l.items[i].role != role || l.items[i].key != key {
+			continue
+		}
+		l.items = append(l.items[:i], l.items[i+1:]...)
+		return
+	}
 }
 
 func (l *messageList) clear() {
@@ -119,6 +149,8 @@ func messagePrefix(role string) (prefix, indent string) {
 		return "> ", "  "
 	case assistantRole:
 		return "  ", "  "
+	case activityRole:
+		return "~ ", "  "
 	case toolRole:
 		return "$ ", "  "
 	case systemRole:
@@ -136,6 +168,8 @@ func normalizeRole(role string) string {
 		return userRole
 	case assistantRole:
 		return assistantRole
+	case activityRole:
+		return activityRole
 	case toolRole:
 		return toolRole
 	case errorRole:

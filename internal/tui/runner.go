@@ -63,6 +63,7 @@ type EventType string
 
 const (
 	EventDeltaText     EventType = "delta_text"
+	EventActivity      EventType = "activity"
 	EventToolCallStart EventType = "tool_call_start"
 	EventToolCallEnd   EventType = "tool_call_end"
 	EventPermission    EventType = "permission"
@@ -72,16 +73,20 @@ const (
 
 // Event is one Agent-to-TUI progress message.
 type Event struct {
-	Type     EventType
-	Text     string
-	ToolName string
-	Content  string
-	Decision string
-	Source   string
-	Reason   string
-	Allowed  bool
-	IsError  bool
-	Err      error
+	Type         EventType
+	Text         string
+	ToolUseID    string
+	ToolName     string
+	Content      string
+	ActivityKind string
+	Status       string
+	Summary      string
+	Decision     string
+	Source       string
+	Reason       string
+	Allowed      bool
+	IsError      bool
+	Err          error
 }
 
 type streamEventMsg struct {

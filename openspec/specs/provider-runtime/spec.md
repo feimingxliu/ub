@@ -38,7 +38,7 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 
 ### Requirement: Fake provider 脚本
 
-系统 SHALL 提供 `internal/provider/fake`，可按预设脚本顺序产生 `text_delta`、`tool_call`、`usage`、`done` 和 `error` 事件。fake provider MUST 支持通过 Go 代码直接构造，也 MUST 支持从配置脚本构造。
+系统 SHALL 提供 `internal/provider/fake`，可按预设脚本顺序产生 `text_delta`、`reasoning_delta`、`tool_call`、`usage`、`done` 和 `error` 事件。fake provider MUST 支持通过 Go 代码直接构造，也 MUST 支持从配置脚本构造。
 
 #### Scenario: Go 代码构造脚本
 
@@ -56,9 +56,36 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 - **WHEN** fake 脚本包含 tool_call 事件，输入为 JSON 对象
 - **THEN** provider 事件 MUST 保留工具名和原始 JSON input
 
+#### Scenario: reasoning 脚本事件
+
+- **WHEN** fake 脚本包含 `reasoning_delta` 事件
+- **THEN** provider stream MUST 返回 reasoning 字段，且该内容不作为 `text_delta` 输出
+
+### Requirement: Provider reasoning events
+
+Provider runtime SHALL 支持可选 `reasoning_delta` 事件，用于承载 provider 明确返回且允许展示的 reasoning/thinking 摘要。Provider adapter MUST NOT 在后端未返回 reasoning/thinking 字段时伪造该事件。
+
+#### Scenario: provider 返回 thinking
+
+- **GIVEN** 后端 streaming API 返回 thinking/reasoning delta
+- **WHEN** adapter 读取 provider stream
+- **THEN** stream MUST 返回 `reasoning_delta`，保留该 delta 文本
+
+#### Scenario: OpenAI-compatible reasoning_content
+
+- **GIVEN** Chat Completions streaming delta 包含 `reasoning_content`、`reasoning` 或 `thinking` 字段
+- **WHEN** OpenAI 或 OpenAI-compatible adapter 读取该 delta
+- **THEN** stream MUST 返回 `reasoning_delta`，且不把该字段混入普通文本 delta
+
+#### Scenario: provider 不支持 reasoning
+
+- **GIVEN** 后端 streaming API 只返回普通文本
+- **WHEN** adapter 读取 provider stream
+- **THEN** stream MUST NOT 额外生成 reasoning 事件
+
 ### Requirement: 最小 chat 命令
 
-系统 SHALL 提供 `ub chat` 子命令用于 provider 对话。命令 MUST 支持 `ub chat "prompt"`、`ub chat -`、`--provider <name>`、`--model <id>`、`--session <id>` 和 `--new`；文本 delta MUST 流式写到 stdout。`--provider` 与 `--model` MUST 只影响当前调用，不写回配置。未传 `--provider` 时，命令 MUST 使用 `default_provider`；若未配置 `default_provider`，MUST 使用配置中第一个可用 provider。命令 MUST NOT 从 `default_model` 的 `/` 前缀推断 provider。
+系统 SHALL 提供 `ub chat` 子命令用于 provider 对话。命令 MUST 支持 `ub chat "prompt"`、`ub chat -`、`--provider <name>`、`--model <id>`、`--session <id>` 和 `--new`；文本 delta MUST 流式写到 stdout，reasoning delta MUST 不写入 stdout。`--provider` 与 `--model` MUST 只影响当前调用，不写回配置。未传 `--provider` 时，命令 MUST 使用 `default_provider`；若未配置 `default_provider`，MUST 使用配置中第一个可用 provider。命令 MUST NOT 从 `default_model` 的 `/` 前缀推断 provider。
 
 #### Scenario: 参数 prompt
 

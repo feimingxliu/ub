@@ -124,19 +124,62 @@ func TestAgentEmitsRuntimeEvents(t *testing.T) {
 	wantTypes := []EventType{
 		EventDeltaText,
 		EventDeltaText,
-		EventToolCallStart,
-		EventToolCallEnd,
+		EventActivity,
+		EventActivity,
+		EventActivity,
 		EventDeltaText,
 		EventDone,
 	}
 	if !reflect.DeepEqual(gotTypes, wantTypes) {
 		t.Fatalf("event types = %#v, want %#v", gotTypes, wantTypes)
 	}
-	if events[0].Text != "he" || events[1].Text != "llo" || events[4].Text != "done" {
+	if events[0].Text != "he" || events[1].Text != "llo" || events[5].Text != "done" {
 		t.Fatalf("delta events = %#v", events)
 	}
-	if events[2].ToolName != "read" || events[3].ToolName != "read" || events[3].IsError {
-		t.Fatalf("tool events = %#v / %#v", events[2], events[3])
+	if events[2].ActivityKind != ActivityTool || events[2].ToolName != "read" || events[2].Status != "queued" || !strings.Contains(events[2].Summary, "path=main.go") {
+		t.Fatalf("queued event = %#v", events[2])
+	}
+	if events[3].ActivityKind != ActivityTool || events[3].Status != "running" {
+		t.Fatalf("running event = %#v", events[3])
+	}
+	if events[4].ActivityKind != ActivityTool || events[4].Status != "done" || events[4].IsError {
+		t.Fatalf("done event = %#v", events[4])
+	}
+}
+
+func TestAgentReasoningActivityDoesNotEnterAssistantText(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ReasoningDelta("checking context"), fake.TextDelta("answer"), fake.Done()},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := a.Run(context.Background(), Request{Prompt: "think", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "answer" {
+		t.Fatalf("text = %q, want answer", res.Text)
+	}
+	if got := res.Messages[len(res.Messages)-1].Text(); got != "answer" {
+		t.Fatalf("assistant text = %q, want answer", got)
+	}
+	if len(events) < 2 || events[0].Type != EventActivity || events[0].ActivityKind != ActivityThinking || events[0].Summary != "checking context" {
+		t.Fatalf("events = %#v, want thinking activity first", events)
 	}
 }
 
@@ -233,7 +276,7 @@ func TestAgentEmitsPermissionDecisionEvent(t *testing.T) {
 	}
 	var got *Event
 	for i := range events {
-		if events[i].Type == EventPermission {
+		if events[i].Type == EventActivity && events[i].ActivityKind == ActivityPermission {
 			got = &events[i]
 			break
 		}
@@ -284,7 +327,7 @@ func TestAgentEmitsApprovalAgentDecisionOnce(t *testing.T) {
 	}
 	var permissionEvents []Event
 	for _, event := range events {
-		if event.Type == EventPermission {
+		if event.Type == EventActivity && event.ActivityKind == ActivityPermission {
 			permissionEvents = append(permissionEvents, event)
 		}
 	}
@@ -338,7 +381,7 @@ func TestAgentEmitsApprovalAgentFallbackAndHumanDecision(t *testing.T) {
 	}
 	var permissionEvents []Event
 	for _, event := range events {
-		if event.Type == EventPermission {
+		if event.Type == EventActivity && event.ActivityKind == ActivityPermission {
 			permissionEvents = append(permissionEvents, event)
 		}
 	}
@@ -387,6 +430,24 @@ func TestAgentReadsModeAtToolPermissionTime(t *testing.T) {
 	}
 	if got := asker.requests[0].Mode; got != execution.ModePlan {
 		t.Fatalf("permission mode = %q, want plan", got)
+	}
+}
+
+func TestToolActivitySummaryRedactsSecretsAndTruncates(t *testing.T) {
+	summary := summarizeToolInput("bash", json.RawMessage(`{"command":"curl -H 'Authorization: Bearer secret-token' https://example.test\nsecond line","cwd":"/tmp"}`))
+	if strings.Contains(summary, "secret-token") || strings.Contains(summary, "Authorization") {
+		t.Fatalf("summary leaked secret: %q", summary)
+	}
+	if !strings.Contains(summary, "cmd=[redacted]") || !strings.Contains(summary, "cwd=/tmp") {
+		t.Fatalf("summary = %q, want redacted command and cwd", summary)
+	}
+
+	long := summarizeToolResult(tool.Result{Content: strings.Repeat("x", maxActivitySummaryRunes+20)})
+	if len([]rune(long)) > maxActivitySummaryRunes {
+		t.Fatalf("summary len = %d, want <= %d", len([]rune(long)), maxActivitySummaryRunes)
+	}
+	if !strings.HasSuffix(long, "...") {
+		t.Fatalf("summary = %q, want ellipsis", long)
 	}
 }
 

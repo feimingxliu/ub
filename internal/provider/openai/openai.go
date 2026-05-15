@@ -293,6 +293,12 @@ func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
 			if len(choice.Delta.ToolCalls) > 0 {
 				s.addToolDeltas(choice.Delta.ToolCalls)
 			}
+			if reasoning := reasoningDelta(choice.Delta); reasoning != "" {
+				if choice.Delta.Content != "" {
+					s.queue = append(s.queue, provider.Event{Type: provider.EventTextDelta, Text: choice.Delta.Content})
+				}
+				return provider.Event{Type: provider.EventReasoningDelta, Reasoning: reasoning}, nil
+			}
 			if choice.Delta.Content != "" {
 				return provider.Event{Type: provider.EventTextDelta, Text: choice.Delta.Content}, nil
 			}
@@ -322,6 +328,27 @@ func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
 	}
 	s.queue = append(s.queue, provider.Event{Type: provider.EventDone})
 	return s.Next(ctx)
+}
+
+func reasoningDelta(delta sdk.ChatCompletionChunkChoiceDelta) string {
+	raw := strings.TrimSpace(delta.RawJSON())
+	if raw == "" {
+		return ""
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		return ""
+	}
+	for _, key := range []string{"reasoning_content", "reasoning", "thinking"} {
+		value, ok := body[key].(string)
+		if !ok {
+			continue
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *sdkStream) addToolDeltas(deltas []sdk.ChatCompletionChunkChoiceDeltaToolCall) {

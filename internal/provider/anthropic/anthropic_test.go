@@ -240,6 +240,49 @@ func TestChatStreamsToolCall(t *testing.T) {
 	}
 }
 
+func TestChatStreamsThinkingDelta(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeAnthropicSSE(t, w, "message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":0}}}`)
+		writeAnthropicSSE(t, w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"initial"}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" step"}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}`)
+		writeAnthropicSSE(t, w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
+		writeAnthropicSSE(t, w, "message_stop", `{"type":"message_stop"}`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("anthropic", config.ProviderConfig{
+		Type:    "anthropic",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model:    "claude-test",
+		Messages: []message.Message{message.Text(message.RoleUser, "think")},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	event, err := stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventReasoningDelta || event.Reasoning != "initial" {
+		t.Fatalf("initial thinking event = %#v, err=%v", event, err)
+	}
+	event, err = stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventReasoningDelta || event.Reasoning != " step" {
+		t.Fatalf("thinking delta event = %#v, err=%v", event, err)
+	}
+	event, err = stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventDone {
+		t.Fatalf("done event = %#v, err=%v", event, err)
+	}
+}
+
 func TestChatRejectsUnsupportedBlocks(t *testing.T) {
 	p, err := NewFromConfig("anthropic", config.ProviderConfig{
 		Type:   "anthropic",

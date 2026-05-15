@@ -335,7 +335,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.runner == nil {
 					return m, nil
 				}
-				m.messages.startAssistant()
 				m.running = true
 				m.status.state = statusThinking
 				m.status.turn++
@@ -345,6 +344,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.events = events
 				m.runID++
 				runID := m.runID
+				m.messages.appendOrUpdate(activityRole, thinkingActivityKey(runID), "Thinking...")
 				return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
 			}
 			return m, nil
@@ -527,25 +527,36 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	switch event.Type {
 	case EventDeltaText:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.appendAssistantDelta(event.Text)
 		m.status.state = statusStreaming
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
+	case EventActivity:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.appendOrUpdate(activityRole, activityEventKey(event), activityEventText(event))
+		m.status.state = statusForActivity(event)
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallStart:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.appendToolStatus(event.ToolName, "started")
 		m.status.state = statusTool
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallEnd:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.appendToolStatus(event.ToolName, "finished")
 		m.status.state = statusThinking
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventPermission:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.append(systemRole, permissionEventText(event))
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventDone:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.status.state = statusFinalizing
 		m.cancel = nil
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventError:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -561,20 +572,152 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 
 func permissionEventText(event Event) string {
 	source := defaultString(event.Source, "permission")
-	decision := defaultString(event.Decision, "unknown")
-	state := "denied"
-	if event.Allowed {
-		state = "allowed"
+	decision := defaultString(event.Decision, "")
+	if decision == "" {
+		if event.Allowed {
+			decision = "allow"
+		} else {
+			decision = "deny"
+		}
 	}
 	toolName := defaultString(event.ToolName, "tool")
-	text := fmt.Sprintf("permission %s %s %s", source, state, toolName)
-	if decision != "" && !((decision == "allow" && event.Allowed) || (decision == "deny" && !event.Allowed)) {
-		text += " (" + decision + ")"
-	}
+	text := fmt.Sprintf("permission %s %s %s", source, decision, toolName)
 	if reason := strings.TrimSpace(event.Reason); reason != "" {
 		text += ": " + reason
 	}
 	return text
+}
+
+func activityEventText(event Event) string {
+	switch strings.TrimSpace(event.ActivityKind) {
+	case "thinking":
+		return "thinking: " + defaultString(event.Summary, event.Text)
+	case "tool":
+		return toolActivityText(event)
+	case "permission":
+		return permissionEventText(event)
+	case "notice":
+		return "notice: " + defaultString(event.Summary, event.Text)
+	default:
+		return defaultString(event.Summary, defaultString(event.Content, "activity"))
+	}
+}
+
+func activityEventKey(event Event) string {
+	switch strings.TrimSpace(event.ActivityKind) {
+	case "tool":
+		if strings.TrimSpace(event.ToolUseID) != "" {
+			return "tool:" + event.ToolUseID
+		}
+	case "thinking":
+		return "thinking"
+	}
+	return ""
+}
+
+func thinkingActivityKey(runID int) string {
+	return fmt.Sprintf("thinking:%d", runID)
+}
+
+func toolActivityText(event Event) string {
+	name := strings.TrimSpace(event.ToolName)
+	title := toolTitle(name, event.Summary)
+	switch event.Status {
+	case "queued", "running":
+		action := toolAction(name)
+		if summary := strings.TrimSpace(event.Summary); summary != "" {
+			return action + " " + summary
+		}
+		return action
+	case "failed":
+		text := title + " failed"
+		if detail := strings.TrimSpace(event.Content); detail != "" {
+			text += ": " + detail
+		}
+		return text
+	default:
+		return title
+	}
+}
+
+func toolAction(name string) string {
+	switch strings.TrimSpace(name) {
+	case "read":
+		return "Reading file..."
+	case "ls":
+		return "Listing directory..."
+	case "grep":
+		return "Searching content..."
+	case "glob":
+		return "Finding files..."
+	case "write":
+		return "Preparing write..."
+	case "edit":
+		return "Preparing edit..."
+	case "bash":
+		return "Writing command..."
+	case "job_run":
+		return "Starting job..."
+	case "job_output":
+		return "Reading job output..."
+	case "job_kill":
+		return "Stopping job..."
+	default:
+		return "Working..."
+	}
+}
+
+func toolTitle(name, summary string) string {
+	summary = strings.TrimSpace(summary)
+	verb := "Tool"
+	switch strings.TrimSpace(name) {
+	case "read":
+		verb = "Read"
+	case "ls":
+		verb = "Listed"
+	case "grep":
+		verb = "Searched"
+	case "glob":
+		verb = "Found"
+	case "write":
+		verb = "Wrote"
+	case "edit":
+		verb = "Edited"
+	case "bash":
+		verb = "Ran"
+	case "job_run":
+		verb = "Started job"
+	case "job_output":
+		verb = "Read job output"
+	case "job_kill":
+		verb = "Stopped job"
+	default:
+		if strings.TrimSpace(name) != "" {
+			verb = name
+		}
+	}
+	if summary == "" {
+		return verb
+	}
+	return verb + " " + summary
+}
+
+func statusForActivity(event Event) string {
+	switch strings.TrimSpace(event.ActivityKind) {
+	case "tool":
+		switch event.Status {
+		case "queued", "running":
+			return statusTool
+		default:
+			return statusThinking
+		}
+	case "thinking":
+		return statusThinking
+	case "permission":
+		return statusTool
+	default:
+		return statusThinking
+	}
 }
 
 func defaultString(value, fallback string) string {

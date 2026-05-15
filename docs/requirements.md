@@ -67,7 +67,7 @@
 ### 4.1 对话
 
 - F-CHAT-1：用户在 TUI 输入框输入消息，回车发送
-- F-CHAT-2：模型回复支持流式逐 token 渲染（含 reasoning content if available）
+- F-CHAT-2：模型回复支持流式逐 token 渲染；provider 明确返回的 reasoning/thinking 摘要 MUST 作为活动消息展示，不得混入 assistant 正文或伪造隐藏思维链
 - F-CHAT-3：Ctrl+C 中断当前轮（不退出程序）；再次 Ctrl+C 退出
 - F-CHAT-4：支持多行输入（Shift+Enter 或外部编辑器）
 - F-CHAT-5：历史消息可上下滚动
@@ -80,6 +80,7 @@
 - F-PROV-4：API key 从环境变量或配置读取，配置文件支持 `${ENV_VAR}` 引用
 - F-PROV-5：**所有 provider 均可覆盖 `base_url`**，用于走第三方网关 / 代理 / 自建反代（LiteLLM、Cloudflare AI Gateway、Helicone、OneAPI、自建 Anthropic 兼容服务等）；未配置则使用 SDK 默认 endpoint
 - F-PROV-6：所有 provider 均可自定义额外 HTTP headers（如 `x-org-id`、自家网关鉴权头）和超时
+- F-PROV-7：provider 事件流可选返回 `reasoning_delta`；只有后端 API 提供可展示 reasoning/thinking 时才透传，未提供时不得合成
 
 ### 4.3 工具系统
 
@@ -104,6 +105,7 @@
 - F-PERM-3：审批 UI 选项：`allow once` / `deny` / `always allow this exact command (session)` / `always allow this tool (session)` / `always allow this tool (global, persist to disk)`
 - F-PERM-4：session 级 always-rule 仅内存生效；global 级 always-rule 持久化到 `~/.config/ub/permissions.yaml`，下次启动自动加载
 - F-PERM-5：危险命令模式匹配黑名单（`rm -rf /`、`mkfs.*` 等）即使匹配 always-rule 也强制再次确认
+- F-PERM-6：approval agent 与 human approval 的决策、来源和原因 MUST 作为对话活动消息展示，便于用户理解命令为何被放行或回退
 
 ### 4.6 会话与 Rollout
 
@@ -150,10 +152,11 @@
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
 - F-TUI-5：命令：`/model`、`/approval-model`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session
 - F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
+- F-TUI-7：TUI MUST 在聊天区以紧凑活动行展示 thinking、工具排队/运行/完成/失败、审批结果和错误摘要；同一个 tool call 的状态更新 MUST 合并到同一行，避免 queued/running/done 刷屏；活动行参与宽度换行与聊天区滚动，且不得展示完整工具 JSON 或 secret 值
 
 ### 4.12 开发模式与环境诊断
 
-- F-DEV-1：内置 `fake` provider，可在测试与脚本驱动场景下按预设脚本返回 text/tool_call/done 事件，**完全离线、零 API 消耗**
+- F-DEV-1：内置 `fake` provider，可在测试与脚本驱动场景下按预设脚本返回 text/reasoning/tool_call/done 事件，**完全离线、零 API 消耗**
 - F-DEV-2：配置文件支持 `profiles:` 节，每个 profile 可覆盖 `default_model`、`small_model`、`execution_mode`、`tools_disabled`、`permissions` 等任意运行时项
 - F-DEV-3：`ub run --profile <name>` 选择 profile；`--dev` 是 `--profile dev` 的别名；`UB_PROFILE` 环境变量同效
 - F-DEV-4：`dev` profile 默认指向用户本地推理服务（vLLM / Ollama / llama.cpp / LM Studio / 内网 Together），通过 `base_url` 配置，**全部走 `openai-compat`**
