@@ -48,6 +48,7 @@ ub/
 │   ├── cli/                           # cobra 子命令：run / rollout / config / sessions
 │   ├── app/                           # 协调层，事件总线，session 调度
 │   ├── agent/                         # agent loop、prompt 模板、summary
+│   ├── execution/                     # execution mode、mode gate、mode switch events
 │   ├── provider/
 │   │   ├── provider.go                # Provider 接口、ProviderCaps、ModelInfo
 │   │   ├── anthropic/                 # 包 anthropic-sdk-go
@@ -65,10 +66,11 @@ ub/
 │   ├── mcp/                           # MCP client（stdio/http/sse）
 │   ├── lsp/                           # LSP client + 工具桥接
 │   ├── permission/                    # 风险判定、always-rules、UI 回调
+│   ├── approval/                      # agent-approve 模式下的命令审批 agent
 │   ├── session/                       # session CRUD
 │   ├── rollout/                       # 事件类型、append writer、reader
 │   ├── store/                         # SQLite 封装（sqlc 或手写）
-│   ├── config/                        # yaml/json 加载、热加载、schema
+│   ├── config/                        # YAML 加载、profile 覆盖、schema
 │   ├── context/                       # token 估算、压缩 / summary 策略
 │   ├── diff/                          # unified / split diff 渲染数据
 │   ├── tui/                           # Bubble Tea models 与 view
@@ -90,6 +92,7 @@ type Agent struct {
     provider provider.Provider
     tools    *tool.Registry
     perm     *permission.Manager
+    mode     execution.Mode
     rollout  *rollout.Writer
     ctx      *ctxmgr.Manager
     models   Models // large + small
@@ -119,7 +122,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
         // 4. 若没有 tool call → 终止
         if len(result.ToolCalls) == 0 { return nil }
 
-        // 5. 顺序执行 tool calls（带权限审批）
+        // 5. 顺序执行 tool calls（带执行模式与权限审批）
         for _, call := range result.ToolCalls {
             if err := a.runTool(ctx, call); err != nil {
                 // tool 错误回灌给模型，让它处理
@@ -135,6 +138,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **并行 tool call**：V1 顺序执行，V2 再考虑并行（要保证写操作串行）
 - **loop detection**：Crush 有 `loop_detection.go`（同一 tool call 重复 N 次抑制），V2 引入
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
+- **执行模式**：`mode` 从 session / CLI / profile 注入，影响 write/exec tool 的放行路径；模式切换写 `ModeSwitch` 事件
 
 ## 4. Tool 系统
 
@@ -185,11 +189,17 @@ type Result struct {
 ```
 1. agent 解析 tool_call
 2. tool := registry.Get(name)
-3. if pt, ok := tool.(PreviewableTool); ok:
+3. mode gate:
+     - plan + write risk: 拒绝，回灌 ToolResult{IsError, Content="plan mode is read-only"}
+     - default / agent-approve + write risk: 继续
+4. if pt, ok := tool.(PreviewableTool); ok:
        preview = pt.Preview(ctx, args)
-4. decision = permission.Ask(call, preview)   // preview 喂给 TUI modal
-5. if decision != Allow: 回灌 ToolResult{IsError, Content="denied"} 给模型
-6. else: result = tool.Execute(ctx, args)
+5. exec risk:
+     - allow-rule match: 直接 Allow（黑名单除外）
+     - default / plan: permission.AskHuman(call, preview)
+     - agent-approve: permission.AskApprovalAgent(call)；拒绝 / 不确定 / 错误时回退 AskHuman
+6. if decision != Allow: 回灌 ToolResult{IsError, Content="denied"} 给模型
+7. else: result = tool.Execute(ctx, args)
 ```
 
 **关键 tool 实现要点**：
@@ -258,7 +268,7 @@ type Event struct {
     SessionID string
     Turn      int
     Time      time.Time
-    Type      EventType   // user / assistant / tool_call / tool_result / summary / model_switch / perm / error
+    Type      EventType   // user / assistant / tool_call / tool_result / summary / model_switch / mode_switch / perm / error
     Payload   json.RawMessage
 }
 ```
@@ -311,6 +321,12 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 ```yaml
 default_model: anthropic/claude-sonnet-4-7
 small_model: openai/gpt-4o-mini   # 用于 summary、生成标题
+execution_mode: default            # default / plan / agent-approve
+
+approval_agent:
+  provider: openai
+  model: gpt-4o-mini
+  # 仅 agent-approve 模式使用；失败或拒绝时回退到用户审批
 
 providers:
   # 所有 provider 都支持 base_url / headers / timeout 覆盖
@@ -381,7 +397,30 @@ context:
 
 加载顺序：内置默认 → 全局配置 → 工作目录 `.ub/config.yaml` → 环境变量覆盖。
 
-## 9. 权限模型
+## 9. 执行模式与权限模型
+
+`execution.Mode` 是 session 级策略，不等同于 provider profile。profile 决定模型/配置，mode 决定 tool call 能否落地。
+
+```go
+type Mode string
+const (
+    ModeDefault      Mode = "default"
+    ModePlan         Mode = "plan"
+    ModeAgentApprove Mode = "agent-approve"
+)
+
+type ModePolicy struct {
+    AllowWrite bool
+    ExecPath   ExecApprovalPath // human / approval-agent-with-human-fallback
+}
+```
+
+**三种模式**：
+- `default`：允许 workspace 内文件读写；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
+- `plan`：只读规划；`write` 风险工具在 dispatcher 层直接拒绝并把错误回灌给模型；`exec` 风险工具仍走用户审批，审批弹窗必须提示 Plan 模式下命令可能有副作用。
+- `agent-approve`：文件读写策略同 `default`；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
+
+**approval agent** 是一个受限的二级 agent，只输出 `allow` / `deny` / `unsure` 与一句理由，不执行工具、不修改上下文、不写文件。它的输入只包含命令文本、cwd、风险等级、当前 mode、最近相关上下文摘要和已命中的规则信息；API key 等 secret 不传入。黑名单命令不进入 approval agent，直接走用户确认。
 
 ```go
 type Decision int
@@ -392,6 +431,10 @@ const (
     AlwaysAllowTool      // session 内：同 tool 全放行（内存）
     AlwaysAllowGlobal    // 跨 session 持久化到 ~/.config/ub/permissions.yaml
 )
+
+type ApprovalAgent interface {
+    ReviewCommand(ctx context.Context, req Request) (ApprovalAgentDecision, error)
+}
 ```
 
 **两层规则存储**：
@@ -406,17 +449,18 @@ const (
   ```
 
 UI 流程：
-1. tool dispatcher 收到 call，先查 global rules → 再查 session rules（match 则直接 Allow）
-2. 不 match → 若工具实现 PreviewableTool，先调 `Preview()`
-3. 向 TUI 发 `PermissionRequest{Call, Preview}`，阻塞 agent loop
-4. TUI 弹 modal，5 个选项（与 F-PERM-3 对齐）：
+1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式拒绝所有 `write` 风险工具
+2. 若工具实现 PreviewableTool，先调 `Preview()`
+3. 对 `exec` 风险工具先查 global rules → 再查 session rules（match 则直接 Allow；黑名单除外）
+4. 不 match 时按 mode 选择审批路径：`default`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`agent-approve` 先调 approval agent，返回 `deny`/`unsure`/error 时再向 TUI 发请求
+5. TUI 弹 modal，5 个选项（与 F-PERM-3 对齐）：
    - `1` Allow once
    - `2` Deny
    - `3` Always allow this exact command (session)
    - `4` Always allow this tool (session)
    - `5` Always allow this tool (global, save to disk)
-5. 决策写入 rollout（`PermissionDecision` 事件）；选 3/4 更新内存 rules；选 5 同时追加到磁盘 yaml
-6. dispatcher 拿到决策继续
+6. 决策写入 rollout（`PermissionDecision` 事件，含 `source=rule|approval_agent|human`）；选 3/4 更新内存 rules；选 5 同时追加到磁盘 yaml
+7. dispatcher 拿到决策继续
 
 **黑名单**：硬编码的强制再确认正则（`rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）。即使任意 always-rule match 也再弹一次。
 
@@ -503,6 +547,7 @@ profiles:
   dev:
     default_model: vllm-local/Qwen2.5-Coder-7B-Instruct
     small_model:   vllm-local/Qwen2.5-Coder-7B-Instruct
+    execution_mode: agent-approve
     permissions:
       auto_allow_safe: true
       auto_allow_write: true   # 开发期免审批

@@ -287,13 +287,14 @@
   - compat：vcr 录一个 DeepSeek 调用
   - Ollama：本地起 `ollama serve` + `qwen2.5-coder:1.5b` 跑通一次（手测，可选 cassette）
 
-### I-13 Profiles + `--dev` + `ub doctor`
+### I-13 Profiles + `--dev` + `--mode` + `ub doctor`
 
 - **目标**：把"开发期接入本地模型测试"做成一等公民
 - **依赖**：I-02 / I-08 ~ I-12
 - **In Scope**：
   - 配置新增 `profiles:` 节（design §12.2），加载时按 `--profile <name>` / `--dev` / `UB_PROFILE` 选择并叠加
-  - CLI：`--profile`、`--dev`（= `--profile dev`） 全局标志位
+  - 配置新增 `execution_mode` 与 `approval_agent` 字段；`profiles:` 可覆盖 execution mode
+  - CLI：`--profile`、`--dev`（= `--profile dev`）、`--mode default|plan|agent-approve` 全局标志位
   - `ub doctor` 子命令（design §12.3）：
     - 探测各 provider 的 `base_url` 可达性（GET `${base_url}/models` 或 Anthropic 轻量 ping）
     - 列出可用模型 + 标注哪些声明支持 tool calling
@@ -307,7 +308,7 @@
   func (c *Config) ApplyProfile(name string) error
   ```
 - **验证**：
-  - 单测：profile 叠加（顶层 vs profile 字段），`--dev` 别名解析
+  - 单测：profile 叠加（顶层 vs profile 字段）、`--dev` 别名解析、`--mode` 优先级覆盖
   - 集成：起 mock OpenAI 兼容 server，`ub doctor` 能看到 ✓
   - 冒烟：`ub run --dev -p "say hi"` 走本地 vLLM 跑通
 
@@ -396,29 +397,36 @@
 - **Out of Scope**：跨重启恢复
 - **验证**：单测起 `sleep 5` → 立刻 kill → exit code 检查；起 echo 循环 → 拿 tail
 
-### I-20 Permission Manager + 全局规则持久化 + 黑名单
+### I-20 Permission Manager + 执行模式 + approval agent + 全局规则持久化 + 黑名单
 
-- **目标**：审批回调机制 + 5 种 Decision + global 规则的磁盘持久化
-- **依赖**：I-15 / I-18
+- **目标**：审批回调机制 + 3 种 execution mode + approval agent 命令审批 + 5 种 Decision + global 规则的磁盘持久化
+- **依赖**：I-13 / I-15 / I-18
 - **In Scope**：
+  - `internal/execution/`：`Mode`（default / plan / agent-approve）、mode 解析、mode policy、mode switch 事件 payload
   - `internal/permission/`：`Manager`、`Decision`（5 种：Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysGlobal）、`Rule`
+  - `internal/approval/`：approval agent 接口；输入为 command/cwd/risk/mode/context summary/rule match 信息，输出 allow/deny/unsure + reason
   - 两层规则存储：
     - **session 级**（AlwaysCmd / AlwaysTool）：内存 map
     - **global 级**（AlwaysGlobal）：序列化到 `~/.config/ub/permissions.yaml`，启动时加载
   - 黑名单正则（硬编码 `rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）：即便 always-rule match 也强制再问
-  - `Manager.Ask(ctx, req)` 调用注入的 `Asker` 回调返回 Decision
-  - 查询顺序：黑名单 → global rules → session rules → 调 Asker
+  - `Manager.Ask(ctx, req)` 按 mode 调用注入的 human `Asker` 或 approval agent
+  - 查询顺序：mode gate → 黑名单 → global rules → session rules → approval agent（agent-approve only）→ human Asker
   - Asker 收到的请求包含可选的 `Preview`（来自 PreviewableTool）
 - **Out of Scope**：TUI 弹窗实现（I-24）
 - **关键签名**：
   ```go
+  type Mode string // default / plan / agent-approve
   type Asker interface {
       Ask(ctx context.Context, req Request) (Decision, error)
+  }
+  type ApprovalAgent interface {
+      ReviewCommand(ctx context.Context, req Request) (ApprovalAgentDecision, error)
   }
   type Request struct {
       Tool    string
       Args    json.RawMessage
       Risk    Risk
+      Mode    execution.Mode
       Preview *tool.Preview  // optional
   }
   // 持久化
@@ -427,6 +435,9 @@
   ```
 - **验证**：
   - 单测：mock Asker，跑 5 种 Decision 路径
+  - 单测：`plan` 模式拒绝 write 风险工具且不触发 Execute
+  - 单测：`default` 模式下未命中 allow-rule 的 exec 工具走 human Asker
+  - 单测：`agent-approve` 模式下 approval agent allow 时不问用户；deny/unsure/error 时回退 human Asker
   - 黑名单优先级测试（即便 global rule match 也再弹）
   - 持久化：写入 AlwaysGlobal → 重启加载 → 同样 call 不再问 Asker
   - 原子写：模拟写入中途 panic → permissions.yaml 不被破坏（用临时文件 + rename）
@@ -437,16 +448,19 @@
 - **依赖**：I-07 ~ I-20
 - **In Scope**：
   - `internal/agent/`：`Agent.Run(ctx, sess, userMsg) error`
+  - 从 session/config/CLI 注入 `execution.Mode`；每轮 tool dispatch 都带当前 mode
   - 单 session 内顺序处理 turns，maxTurns=25
   - 把工具 schema 传给 provider；解析模型 tool_use；调 Registry
   - **dispatcher 两阶段调用**：若工具实现 `PreviewableTool` → 先 Preview → 把 Preview 喂 `permission.Manager.Ask(Request)` → Allow 时才 Execute
+  - `plan` 模式下模型请求 write tool 时，dispatcher 返回 tool error 而不写盘
   - tool_result 回写消息流，进 rollout
   - 让 anthropic / openai provider 支持 tool calls（更新流式 Event 类型）
-  - CLI 子命令变成 `ub run -p "..."`（headless），保留 `ub chat` 作为"裸聊天不带工具"
+  - CLI 子命令变成 `ub run -p "..."`（headless，支持 `--mode`），保留 `ub chat` 作为"裸聊天不带工具"
 - **Out of Scope**：TUI、permission UI（用 mock auto-allow asker）、并行 tool call、loop detection、auto summary
 - **关键签名**：见 design §3
 - **验证**：
   - **fake provider 单测**（无需任何外部依赖）：构造 fake script "调 fs.read → 用 result 文本回答" → assert 最终消息正确
+  - **模式单测**：fake script 先调 fs.edit；`--mode plan` 下断言文件未改且模型收到 denied/tool error
   - vcr 集成测试：固定 prompt → 模型调 fs.read → tool 真实执行 → 模型给最终答复 → 断言含期望关键词
   - 冒烟：`ub run --dev -p "在当前目录下有几个 .md 文件？"` 走本地 vLLM 跑通
 
@@ -473,7 +487,7 @@
 - **In Scope**：
   - TUI 与 Agent 之间用 channel：UI 发 `UserSend`，Agent 推 `DeltaText`、`ToolCallStart`、`ToolCallEnd`、`Done`
   - 消息列表组件支持流式追加
-  - 状态栏显示当前 model / turn 序号
+  - 状态栏显示当前 model / execution mode / turn 序号
 - **Out of Scope**：权限弹窗、diff 渲染、slash 命令
 - **验证**：手测在 TUI 内问 "say hi"；按 Ctrl+C 可中断；`teatest` 模拟一段流（fake provider）
 
@@ -484,6 +498,8 @@
 - **In Scope**：
   - `internal/tui/dialog/permission`：modal 显示工具名、参数预览、风险等级
   - 若 `Request.Preview != nil`：在 modal 中嵌入 diff 摘要（一行 summary + 折叠 unified diff，按 `d` 展开）
+  - Plan 模式下的 exec 审批必须显示 "Plan mode: command may still have side effects"
+  - agent-approve 模式下若 approval agent 拒绝 / 不确定 / 出错，modal 展示 approval agent reason 后要求用户显式决策
   - 5 个选项按键：
     - `1` Allow once
     - `2` Deny
@@ -494,7 +510,7 @@
   - Permission Manager 的 Asker 切换为 TUI 实现
 - **Out of Scope**：完整 diff 渲染（I-25 做带语法高亮的 diffview）
 - **验证**：
-  - 手测让模型跑 bash，弹框正常
+  - 手测让模型跑 bash，弹框正常；agent-approve 拒绝时能回退人工弹框
   - 手测让模型 edit 文件 → modal 里能看到 Preview 摘要
   - `teatest` 单测 5 个选项的按键流：选 `5` 后磁盘文件出现对应规则
 
@@ -513,7 +529,7 @@
 
 - **目标**：基础工作流 hotkey
 - **依赖**：I-22 / I-14
-- **In Scope**：`/model`、`/clear`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
+- **In Scope**：`/model`、`/mode`、`/clear`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
 - **Out of Scope**：自定义 alias、命令补全
 - **验证**：手测每个命令；单测命令解析
 
@@ -604,6 +620,7 @@
   - `ub --resume`（拉最近一个 session）
   - `ub --resume <id>`
   - TUI 启动时如果有最近 session 询问是否 resume
+  - 恢复 session 时还原最近一次 `ModeSwitch`，否则使用当前 CLI/config mode
 - **Out of Scope**：跨设备同步
 - **验证**：开一个会话 → 退出 → resume → 历史完整出现
 
