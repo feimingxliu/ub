@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -49,6 +50,82 @@ func TestModelIgnoresEmptyEnter(t *testing.T) {
 	}
 }
 
+func TestModelStreamsRunnerEvents(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{
+		{Type: EventDeltaText, Text: "he"},
+		{Type: EventDeltaText, Text: "llo"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner, Model: "fake/test"})
+	model = sendText(t, model, "ping")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("enter returned nil command")
+	}
+	model = assertModel(t, updated)
+	if !model.Running() || model.Turn() != 1 {
+		t.Fatalf("running=%v turn=%d, want running turn 1", model.Running(), model.Turn())
+	}
+
+	model = drainBatch(t, model, cmd)
+
+	if runner.calls != 1 || runner.prompts[0] != "ping" {
+		t.Fatalf("runner calls=%d prompts=%v", runner.calls, runner.prompts)
+	}
+	if got, want := model.MessageTexts(), []string{"ping", "hello"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	if model.Running() {
+		t.Fatalf("model still running after done")
+	}
+	if !strings.Contains(model.View(), "state: idle") {
+		t.Fatalf("view missing idle state:\n%s", model.View())
+	}
+}
+
+func TestModelIgnoresSecondEnterWhileRunning(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "first")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("first enter returned nil command")
+	}
+	model = assertModel(t, updated)
+
+	updated, secondCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if secondCmd != nil {
+		t.Fatalf("second enter returned unexpected command")
+	}
+	if got, want := model.MessageTexts(), []string{"first", ""}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+}
+
+func TestModelRendersToolEvents(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{
+		{Type: EventToolCallStart, ToolName: "read"},
+		{Type: EventToolCallEnd, ToolName: "read"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "read file")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	view := model.View()
+	for _, want := range []string{"tool read started", "tool read finished"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestModelCtrlCQuits(t *testing.T) {
 	model := NewModel(Options{})
 
@@ -59,6 +136,42 @@ func TestModelCtrlCQuits(t *testing.T) {
 	_ = assertModel(t, updated)
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatalf("ctrl+c command = %T, want tea.QuitMsg", cmd())
+	}
+}
+
+type scriptedRunner struct {
+	events  []Event
+	calls   int
+	prompts []string
+}
+
+func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
+	r.calls++
+	r.prompts = append(r.prompts, prompt)
+	for _, event := range r.events {
+		events <- event
+	}
+	return nil
+}
+
+func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
+	t.Helper()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("cmd returned %T, want tea.BatchMsg", cmd())
+	}
+	if len(batch) != 2 {
+		t.Fatalf("batch len = %d, want 2", len(batch))
+	}
+	_ = batch[0]()
+	msg := batch[1]()
+	for {
+		updated, next := model.Update(msg)
+		model = assertModel(t, updated)
+		if next == nil {
+			return model
+		}
+		msg = next()
 	}
 }
 

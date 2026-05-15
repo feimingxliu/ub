@@ -3,6 +3,8 @@ package tui
 import "strings"
 
 const userRole = "You"
+const assistantRole = "Assistant"
+const toolRole = "Tool"
 
 type message struct {
 	role string
@@ -19,6 +21,24 @@ func newMessageList() messageList {
 
 func (l *messageList) append(role, text string) {
 	l.items = append(l.items, message{role: role, text: text})
+}
+
+func (l *messageList) startAssistant() {
+	l.items = append(l.items, message{role: assistantRole})
+}
+
+func (l *messageList) appendAssistantDelta(text string) {
+	if len(l.items) == 0 || l.items[len(l.items)-1].role != assistantRole {
+		l.startAssistant()
+	}
+	l.items[len(l.items)-1].text += text
+}
+
+func (l *messageList) appendToolStatus(name, state string) {
+	if strings.TrimSpace(name) == "" {
+		name = "tool"
+	}
+	l.append(toolRole, "tool "+name+" "+state)
 }
 
 func (l messageList) view() string {

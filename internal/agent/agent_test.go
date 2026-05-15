@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -80,6 +81,61 @@ func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {
 	block := last.Content[0]
 	if block.Type != message.BlockToolResult || block.IsError || !strings.Contains(block.Output, "func main") {
 		t.Fatalf("tool result block = %#v", block)
+	}
+}
+
+func TestAgentEmitsRuntimeEvents(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("he"), fake.TextDelta("llo"), fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeDefault,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "read main.go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	gotTypes := make([]EventType, 0, len(events))
+	for _, event := range events {
+		gotTypes = append(gotTypes, event.Type)
+	}
+	wantTypes := []EventType{
+		EventDeltaText,
+		EventDeltaText,
+		EventToolCallStart,
+		EventToolCallEnd,
+		EventDeltaText,
+		EventDone,
+	}
+	if !reflect.DeepEqual(gotTypes, wantTypes) {
+		t.Fatalf("event types = %#v, want %#v", gotTypes, wantTypes)
+	}
+	if events[0].Text != "he" || events[1].Text != "llo" || events[4].Text != "done" {
+		t.Fatalf("delta events = %#v", events)
+	}
+	if events[2].ToolName != "read" || events[3].ToolName != "read" || events[3].IsError {
+		t.Fatalf("tool events = %#v / %#v", events[2], events[3])
 	}
 }
 

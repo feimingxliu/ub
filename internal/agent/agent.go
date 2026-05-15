@@ -31,6 +31,7 @@ type Options struct {
 	Model      string
 	Mode       execution.Mode
 	MaxTurns   int
+	Events     EventSink
 }
 
 // Agent runs a single headless agent loop.
@@ -42,6 +43,7 @@ type Agent struct {
 	model      string
 	mode       execution.Mode
 	maxTurns   int
+	events     EventSink
 }
 
 // Request is one Agent run input.
@@ -94,6 +96,7 @@ func New(opts Options) (*Agent, error) {
 		model:      strings.TrimSpace(opts.Model),
 		mode:       mode,
 		maxTurns:   maxTurns,
+		events:     opts.Events,
 	}, nil
 }
 
@@ -142,10 +145,18 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 			}
 		}
 		if len(consumed.toolCalls) == 0 {
+			a.emit(Event{Type: EventDone, Text: consumed.text})
 			return Result{Text: consumed.text, Messages: messages}, nil
 		}
 		for _, call := range consumed.toolCalls {
 			result := a.runTool(ctx, call)
+			a.emit(Event{
+				Type:      EventToolCallEnd,
+				ToolUseID: call.ID,
+				ToolName:  call.Name,
+				Content:   result.Content,
+				IsError:   result.IsError,
+			})
 			messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
 			if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 				return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
@@ -172,6 +183,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 		switch event.Type {
 		case provider.EventTextDelta:
 			text.WriteString(event.Text)
+			a.emit(Event{Type: EventDeltaText, Text: event.Text})
 		case provider.EventToolCall:
 			call := toolCall{
 				ID:    strings.TrimSpace(event.ToolUseID),
@@ -183,6 +195,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			}
 			calls = append(calls, call)
 			blocks = append(blocks, message.ToolUseBlock(call.ID, call.Name, call.Input))
+			a.emit(Event{Type: EventToolCallStart, ToolUseID: call.ID, ToolName: call.Name})
 		case provider.EventUsage:
 			if event.Usage != nil {
 				if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
@@ -263,10 +276,17 @@ func (a *Agent) append(ctx context.Context, sessionID string, build func() (roll
 	return a.rollout.Append(ctx, event)
 }
 
+func (a *Agent) emit(event Event) {
+	if a.events != nil {
+		a.events(event)
+	}
+}
+
 func (a *Agent) recordError(ctx context.Context, sessionID string, turn int, err error) error {
 	if err == nil {
 		return nil
 	}
+	a.emit(Event{Type: EventError, Content: err.Error(), IsError: true, Err: err})
 	if appendErr := a.append(ctx, sessionID, func() (rollout.Event, error) {
 		return rollout.Error(sessionID, turn, err)
 	}); appendErr != nil {

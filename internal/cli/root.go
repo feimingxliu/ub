@@ -31,7 +31,6 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/job"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
-	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 )
@@ -101,17 +100,7 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("get working directory: %w", err)
-			}
-			return tui.Run(cmd.Context(), tui.Options{
-				Input:         cmd.InOrStdin(),
-				Output:        cmd.OutOrStdout(),
-				Model:         cfg.DefaultModel,
-				ExecutionMode: cfg.ExecutionMode,
-				Cwd:           cwd,
-			})
+			return runTUI(cmd, cfg)
 		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
