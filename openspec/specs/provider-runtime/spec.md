@@ -104,6 +104,26 @@ provider 工厂 SHALL 支持 `type: openai`，使 CLI 和测试能通过统一 `
 - **WHEN** 用户运行 `ub chat --provider openai --model gpt-test "ping"`
 - **THEN** CLI MUST 通过 provider 工厂创建 OpenAI provider 并消费其事件流
 
+### Requirement: OpenAI 兼容 provider 工厂注册
+
+provider 工厂 SHALL 支持 `type: openai-compat`，使 CLI 和测试能通过统一 `provider.New` 创建 OpenAI 兼容 provider。
+
+#### Scenario: `ub chat` 使用 openai-compat provider
+
+- **GIVEN** 配置中存在名为 `compat` 且类型为 `openai-compat` 的 provider
+- **WHEN** 用户运行 `ub chat --provider compat --model local-test "ping"`
+- **THEN** CLI MUST 通过 provider 工厂创建 OpenAI 兼容 provider 并消费其事件流
+
+### Requirement: Ollama provider 工厂注册
+
+provider 工厂 SHALL 支持 `type: ollama`，使 CLI 和测试能通过统一 `provider.New` 创建 Ollama provider。
+
+#### Scenario: `ub chat` 使用 ollama provider
+
+- **GIVEN** 配置中存在名为 `ollama` 且类型为 `ollama` 的 provider
+- **WHEN** 用户运行 `ub chat --provider ollama --model qwen2.5-coder:1.5b "ping"`
+- **THEN** CLI MUST 通过 provider 工厂创建 Ollama provider 并消费其事件流
+
 ### Requirement: Chat rollout 持久化
 
 `ub chat` SHALL 把单轮对话绑定到 SQLite session，并写入 rollout 事件。该持久化 MUST 不改变 stdout 的文本输出行为。

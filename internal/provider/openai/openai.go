@@ -24,28 +24,59 @@ type Provider struct {
 	client sdk.Client
 }
 
+type constructorOptions struct {
+	requireAPIKey  bool
+	allowDummyKey  bool
+	requireBaseURL bool
+}
+
 func init() {
 	provider.Register("openai", NewFromConfig)
 }
 
 // NewFromConfig creates an OpenAI provider from one config entry.
 func NewFromConfig(name string, cfg config.ProviderConfig) (provider.Provider, error) {
+	return newFromConfig(name, cfg, constructorOptions{requireAPIKey: true})
+}
+
+// NewCompatibleFromConfig creates an OpenAI-compatible provider using the same
+// Chat Completions adapter while allowing local servers without API keys.
+func NewCompatibleFromConfig(name string, cfg config.ProviderConfig) (provider.Provider, error) {
+	return newFromConfig(name, cfg, constructorOptions{
+		allowDummyKey:  true,
+		requireBaseURL: true,
+	})
+}
+
+func newFromConfig(name string, cfg config.ProviderConfig, opts constructorOptions) (provider.Provider, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
-		return nil, fmt.Errorf("openai provider %q missing api_key", name)
+		if opts.requireAPIKey {
+			return nil, fmt.Errorf("openai provider %q missing api_key", name)
+		}
+		if opts.allowDummyKey {
+			cfg.APIKey = "unused"
+		}
 	}
-	opts := []option.RequestOption{
+	if strings.TrimSpace(cfg.BaseURL) == "" {
+		if opts.requireBaseURL {
+			return nil, fmt.Errorf("openai-compatible provider %q missing base_url", name)
+		}
+	} else {
+		cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	}
+	requestOpts := []option.RequestOption{
 		option.WithAPIKey(cfg.APIKey),
 		option.WithHTTPClient(&http.Client{Timeout: effectiveTimeout(cfg.Timeout)}),
 	}
 	if cfg.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+		requestOpts = append(requestOpts, option.WithBaseURL(cfg.BaseURL))
 	}
 	for key, value := range cfg.Headers {
-		opts = append(opts, option.WithHeader(key, value))
+		requestOpts = append(requestOpts, option.WithHeader(key, value))
 	}
 	return &Provider{
 		name:   name,
-		client: sdk.NewClient(opts...),
+		client: sdk.NewClient(requestOpts...),
 	}, nil
 }
 
