@@ -172,6 +172,51 @@ func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 	}
 }
 
+func TestModelPermissionSelectionReturnsDecision(t *testing.T) {
+	response := make(chan permission.Decision, 1)
+	model := NewModel(Options{})
+	req := PermissionRequest{
+		Request: permission.Request{
+			Tool: "bash",
+			Risk: tool.RiskExec,
+			Mode: execution.ModeDefault,
+		},
+		Response: response,
+	}
+
+	updated, _ := model.Update(permissionRequestMsg{request: req, ok: true})
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "> Allow once") {
+		t.Fatalf("permission modal missing selectable options:\n%s", model.View())
+	}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if cmd != nil {
+		t.Fatalf("down returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "> Deny") {
+		t.Fatalf("permission modal did not move selection:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(permissionRequestMsg); ok {
+			t.Fatalf("unexpected immediate permission request: %#v", msg)
+		}
+	}
+	select {
+	case got := <-response:
+		if got != permission.DecisionDeny {
+			t.Fatalf("decision = %q, want deny", got)
+		}
+	default:
+		t.Fatalf("no decision returned")
+	}
+}
+
 func TestSlashHelpDoesNotCallRunner(t *testing.T) {
 	runner := &scriptedRunner{}
 	model := NewModel(Options{Runner: runner})

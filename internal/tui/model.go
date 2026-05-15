@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/permission"
 	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
 	"github.com/feimingxliu/ub/internal/tui/slash"
 )
@@ -124,14 +125,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "d":
 				m.modal = m.modal.ToggleDiff()
 				return m, nil
+			case "enter":
+				return m.resolvePermission(m.modal.SelectedDecision())
 			default:
 				if m.modal.HandleKey(key.String()) {
 					return m, nil
 				}
 				if decision, ok := permissiondialog.DecisionForKey(key.String()); ok {
-					m.pending.Response <- decision
-					m.pending = nil
-					return m, waitForPermission(m.permReqs)
+					return m.resolvePermission(decision)
 				}
 			}
 		}
@@ -317,6 +318,14 @@ func (m Model) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(footer)
 	return b.String()
+}
+
+func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.Cmd) {
+	if m.pending != nil && m.pending.Response != nil {
+		m.pending.Response <- decision
+	}
+	m.pending = nil
+	return m, waitForPermission(m.permReqs)
 }
 
 func (m Model) footerView(width int) string {

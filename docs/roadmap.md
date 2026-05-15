@@ -502,12 +502,12 @@
   - 若 `Request.Preview != nil`：在 modal 中嵌入 diff 摘要（一行 summary + 折叠 unified diff，按 `d` 展开）
   - Plan 模式下的 exec 审批必须显示 "Plan mode: command may still have side effects"
   - agent-approve 模式下若 approval agent 拒绝 / 不确定 / 出错，modal 展示 approval agent reason 后要求用户显式决策
-  - 5 个选项按键：
-    - `1` Allow once
-    - `2` Deny
-    - `3` Always cmd (session)
-    - `4` Always tool (session)
-    - `5` Always tool (global, persist)
+  - 5 个审批候选以列表展示，说明每个选项的作用范围；方向键选择，Enter 确认，数字键仅保留为快捷键：
+    - Allow once
+    - Deny
+    - Always allow exact command (session)
+    - Always allow tool (session)
+    - Always allow tool (global, persist)
   - 选 `5` 时调 `permission.SaveGlobalRule`，并在 modal 上短暂提示 "saved to ~/.config/ub/permissions.yaml"
   - Permission Manager 的 Asker 切换为 TUI 实现
 - **Out of Scope**：完整 diff 渲染（I-25 做带语法高亮的 diffview）

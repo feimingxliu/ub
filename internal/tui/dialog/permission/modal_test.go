@@ -54,10 +54,17 @@ func TestModalRendersContextAndDiff(t *testing.T) {
 		"approval agent: approval unsure",
 		"preview: Edit main.go",
 		"press d to show diff",
+		"> Allow once",
+		"Run only this request",
+		"Always allow exact command in this session",
+		"Persist a user-level allow rule",
 	} {
 		if !strings.Contains(collapsed, want) {
 			t.Fatalf("collapsed view missing %q:\n%s", want, collapsed)
 		}
+	}
+	if strings.Contains(collapsed, "[1] Allow once") {
+		t.Fatalf("collapsed view should render selectable options instead of numeric-only controls:\n%s", collapsed)
 	}
 	if strings.Contains(collapsed, "+new") {
 		t.Fatalf("collapsed view unexpectedly contains diff:\n%s", collapsed)
@@ -66,6 +73,28 @@ func TestModalRendersContextAndDiff(t *testing.T) {
 	expanded := New(req).ToggleDiff().View()
 	if !strings.Contains(expanded, "main.go") || !strings.Contains(expanded, "new") {
 		t.Fatalf("expanded view missing diff:\n%s", expanded)
+	}
+}
+
+func TestModalSelectsDecisionWithArrows(t *testing.T) {
+	modal := New(permission.Request{Tool: "bash", Risk: tool.RiskExec})
+	if got := modal.SelectedDecision(); got != permission.DecisionAllow {
+		t.Fatalf("selected = %q, want allow", got)
+	}
+	if !modal.HandleKey("down") {
+		t.Fatalf("down key not handled")
+	}
+	if got := modal.SelectedDecision(); got != permission.DecisionDeny {
+		t.Fatalf("selected = %q, want deny", got)
+	}
+	if !strings.Contains(modal.View(), "> Deny") {
+		t.Fatalf("view missing selected deny:\n%s", modal.View())
+	}
+	if !modal.HandleKey("up") {
+		t.Fatalf("up key not handled")
+	}
+	if got := modal.SelectedDecision(); got != permission.DecisionAllow {
+		t.Fatalf("selected = %q, want allow", got)
 	}
 }
 

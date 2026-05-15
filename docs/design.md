@@ -454,12 +454,12 @@ UI 流程：
 2. 若工具实现 PreviewableTool，先调 `Preview()`
 3. 对 `exec` 风险工具先查 global rules → 再查 session rules（match 则直接 Allow；黑名单除外）
 4. 不 match 时按 mode 选择审批路径：`default`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`agent-approve` 先调 approval agent，返回 `deny`/`unsure`/error 时再向 TUI 发请求
-5. TUI 弹 modal，5 个选项（与 F-PERM-3 对齐）：
-   - `1` Allow once
-   - `2` Deny
-   - `3` Always allow this exact command (session)
-   - `4` Always allow this tool (session)
-   - `5` Always allow this tool (global, save to disk)
+5. TUI 弹 modal，以候选列表展示 5 个选项（与 F-PERM-3 对齐），每个选项都说明作用范围；上/下方向键移动，Enter 确认，`1`~`5` 仅作为快捷键：
+   - Allow once：只允许本次请求，不保存规则
+   - Deny：拒绝本次请求，不保存规则
+   - Always allow this exact command (session)：本 session 内允许完全相同 command
+   - Always allow this tool (session)：本 session 内允许同一 tool 的后续调用
+   - Always allow this tool (global)：写入 `~/.config/ub/permissions.yaml`，后续 session 生效
 6. 决策写入 rollout（`PermissionDecision` 事件，含 `source=rule|approval_agent|human`）；选 3/4 更新内存 rules；选 5 同时追加到磁盘 yaml
 7. dispatcher 拿到决策继续
 

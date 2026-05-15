@@ -17,6 +17,41 @@ type Model struct {
 	Request  permission.Request
 	Expanded bool
 	Diff     diffview.Model
+	selected int
+}
+
+type option struct {
+	Decision    permission.Decision
+	Label       string
+	Description string
+}
+
+var options = []option{
+	{
+		Decision:    permission.DecisionAllow,
+		Label:       "Allow once",
+		Description: "Run only this request. No rule is saved; similar requests will ask again.",
+	},
+	{
+		Decision:    permission.DecisionDeny,
+		Label:       "Deny",
+		Description: "Block this request and leave permission rules unchanged.",
+	},
+	{
+		Decision:    permission.DecisionAlwaysCmd,
+		Label:       "Always allow exact command in this session",
+		Description: "Allow this tool only when the command text matches exactly until this session exits.",
+	},
+	{
+		Decision:    permission.DecisionAlwaysTool,
+		Label:       "Always allow this tool in this session",
+		Description: "Allow future calls to this tool until this session exits. Wider than exact command.",
+	},
+	{
+		Decision:    permission.DecisionAlwaysGlobal,
+		Label:       "Always allow this tool globally",
+		Description: "Persist a user-level allow rule for this tool and apply it in future sessions.",
+	},
 }
 
 // New creates a permission modal model.
@@ -36,10 +71,21 @@ func (m Model) ToggleDiff() Model {
 
 // HandleKey applies modal-local navigation keys.
 func (m *Model) HandleKey(key string) bool {
-	if !m.Expanded {
+	switch key {
+	case "up", "k":
+		m.previousOption()
+		return true
+	case "down", "j", "tab":
+		m.nextOption()
+		return true
+	case "left", "right":
+		if m.Expanded {
+			return m.Diff.HandleKey(key)
+		}
+		return false
+	default:
 		return false
 	}
-	return m.Diff.HandleKey(key)
 }
 
 // SelectedDiffPath returns the selected diff path.
@@ -83,8 +129,49 @@ func (m Model) View() string {
 			}
 		}
 	}
-	b.WriteString("[1] Allow once  [2] Deny  [3] Always cmd  [4] Always tool  [5] Always tool global")
+	b.WriteString("choose an action (up/down, enter to confirm)\n")
+	for i, option := range options {
+		marker := "  "
+		if i == m.selected {
+			marker = "> "
+		}
+		b.WriteString(marker)
+		b.WriteString(option.Label)
+		b.WriteByte('\n')
+		b.WriteString("    ")
+		b.WriteString(option.Description)
+		b.WriteByte('\n')
+	}
+	b.WriteString("shortcuts: 1-5")
 	return b.String()
+}
+
+// SelectedDecision returns the currently highlighted decision.
+func (m Model) SelectedDecision() permission.Decision {
+	if len(options) == 0 {
+		return ""
+	}
+	if m.selected < 0 {
+		return options[0].Decision
+	}
+	if m.selected >= len(options) {
+		return options[len(options)-1].Decision
+	}
+	return options[m.selected].Decision
+}
+
+func (m *Model) nextOption() {
+	if len(options) == 0 {
+		return
+	}
+	m.selected = (m.selected + 1) % len(options)
+}
+
+func (m *Model) previousOption() {
+	if len(options) == 0 {
+		return
+	}
+	m.selected = (m.selected + len(options) - 1) % len(options)
 }
 
 // DecisionForKey maps modal keys to permission decisions.
