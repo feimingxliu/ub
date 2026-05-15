@@ -181,6 +181,15 @@ func (s *Store) applyMigration(ctx context.Context, version int, name, sqlText s
 	return nil
 }
 
+// DB exposes the underlying SQLite handle to internal persistence layers that
+// share the store lifecycle and migrations.
+func (s *Store) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
+}
+
 // Close closes the underlying SQLite handle.
 func (s *Store) Close() error {
 	if s == nil || s.db == nil {

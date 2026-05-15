@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/feimingxliu/ub/internal/rollout"
+	"github.com/feimingxliu/ub/internal/store"
 )
 
 func TestChatWithFakeProviderPrintsTextDelta(t *testing.T) {
@@ -188,10 +193,92 @@ func TestChatWithAnthropicProvider(t *testing.T) {
 	}
 }
 
+func TestChatWritesSessionAndRolloutEvents(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: pong
+      - type: usage
+        input_tokens: 2
+        output_tokens: 1
+      - type: done
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "fake", "hello rollout"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if got := out.String(); got != "pong" {
+		t.Fatalf("stdout should only contain provider text, got %q", got)
+	}
+
+	events := readOnlySessionEvents(t, temp)
+	assertEventTypes(t, events, []rollout.Type{rollout.TypeUserMessage, rollout.TypeUsage, rollout.TypeAssistantMessage})
+	var assistant rollout.MessagePayload
+	if err := json.Unmarshal(events[2].Payload, &assistant); err != nil {
+		t.Fatalf("assistant payload: %v", err)
+	}
+	if assistant.Text != "pong" {
+		t.Fatalf("assistant text = %q, want pong", assistant.Text)
+	}
+}
+
+func TestChatWritesProviderErrorEvent(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+    script:
+      - type: error
+        error: boom
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "fake", "hello"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected chat error")
+	}
+	events := readOnlySessionEvents(t, temp)
+	assertEventTypes(t, events, []rollout.Type{rollout.TypeUserMessage, rollout.TypeError})
+	var payload rollout.ErrorPayload
+	if err := json.Unmarshal(events[1].Payload, &payload); err != nil {
+		t.Fatalf("error payload: %v", err)
+	}
+	if !strings.Contains(payload.Message, "boom") {
+		t.Fatalf("error payload = %#v", payload)
+	}
+}
+
 func TestSelectChatProviderRequiresProvider(t *testing.T) {
 	_, _, err := selectChatProvider(nil, "", "")
 	if err == nil {
 		t.Fatal("expected provider selection error")
+	}
+}
+
+func TestChatTitle(t *testing.T) {
+	if got := chatTitle("  hello\nworld  "); got != "hello world" {
+		t.Fatalf("title = %q", got)
+	}
+	if got := chatTitle(""); got != "(empty prompt)" {
+		t.Fatalf("empty title = %q", got)
+	}
+	if got := chatTitle(strings.Repeat("a", 80)); len(got) != 60 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("long title = %q len=%d", got, len(got))
 	}
 }
 
@@ -206,4 +293,49 @@ func writeChatConfig(t *testing.T, temp, content string) {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+}
+
+func readOnlySessionEvents(t *testing.T, workspace string) []rollout.Event {
+	t.Helper()
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+	sessions, err := st.ListSessions(context.Background(), workspace, 10)
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1: %#v", len(sessions), sessions)
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		t.Fatalf("rollout.New: %v", err)
+	}
+	var events []rollout.Event
+	if err := ro.ForEach(context.Background(), sessions[0].ID, func(event rollout.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	return events
+}
+
+func assertEventTypes(t *testing.T, events []rollout.Event, want []rollout.Type) {
+	t.Helper()
+	if len(events) != len(want) {
+		t.Fatalf("events len = %d, want %d: %#v", len(events), len(want), events)
+	}
+	for i, typ := range want {
+		if events[i].Type != typ {
+			t.Fatalf("event[%d].Type = %q, want %q; events=%#v", i, events[i].Type, typ, events)
+		}
+	}
 }
