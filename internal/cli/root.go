@@ -31,6 +31,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/job"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
+	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 )
@@ -91,10 +92,27 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "ub",
 		Short:         "ub — Ulimited Blade, a coding agent in your terminal",
-		Long:          "ub is a terminal-based coding agent. Run `ub run` to start an interactive session.",
+		Long:          "ub is a terminal-based coding agent. Run `ub` to open the TUI or use an explicit subcommand for headless workflows.",
 		Version:       Version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, _, err := loadConfigForCommand(cmd)
+			if err != nil {
+				return err
+			}
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("get working directory: %w", err)
+			}
+			return tui.Run(cmd.Context(), tui.Options{
+				Input:         cmd.InOrStdin(),
+				Output:        cmd.OutOrStdout(),
+				Model:         cfg.DefaultModel,
+				ExecutionMode: cfg.ExecutionMode,
+				Cwd:           cwd,
+			})
+		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringVar(&opts.profile, "profile", "", "configuration profile to apply")
