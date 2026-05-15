@@ -189,6 +189,38 @@ func TestChatWithAnthropicProvider(t *testing.T) {
 	}
 }
 
+func TestChatWithOpenAIProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAIChatSSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"openai-ok"},"finish_reason":null}]}`)
+		writeOpenAIChatSSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+		writeOpenAIChatSSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  openai:
+    type: openai
+    api_key: sk-test
+    base_url: `+server.URL+`
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "openai", "--model", "gpt-test", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat openai: %v", err)
+	}
+	if got := out.String(); got != "openai-ok" {
+		t.Fatalf("stdout = %q, want openai-ok", got)
+	}
+}
+
 func TestChatWritesSessionAndRolloutEvents(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `providers:
@@ -341,6 +373,13 @@ func writeSSE(t *testing.T, w io.Writer, event, data string) {
 	if _, err := io.WriteString(w, "event: "+event+"\n"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := io.WriteString(w, "data: "+data+"\n\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeOpenAIChatSSE(t *testing.T, w io.Writer, data string) {
+	t.Helper()
 	if _, err := io.WriteString(w, "data: "+data+"\n\n"); err != nil {
 		t.Fatal(err)
 	}

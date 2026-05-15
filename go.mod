@@ -6,6 +6,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.43.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/invopop/jsonschema v0.13.0
+	github.com/openai/openai-go v1.12.0
 	github.com/spf13/cobra v1.10.2
 	modernc.org/sqlite v1.50.1
 )

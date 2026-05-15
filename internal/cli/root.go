@@ -16,6 +16,7 @@ import (
 	"github.com/feimingxliu/ub/internal/provider"
 	_ "github.com/feimingxliu/ub/internal/provider/anthropic"
 	_ "github.com/feimingxliu/ub/internal/provider/fake"
+	_ "github.com/feimingxliu/ub/internal/provider/openai"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/goccy/go-yaml"
