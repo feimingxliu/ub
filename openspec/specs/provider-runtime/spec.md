@@ -58,7 +58,7 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 
 ### Requirement: 最小 chat 命令
 
-系统 SHALL 提供 `ub chat` 子命令用于单轮 provider 对话。命令 MUST 支持 `ub chat "prompt"`、`ub chat -`、`--provider <name>` 和 `--model <id>`；文本 delta MUST 流式写到 stdout。
+系统 SHALL 提供 `ub chat` 子命令用于 provider 对话。命令 MUST 支持 `ub chat "prompt"`、`ub chat -`、`--provider <name>`、`--model <id>`、`--session <id>` 和 `--new`；文本 delta MUST 流式写到 stdout。`--provider` 与 `--model` MUST 只影响当前调用，不写回配置。
 
 #### Scenario: 参数 prompt
 
@@ -83,6 +83,27 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 - **GIVEN** fake provider 返回 tool_call 事件
 - **WHEN** 用户运行 `ub chat`
 - **THEN** 命令 MUST 返回可读错误，说明裸 chat 暂不执行工具调用
+
+#### Scenario: 继续 session
+
+- **GIVEN** 已有 session 中存在 user 与 assistant 历史消息
+- **WHEN** 用户运行 `ub chat --session <id> "next"`
+- **THEN** provider request MUST 包含历史消息和当前 user 消息，并把新事件追加到同一 session
+
+#### Scenario: 强制新 session
+
+- **WHEN** 用户运行 `ub chat --new "hello"`
+- **THEN** 命令 MUST 创建新 session，而不是复用任何已有 session
+
+#### Scenario: session 参数冲突
+
+- **WHEN** 用户同时传入 `--session <id>` 和 `--new`
+- **THEN** 命令 MUST 返回可读错误
+
+#### Scenario: provider 不存在
+
+- **WHEN** 用户运行 `ub chat --provider missing "hi"`
+- **THEN** 命令 MUST 返回说明 provider 未配置的可读错误
 
 ### Requirement: Anthropic provider 工厂注册
 

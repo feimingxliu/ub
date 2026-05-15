@@ -12,9 +12,70 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 )
+
+var captureRequests []provider.Request
+
+func init() {
+	provider.Register("capture", func(name string, cfg config.ProviderConfig) (provider.Provider, error) {
+		return captureProvider{name: name}, nil
+	})
+}
+
+type captureProvider struct {
+	name string
+}
+
+func (p captureProvider) Name() string {
+	return p.name
+}
+
+func (p captureProvider) Caps() provider.Caps {
+	return provider.Caps{SupportsStreaming: true}
+}
+
+func (p captureProvider) Chat(ctx context.Context, req provider.Request) (provider.Stream, error) {
+	copied := provider.Request{Model: req.Model, Messages: cloneTestMessages(req.Messages)}
+	captureRequests = append(captureRequests, copied)
+	return &captureStream{events: []provider.Event{
+		{Type: provider.EventTextDelta, Text: "captured"},
+		{Type: provider.EventDone},
+	}}, nil
+}
+
+type captureStream struct {
+	events []provider.Event
+	next   int
+}
+
+func (s *captureStream) Next(ctx context.Context) (provider.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return provider.Event{}, err
+	}
+	if s.next >= len(s.events) {
+		return provider.Event{}, io.EOF
+	}
+	event := s.events[s.next]
+	s.next++
+	return event, nil
+}
+
+func (s *captureStream) Close() error {
+	return nil
+}
+
+func cloneTestMessages(messages []message.Message) []message.Message {
+	out := make([]message.Message, len(messages))
+	for i, msg := range messages {
+		out[i] = msg.Clone()
+	}
+	return out
+}
 
 func TestChatWithFakeProviderPrintsTextDelta(t *testing.T) {
 	temp := t.TempDir()
@@ -186,6 +247,131 @@ profiles:
 	}
 	if got := out.String(); got != "dev" {
 		t.Fatalf("stdout = %q, want dev", got)
+	}
+}
+
+func TestChatContinuesSessionWithHistory(t *testing.T) {
+	captureRequests = nil
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: capture/test-model
+providers:
+  capture:
+    type: capture
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "first"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("first chat: %v", err)
+	}
+	sessions := readOnlySessions(t, temp)
+	if len(sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1", len(sessions))
+	}
+	sessionID := sessions[0].ID
+
+	captureRequests = nil
+	cmd = newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--session", sessionID, "second"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("continued chat: %v", err)
+	}
+	if got := out.String(); got != "captured" {
+		t.Fatalf("stdout = %q, want captured", got)
+	}
+	if len(captureRequests) != 1 {
+		t.Fatalf("capture request len = %d, want 1", len(captureRequests))
+	}
+	messages := captureRequests[0].Messages
+	if len(messages) != 3 {
+		t.Fatalf("messages len = %d, want 3: %#v", len(messages), messages)
+	}
+	if messages[0].Role != message.RoleUser || messages[0].Text() != "first" {
+		t.Fatalf("first history message = %#v", messages[0])
+	}
+	if messages[1].Role != message.RoleAssistant || messages[1].Text() != "captured" {
+		t.Fatalf("assistant history message = %#v", messages[1])
+	}
+	if messages[2].Role != message.RoleUser || messages[2].Text() != "second" {
+		t.Fatalf("new user message = %#v", messages[2])
+	}
+	events := readOnlySessionEvents(t, temp)
+	if events[len(events)-1].Turn != 2 {
+		t.Fatalf("last event turn = %d, want 2; events=%#v", events[len(events)-1].Turn, events)
+	}
+}
+
+func TestChatNewCreatesDistinctSession(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: ok
+`)
+	t.Chdir(temp)
+
+	for _, prompt := range []string{"first", "second"} {
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"chat", "--provider", "fake", "--new", prompt})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("chat --new %q: %v", prompt, err)
+		}
+	}
+	sessions := readOnlySessions(t, temp)
+	if len(sessions) != 2 {
+		t.Fatalf("sessions len = %d, want 2: %#v", len(sessions), sessions)
+	}
+}
+
+func TestChatRejectsSessionErrors(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "fake", "--session", "missing", "hello"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "session") || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing session error = %v", err)
+	}
+
+	cmd = newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "fake", "--session", "s1", "--new", "hello"})
+	err = cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "cannot use --new with --session") {
+		t.Fatalf("conflict error = %v", err)
+	}
+}
+
+func TestChatProviderMissingError(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers: {}`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "missing", "hello"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "provider") || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("provider missing error = %v", err)
 	}
 }
 
@@ -422,6 +608,35 @@ func writeChatConfig(t *testing.T, temp, content string) {
 
 func readOnlySessionEvents(t *testing.T, workspace string) []rollout.Event {
 	t.Helper()
+	sessions := readOnlySessions(t, workspace)
+	if len(sessions) != 1 {
+		t.Fatalf("sessions len = %d, want 1: %#v", len(sessions), sessions)
+	}
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+	ro, err := rollout.New(st)
+	if err != nil {
+		t.Fatalf("rollout.New: %v", err)
+	}
+	var events []rollout.Event
+	if err := ro.ForEach(context.Background(), sessions[0].ID, func(event rollout.Event) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	return events
+}
+
+func readOnlySessions(t *testing.T, workspace string) []store.Session {
+	t.Helper()
 	path, err := store.DefaultPath()
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
@@ -435,21 +650,7 @@ func readOnlySessionEvents(t *testing.T, workspace string) []rollout.Event {
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	if len(sessions) != 1 {
-		t.Fatalf("sessions len = %d, want 1: %#v", len(sessions), sessions)
-	}
-	ro, err := rollout.New(st)
-	if err != nil {
-		t.Fatalf("rollout.New: %v", err)
-	}
-	var events []rollout.Event
-	if err := ro.ForEach(context.Background(), sessions[0].ID, func(event rollout.Event) error {
-		events = append(events, event)
-		return nil
-	}); err != nil {
-		t.Fatalf("ForEach: %v", err)
-	}
-	return events
+	return sessions
 }
 
 func assertEventTypes(t *testing.T, events []rollout.Event, want []rollout.Type) {

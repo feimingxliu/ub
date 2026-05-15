@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -119,17 +121,24 @@ func newRunCmd() *cobra.Command {
 func newChatCmd() *cobra.Command {
 	var providerName string
 	var model string
+	var sessionID string
+	var forceNew bool
 
 	cmd := &cobra.Command{
 		Use:   "chat [prompt|-]",
 		Short: "Send one prompt to a provider",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runChat(cmd, args[0], providerName, model)
+			return runChat(cmd, args[0], providerName, model, chatOptions{
+				SessionID: sessionID,
+				New:       forceNew,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&providerName, "provider", "", "provider config name")
 	cmd.Flags().StringVar(&model, "model", "", "model id override")
+	cmd.Flags().StringVar(&sessionID, "session", "", "continue an existing session id")
+	cmd.Flags().BoolVar(&forceNew, "new", false, "force creation of a new session")
 	return cmd
 }
 
@@ -222,7 +231,24 @@ func newSessionsCmd() *cobra.Command {
 	return cmd
 }
 
-func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) error {
+type chatOptions struct {
+	SessionID string
+	New       bool
+}
+
+type chatSessionState struct {
+	store     *store.Store
+	rollout   *rollout.SQLite
+	session   store.Session
+	history   []message.Message
+	nextTurn  int
+	sessionID string
+}
+
+func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts chatOptions) error {
+	if opts.New && strings.TrimSpace(opts.SessionID) != "" {
+		return fmt.Errorf("cannot use --new with --session")
+	}
 	prompt, err := readChatPrompt(cmd, promptArg)
 	if err != nil {
 		return err
@@ -238,34 +264,35 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) erro
 	}
 	providerCfg, ok := cfg.Providers[providerName]
 	if !ok {
-		return fmt.Errorf("provider %q not configured", providerName)
+		return fmt.Errorf("provider %q not configured; check `ub config show`", providerName)
 	}
 	p, err := provider.New(providerName, providerCfg)
 	if err != nil {
-		return err
+		return fmt.Errorf("create provider %q: %w", providerName, err)
 	}
 
-	st, ro, sessionID, err := startChatRollout(cmd, prompt, model)
+	state, err := startChatRollout(cmd, prompt, model, opts)
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer state.store.Close()
 
 	userMsg := message.Text(message.RoleUser, prompt)
-	event, err := rollout.UserMessage(sessionID, 1, userMsg)
+	event, err := rollout.UserMessage(state.sessionID, state.nextTurn, userMsg)
 	if err != nil {
 		return err
 	}
-	if err := ro.Append(cmd.Context(), event); err != nil {
+	if err := state.rollout.Append(cmd.Context(), event); err != nil {
 		return err
 	}
 
+	requestMessages := append(cloneMessages(state.history), userMsg)
 	stream, err := p.Chat(cmd.Context(), provider.Request{
 		Model:    model,
-		Messages: []message.Message{userMsg},
+		Messages: requestMessages,
 	})
 	if err != nil {
-		return recordChatError(cmd, ro, sessionID, err)
+		return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, fmt.Errorf("provider %q chat: %w", providerName, err))
 	}
 	defer stream.Close()
 
@@ -273,36 +300,42 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) erro
 	for {
 		event, err := stream.Next(cmd.Context())
 		if err == io.EOF {
-			if err := recordAssistantMessage(cmd, ro, sessionID, assistant.String()); err != nil {
+			if err := recordAssistantMessage(cmd, state.rollout, state.sessionID, state.nextTurn, assistant.String()); err != nil {
+				return err
+			}
+			if err := finishChatSession(cmd, state, prompt, model); err != nil {
 				return err
 			}
 			return nil
 		}
 		if err != nil {
-			if recordErr := recordAssistantMessage(cmd, ro, sessionID, assistant.String()); recordErr != nil {
+			if recordErr := recordAssistantMessage(cmd, state.rollout, state.sessionID, state.nextTurn, assistant.String()); recordErr != nil {
 				return recordErr
 			}
-			return recordChatError(cmd, ro, sessionID, err)
+			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, fmt.Errorf("provider %q stream: %w", providerName, err))
 		}
 		switch event.Type {
 		case provider.EventTextDelta:
 			if _, err := io.WriteString(cmd.OutOrStdout(), event.Text); err != nil {
-				return recordChatError(cmd, ro, sessionID, err)
+				return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, err)
 			}
 			assistant.WriteString(event.Text)
 		case provider.EventUsage:
 			if event.Usage != nil {
-				usageEvent, err := rollout.Usage(sessionID, 1, *event.Usage)
+				usageEvent, err := rollout.Usage(state.sessionID, state.nextTurn, *event.Usage)
 				if err != nil {
 					return err
 				}
-				if err := ro.Append(cmd.Context(), usageEvent); err != nil {
+				if err := state.rollout.Append(cmd.Context(), usageEvent); err != nil {
 					return err
 				}
 			}
 			continue
 		case provider.EventDone:
-			if err := recordAssistantMessage(cmd, ro, sessionID, assistant.String()); err != nil {
+			if err := recordAssistantMessage(cmd, state.rollout, state.sessionID, state.nextTurn, assistant.String()); err != nil {
+				return err
+			}
+			if err := finishChatSession(cmd, state, prompt, model); err != nil {
 				return err
 			}
 			return nil
@@ -313,7 +346,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) erro
 			} else {
 				toolErr = fmt.Errorf("ub chat does not execute tool calls yet: received %q", event.ToolName)
 			}
-			return recordChatError(cmd, ro, sessionID, toolErr)
+			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, toolErr)
 		case provider.EventError:
 			var eventErr error
 			if event.Err != nil {
@@ -321,58 +354,136 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) erro
 			} else {
 				eventErr = fmt.Errorf("provider returned error event")
 			}
-			return recordChatError(cmd, ro, sessionID, eventErr)
+			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, eventErr)
 		default:
-			return recordChatError(cmd, ro, sessionID, fmt.Errorf("provider returned unsupported event type %q", event.Type))
+			return recordChatError(cmd, state.rollout, state.sessionID, state.nextTurn, fmt.Errorf("provider returned unsupported event type %q", event.Type))
 		}
 	}
 }
 
-func startChatRollout(cmd *cobra.Command, prompt, model string) (*store.Store, *rollout.SQLite, string, error) {
+func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions) (*chatSessionState, error) {
 	path, err := store.DefaultPath()
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("locate session store: %w", err)
+		return nil, fmt.Errorf("locate session store: %w", err)
 	}
 	st, err := store.Open(path)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, err
 	}
 	ro, err := rollout.New(st)
 	if err != nil {
 		_ = st.Close()
-		return nil, nil, "", err
+		return nil, err
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		_ = st.Close()
-		return nil, nil, "", fmt.Errorf("get cwd: %w", err)
+		return nil, fmt.Errorf("get cwd: %w", err)
 	}
+
+	if sessionID := strings.TrimSpace(opts.SessionID); sessionID != "" {
+		sess, err := st.GetSession(cmd.Context(), sessionID)
+		if errors.Is(err, store.ErrNotFound) {
+			_ = st.Close()
+			return nil, fmt.Errorf("session %q not found", sessionID)
+		}
+		if err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+		history, nextTurn, err := readChatHistory(cmd, ro, sessionID)
+		if err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+		return &chatSessionState{
+			store:     st,
+			rollout:   ro,
+			session:   *sess,
+			history:   history,
+			nextTurn:  nextTurn,
+			sessionID: sessionID,
+		}, nil
+	}
+
 	sessionID := rollout.NewID("sess")
-	if err := st.CreateSession(cmd.Context(), store.Session{
+	now := time.Now().UTC()
+	sess := store.Session{
 		ID:        sessionID,
 		Workspace: cwd,
 		Title:     chatTitle(prompt),
 		Model:     model,
-	}); err != nil {
-		_ = st.Close()
-		return nil, nil, "", err
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
-	return st, ro, sessionID, nil
+	if err := st.CreateSession(cmd.Context(), sess); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	return &chatSessionState{
+		store:     st,
+		rollout:   ro,
+		session:   sess,
+		nextTurn:  1,
+		sessionID: sessionID,
+	}, nil
 }
 
-func recordAssistantMessage(cmd *cobra.Command, ro *rollout.SQLite, sessionID, text string) error {
+func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, error) {
+	var history []message.Message
+	maxTurn := 0
+	if err := ro.ForEach(cmd.Context(), sessionID, func(event rollout.Event) error {
+		if event.Turn > maxTurn {
+			maxTurn = event.Turn
+		}
+		if event.Type != rollout.TypeUserMessage && event.Type != rollout.TypeAssistantMessage {
+			return nil
+		}
+		var payload rollout.MessagePayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode rollout message event %s: %w", event.ID, err)
+		}
+		msg := payload.Message.Clone()
+		if len(msg.Content) == 0 && payload.Text != "" {
+			switch event.Type {
+			case rollout.TypeUserMessage:
+				msg = message.Text(message.RoleUser, payload.Text)
+			case rollout.TypeAssistantMessage:
+				msg = message.Text(message.RoleAssistant, payload.Text)
+			}
+		}
+		if len(msg.Content) > 0 {
+			history = append(history, msg)
+		}
+		return nil
+	}); err != nil {
+		return nil, 0, err
+	}
+	return history, maxTurn + 1, nil
+}
+
+func finishChatSession(cmd *cobra.Command, state *chatSessionState, prompt, model string) error {
+	state.session.Model = model
+	state.session.UpdatedAt = time.Now().UTC()
+	if state.session.Title == "" {
+		state.session.Title = chatTitle(prompt)
+	}
+	return state.store.UpdateSession(cmd.Context(), state.session)
+}
+
+func recordAssistantMessage(cmd *cobra.Command, ro *rollout.SQLite, sessionID string, turn int, text string) error {
 	if text == "" {
 		return nil
 	}
-	event, err := rollout.AssistantMessage(sessionID, 1, message.Text(message.RoleAssistant, text))
+	event, err := rollout.AssistantMessage(sessionID, turn, message.Text(message.RoleAssistant, text))
 	if err != nil {
 		return err
 	}
 	return ro.Append(cmd.Context(), event)
 }
 
-func recordChatError(cmd *cobra.Command, ro *rollout.SQLite, sessionID string, chatErr error) error {
-	event, err := rollout.Error(sessionID, 1, chatErr)
+func recordChatError(cmd *cobra.Command, ro *rollout.SQLite, sessionID string, turn int, chatErr error) error {
+	event, err := rollout.Error(sessionID, turn, chatErr)
 	if err != nil {
 		return fmt.Errorf("record rollout error payload: %v; original error: %w", err, chatErr)
 	}
@@ -380,6 +491,17 @@ func recordChatError(cmd *cobra.Command, ro *rollout.SQLite, sessionID string, c
 		return fmt.Errorf("record rollout error: %v; original error: %w", err, chatErr)
 	}
 	return chatErr
+}
+
+func cloneMessages(messages []message.Message) []message.Message {
+	if messages == nil {
+		return nil
+	}
+	out := make([]message.Message, len(messages))
+	for i, msg := range messages {
+		out[i] = msg.Clone()
+	}
+	return out
 }
 
 func chatTitle(prompt string) string {
