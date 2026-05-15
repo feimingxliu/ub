@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
@@ -124,6 +125,22 @@ func (r *tuiAgentRunner) Close() error {
 	}
 	r.closedStore = true
 	return r.state.store.Close()
+}
+
+func (r *tuiAgentRunner) SetModel(model string) {
+	if strings.TrimSpace(model) == "" {
+		return
+	}
+	r.model = strings.TrimSpace(model)
+}
+
+func (r *tuiAgentRunner) SetMode(mode string) error {
+	parsed, err := execution.ParseMode(mode)
+	if err != nil {
+		return err
+	}
+	r.mode = parsed
+	return nil
 }
 
 func convertAgentEvent(event agent.Event) tui.Event {

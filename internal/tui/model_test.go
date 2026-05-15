@@ -172,6 +172,92 @@ func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 	}
 }
 
+func TestSlashHelpDoesNotCallRunner(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/help")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash help returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "commands:") {
+		t.Fatalf("messages = %#v, want help message", got)
+	}
+}
+
+func TestSlashClear(t *testing.T) {
+	model := NewModel(Options{})
+	model = sendText(t, model, "hello")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "/clear")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash clear returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("messages = %#v, want cleared", got)
+	}
+}
+
+func TestSlashQuit(t *testing.T) {
+	model := NewModel(Options{})
+	model = sendText(t, model, "/quit")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("slash quit returned nil command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("slash quit command = %T, want tea.QuitMsg", cmd())
+	}
+}
+
+func TestSlashModelAndModeUpdateRunner(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner, Model: "fake/old", ExecutionMode: "default"})
+	model = sendText(t, model, "/model fake/new")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.model != "fake/new" || !strings.Contains(model.View(), "model: fake/new") {
+		t.Fatalf("model update failed: runner=%q view=\n%s", runner.model, model.View())
+	}
+
+	model = sendText(t, model, "/mode plan")
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
+		t.Fatalf("mode update failed: runner=%q view=\n%s", runner.mode, model.View())
+	}
+}
+
+func TestSlashUnknownCommand(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/wat")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("unknown slash returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "unknown slash command") {
+		t.Fatalf("messages = %#v, want unknown command error", got)
+	}
+}
+
 func TestModelCtrlCQuits(t *testing.T) {
 	model := NewModel(Options{})
 
@@ -189,6 +275,8 @@ type scriptedRunner struct {
 	events  []Event
 	calls   int
 	prompts []string
+	model   string
+	mode    string
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -197,6 +285,15 @@ func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Eve
 	for _, event := range r.events {
 		events <- event
 	}
+	return nil
+}
+
+func (r *scriptedRunner) SetModel(model string) {
+	r.model = model
+}
+
+func (r *scriptedRunner) SetMode(mode string) error {
+	r.mode = mode
 	return nil
 }
 

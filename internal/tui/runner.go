@@ -11,6 +11,12 @@ type Runner interface {
 	Run(ctx context.Context, prompt string, events chan<- Event) error
 }
 
+// ControlRunner optionally lets slash commands update future runs.
+type ControlRunner interface {
+	SetModel(model string)
+	SetMode(mode string) error
+}
+
 // EventType identifies a TUI stream event.
 type EventType string
 

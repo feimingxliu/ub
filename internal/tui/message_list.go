@@ -5,6 +5,7 @@ import "strings"
 const userRole = "You"
 const assistantRole = "Assistant"
 const toolRole = "Tool"
+const systemRole = "System"
 
 type message struct {
 	role string
@@ -21,6 +22,10 @@ func newMessageList() messageList {
 
 func (l *messageList) append(role, text string) {
 	l.items = append(l.items, message{role: role, text: text})
+}
+
+func (l *messageList) clear() {
+	l.items = nil
 }
 
 func (l *messageList) startAssistant() {

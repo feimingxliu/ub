@@ -3,13 +3,16 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/feimingxliu/ub/internal/execution"
 	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
+	"github.com/feimingxliu/ub/internal/tui/slash"
 )
 
 // Options configures the initial TUI shell.
@@ -128,6 +131,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if text := strings.TrimSpace(m.input.Value()); text != "" {
+				if strings.HasPrefix(text, "/") {
+					m.input.SetValue("")
+					return m.executeSlash(text)
+				}
 				m.messages.append(userRole, text)
 				m.input.SetValue("")
 				if m.runner == nil {
@@ -201,6 +208,74 @@ func (m Model) Running() bool {
 // Turn returns the current TUI turn number.
 func (m Model) Turn() int {
 	return m.status.turn
+}
+
+func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
+	cmd, err := slash.Parse(input)
+	if err != nil {
+		m.messages.append(systemRole, err.Error())
+		return m, nil
+	}
+	switch cmd.Name {
+	case "clear":
+		m.messages.clear()
+		return m, nil
+	case "help":
+		m.messages.append(systemRole, "commands: /"+strings.Join(slash.Supported(), ", /"))
+		return m, nil
+	case "quit":
+		if m.cancel != nil {
+			m.cancel()
+		}
+		return m, tea.Quit
+	case "config":
+		m.messages.append(systemRole, fmt.Sprintf("model=%s mode=%s cwd=%s", m.status.model, m.status.executionMode, m.status.cwd))
+		return m, nil
+	case "sessions":
+		m.messages.append(systemRole, "sessions: use `ub sessions ls` for the current workspace")
+		return m, nil
+	case "profile":
+		if len(cmd.Args) == 0 {
+			m.messages.append(systemRole, "profile: use `/profile <name>` to show restart guidance")
+		} else {
+			m.messages.append(systemRole, fmt.Sprintf("profile %q requires restart via `ub --profile %s` or UB_PROFILE=%s", cmd.Args[0], cmd.Args[0], cmd.Args[0]))
+		}
+		return m, nil
+	case "model":
+		if len(cmd.Args) == 0 {
+			m.messages.append(systemRole, "model: "+m.status.model)
+			return m, nil
+		}
+		model := strings.Join(cmd.Args, " ")
+		m.status.model = model
+		if runner, ok := m.runner.(ControlRunner); ok {
+			runner.SetModel(model)
+		}
+		m.messages.append(systemRole, "model set to "+model)
+		return m, nil
+	case "mode":
+		if len(cmd.Args) == 0 {
+			m.messages.append(systemRole, "mode: "+m.status.executionMode)
+			return m, nil
+		}
+		mode, err := execution.ParseMode(cmd.Args[0])
+		if err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		if runner, ok := m.runner.(ControlRunner); ok {
+			if err := runner.SetMode(string(mode)); err != nil {
+				m.messages.append(systemRole, err.Error())
+				return m, nil
+			}
+		}
+		m.status.executionMode = string(mode)
+		m.messages.append(systemRole, "mode set to "+string(mode))
+		return m, nil
+	default:
+		m.messages.append(systemRole, "unknown slash command "+cmd.Name)
+		return m, nil
+	}
 }
 
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
