@@ -148,6 +148,98 @@ func TestStreamCancelAndClose(t *testing.T) {
 	}
 }
 
+func TestChatSendsToolsAndToolMessages(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeAnthropicSSE(t, w, "message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":0}}}`)
+		writeAnthropicSSE(t, w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}`)
+		writeAnthropicSSE(t, w, "message_stop", `{"type":"message_stop"}`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("anthropic", config.ProviderConfig{
+		Type:    "anthropic",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model: "claude-test",
+		Tools: []provider.ToolDefinition{{
+			Name:        "read",
+			Description: "Read a file.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
+		}},
+		Messages: []message.Message{
+			message.Text(message.RoleUser, "read main.go"),
+			message.New(message.RoleAssistant, message.ToolUseBlock("call_1", "read", json.RawMessage(`{"path":"main.go"}`))),
+			message.New(message.RoleTool, message.ToolResultBlock("call_1", "file content", false)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	tools := requestBody["tools"].([]any)
+	toolDef := tools[0].(map[string]any)
+	if toolDef["name"] != "read" || toolDef["description"] != "Read a file." {
+		t.Fatalf("tool = %#v", toolDef)
+	}
+	messages := requestBody["messages"].([]any)
+	assistantContent := messages[1].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if assistantContent["type"] != "tool_use" || assistantContent["id"] != "call_1" || assistantContent["name"] != "read" {
+		t.Fatalf("assistant tool_use = %#v", assistantContent)
+	}
+	toolContent := messages[2].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if toolContent["type"] != "tool_result" || toolContent["tool_use_id"] != "call_1" {
+		t.Fatalf("tool_result = %#v", toolContent)
+	}
+}
+
+func TestChatStreamsToolCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeAnthropicSSE(t, w, "message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":2,"output_tokens":0}}}`)
+		writeAnthropicSSE(t, w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_1","name":"read","input":{}}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\""}}`)
+		writeAnthropicSSE(t, w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":":\"main.go\"}"}}`)
+		writeAnthropicSSE(t, w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
+		writeAnthropicSSE(t, w, "message_stop", `{"type":"message_stop"}`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("anthropic", config.ProviderConfig{
+		Type:    "anthropic",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model:    "claude-test",
+		Messages: []message.Message{message.Text(message.RoleUser, "read")},
+		Tools:    []provider.ToolDefinition{{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	event, err := stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventToolCall || event.ToolUseID != "call_1" || event.ToolName != "read" || string(event.Input) != `{"path":"main.go"}` {
+		t.Fatalf("tool event = %#v, err=%v", event, err)
+	}
+}
+
 func TestChatRejectsUnsupportedBlocks(t *testing.T) {
 	p, err := NewFromConfig("anthropic", config.ProviderConfig{
 		Type:   "anthropic",

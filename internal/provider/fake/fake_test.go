@@ -75,6 +75,33 @@ func TestFromConfigScript(t *testing.T) {
 	}
 }
 
+func TestMultiRoundScripts(t *testing.T) {
+	p := NewRounds(
+		Script{ToolCall("read", map[string]any{"path": "main.go"}), Done()},
+		Script{TextDelta("done"), Done()},
+	)
+	first, err := p.Chat(context.Background(), provider.Request{})
+	if err != nil {
+		t.Fatalf("first Chat: %v", err)
+	}
+	ev, err := first.Next(context.Background())
+	if err != nil || ev.Type != provider.EventToolCall {
+		t.Fatalf("first event = %#v, err=%v", ev, err)
+	}
+	second, err := p.Chat(context.Background(), provider.Request{
+		Messages: []message.Message{
+			message.New(message.RoleUser, message.ToolResultBlock(ev.ToolUseID, "file content", false)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("second Chat: %v", err)
+	}
+	ev, err = second.Next(context.Background())
+	if err != nil || ev.Type != provider.EventTextDelta || ev.Text != "done" {
+		t.Fatalf("second event = %#v, err=%v", ev, err)
+	}
+}
+
 func TestErrorEvent(t *testing.T) {
 	p := New(Script{Error("boom")})
 	stream, err := p.Chat(context.Background(), provider.Request{})

@@ -2,7 +2,7 @@
 package cli
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,9 +12,12 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/execution"
 	logx "github.com/feimingxliu/ub/internal/log"
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
 	_ "github.com/feimingxliu/ub/internal/provider/anthropic"
 	_ "github.com/feimingxliu/ub/internal/provider/compat"
@@ -23,6 +26,11 @@ import (
 	_ "github.com/feimingxliu/ub/internal/provider/openai"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
+	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tool/fs"
+	"github.com/feimingxliu/ub/internal/tool/job"
+	"github.com/feimingxliu/ub/internal/tool/search"
+	"github.com/feimingxliu/ub/internal/tool/shell"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 )
@@ -109,13 +117,22 @@ type runtimeOptions struct {
 }
 
 func newRunCmd() *cobra.Command {
-	return &cobra.Command{
+	var prompt string
+	var providerName string
+	var model string
+
+	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Run an agent session (TUI by default)",
+		Short: "Run a headless agent session",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return notImplemented("I-22 (TUI) / I-21 (headless agent)")
+			return runAgent(cmd, prompt, providerName, model)
 		},
 	}
+	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "prompt to send to the agent")
+	cmd.Flags().StringVar(&providerName, "provider", "", "provider config name")
+	cmd.Flags().StringVar(&model, "model", "", "model id override")
+	return cmd
 }
 
 func newChatCmd() *cobra.Command {
@@ -262,6 +279,97 @@ type chatSessionState struct {
 	history   []message.Message
 	nextTurn  int
 	sessionID string
+}
+
+func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return fmt.Errorf("prompt required: pass -p/--prompt")
+	}
+	cfg, _, err := loadConfigForCommand(cmd)
+	if err != nil {
+		return err
+	}
+	providerName, model, err := selectChatProvider(cfg, providerFlag, modelFlag)
+	if err != nil {
+		return err
+	}
+	providerCfg, ok := cfg.Providers[providerName]
+	if !ok {
+		return fmt.Errorf("provider %q not configured; check `ub config show`", providerName)
+	}
+	p, err := provider.New(providerName, providerCfg)
+	if err != nil {
+		return fmt.Errorf("create provider %q: %w", providerName, err)
+	}
+	mode, err := execution.ParseMode(cfg.ExecutionMode)
+	if err != nil {
+		return err
+	}
+	reg, err := localToolRegistry()
+	if err != nil {
+		return err
+	}
+	perm, err := permission.NewManager(permission.Options{Asker: autoAllowAsker{}})
+	if err != nil {
+		return err
+	}
+	state, err := startChatRollout(cmd, prompt, model, chatOptions{})
+	if err != nil {
+		return err
+	}
+	defer state.store.Close()
+
+	a, err := agent.New(agent.Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Rollout:    state.rollout,
+		Model:      model,
+		Mode:       mode,
+	})
+	if err != nil {
+		return err
+	}
+	result, err := a.Run(cmd.Context(), agent.Request{
+		SessionID: state.sessionID,
+		Turn:      state.nextTurn,
+		History:   state.history,
+		Prompt:    prompt,
+	})
+	if err != nil {
+		_ = finishChatSession(cmd, state, prompt, model)
+		return err
+	}
+	if _, err := io.WriteString(cmd.OutOrStdout(), result.Text); err != nil {
+		return err
+	}
+	return finishChatSession(cmd, state, prompt, model)
+}
+
+func localToolRegistry() (*tool.Registry, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("get cwd: %w", err)
+	}
+	reg := tool.New()
+	for _, register := range []func(*tool.Registry, string) error{
+		fs.Register,
+		search.Register,
+		shell.Register,
+		job.Register,
+	} {
+		if err := register(reg, cwd); err != nil {
+			return nil, err
+		}
+	}
+	return reg, nil
+}
+
+type autoAllowAsker struct{}
+
+func (autoAllowAsker) Ask(context.Context, permission.Request) (permission.Decision, error) {
+	return permission.DecisionAllow, nil
 }
 
 func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts chatOptions) error {
@@ -455,23 +563,11 @@ func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) (
 		if event.Turn > maxTurn {
 			maxTurn = event.Turn
 		}
-		if event.Type != rollout.TypeUserMessage && event.Type != rollout.TypeAssistantMessage {
-			return nil
+		msg, ok, err := rollout.MessageFromEvent(event)
+		if err != nil {
+			return err
 		}
-		var payload rollout.MessagePayload
-		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			return fmt.Errorf("decode rollout message event %s: %w", event.ID, err)
-		}
-		msg := payload.Message.Clone()
-		if len(msg.Content) == 0 && payload.Text != "" {
-			switch event.Type {
-			case rollout.TypeUserMessage:
-				msg = message.Text(message.RoleUser, payload.Text)
-			case rollout.TypeAssistantMessage:
-				msg = message.Text(message.RoleAssistant, payload.Text)
-			}
-		}
-		if len(msg.Content) > 0 {
+		if ok {
 			history = append(history, msg)
 		}
 		return nil

@@ -13,6 +13,7 @@ import (
 
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/store"
+	"github.com/feimingxliu/ub/internal/tool"
 )
 
 func TestAppendValidatesRequiredFields(t *testing.T) {
@@ -88,6 +89,41 @@ func TestReaderFiltersSession(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].SessionID != first {
 		t.Fatalf("filtered events = %#v", got)
+	}
+}
+
+func TestToolResultEventAndMessageFromEvent(t *testing.T) {
+	event, err := ToolResult("sess_tool", 2, "call_1", "read", tool.Result{
+		Content: "file content",
+		IsError: true,
+		Files: []tool.FileChange{{
+			Path: "main.go",
+			Kind: tool.KindModify,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ToolResult: %v", err)
+	}
+	if event.Type != TypeToolResult {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeToolResult)
+	}
+	var payload ToolResultPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.ToolUseID != "call_1" || payload.ToolName != "read" || payload.Output != "file content" || !payload.IsError {
+		t.Fatalf("payload = %#v", payload)
+	}
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if !ok || msg.Role != message.RoleUser || len(msg.Content) != 1 {
+		t.Fatalf("message = %#v, ok=%v", msg, ok)
+	}
+	block := msg.Content[0]
+	if block.Type != message.BlockToolResult || block.ToolUseID != "call_1" || block.Output != "file content" || !block.IsError {
+		t.Fatalf("block = %#v", block)
 	}
 }
 

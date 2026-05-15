@@ -18,7 +18,7 @@ func TestRunRendersErrorWithoutUsage(t *testing.T) {
 	if code == 0 {
 		t.Fatal("Run(run) returned success, want failure")
 	}
-	if !strings.Contains(errOut.String(), "error:") || !strings.Contains(errOut.String(), "I-2") {
+	if !strings.Contains(errOut.String(), "error:") || !strings.Contains(errOut.String(), "prompt required") {
 		t.Fatalf("stderr missing rendered error:\n%s", errOut.String())
 	}
 	if strings.Contains(errOut.String(), "Usage:") {
@@ -26,6 +26,54 @@ func TestRunRendersErrorWithoutUsage(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", out.String())
+	}
+}
+
+func TestRunWithFakeProviderPrintsFinalText(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: fake/test-model
+providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: done
+      - type: done
+`)
+	t.Chdir(temp)
+
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	code := Run([]string{"run", "--provider", "fake", "-p", "hi"}, out, errOut)
+	if code != 0 {
+		t.Fatalf("Run(run -p) code = %d, stderr:\n%s", code, errOut.String())
+	}
+	if got := out.String(); got != "done" {
+		t.Fatalf("stdout = %q, want done", got)
+	}
+}
+
+func TestRunModePlanParses(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: fake/test-model
+providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: plan-ok
+      - type: done
+`)
+	t.Chdir(temp)
+
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	code := Run([]string{"--mode", "plan", "run", "--provider", "fake", "-p", "hi"}, out, errOut)
+	if code != 0 {
+		t.Fatalf("Run(--mode plan run -p) code = %d, stderr:\n%s", code, errOut.String())
+	}
+	if got := out.String(); got != "plan-ok" {
+		t.Fatalf("stdout = %q, want plan-ok", got)
 	}
 }
 

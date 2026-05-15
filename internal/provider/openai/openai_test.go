@@ -145,6 +145,95 @@ func TestStreamCancelAndClose(t *testing.T) {
 	}
 }
 
+func TestChatSendsToolsAndToolMessages(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("openai", config.ProviderConfig{
+		Type:    "openai",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model: "gpt-test",
+		Tools: []provider.ToolDefinition{{
+			Name:        "read",
+			Description: "Read a file.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
+		}},
+		Messages: []message.Message{
+			message.Text(message.RoleUser, "read main.go"),
+			message.New(message.RoleAssistant, message.ToolUseBlock("call_1", "read", json.RawMessage(`{"path":"main.go"}`))),
+			message.New(message.RoleTool, message.ToolResultBlock("call_1", "file content", false)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	tools := requestBody["tools"].([]any)
+	fn := tools[0].(map[string]any)["function"].(map[string]any)
+	if fn["name"] != "read" || fn["description"] != "Read a file." {
+		t.Fatalf("tool function = %#v", fn)
+	}
+	messages := requestBody["messages"].([]any)
+	assistant := messages[1].(map[string]any)
+	calls := assistant["tool_calls"].([]any)
+	call := calls[0].(map[string]any)
+	if call["id"] != "call_1" || call["type"] != "function" {
+		t.Fatalf("assistant tool call = %#v", call)
+	}
+	toolMsg := messages[2].(map[string]any)
+	if toolMsg["role"] != "tool" || toolMsg["tool_call_id"] != "call_1" || toolMsg["content"] != "file content" {
+		t.Fatalf("tool message = %#v", toolMsg)
+	}
+}
+
+func TestChatStreamsToolCall(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\""}}]},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"main.go\"}"}}]},"finish_reason":"tool_calls"}]}`)
+		writeOpenAISSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("openai", config.ProviderConfig{
+		Type:    "openai",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model:    "gpt-test",
+		Messages: []message.Message{message.Text(message.RoleUser, "read")},
+		Tools:    []provider.ToolDefinition{{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	event, err := stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventToolCall || event.ToolUseID != "call_1" || event.ToolName != "read" || string(event.Input) != `{"path":"main.go"}` {
+		t.Fatalf("tool event = %#v, err=%v", event, err)
+	}
+}
+
 func TestChatRejectsUnsupportedBlocks(t *testing.T) {
 	p, err := NewFromConfig("openai", config.ProviderConfig{
 		Type:   "openai",

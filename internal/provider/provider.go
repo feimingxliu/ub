@@ -33,6 +33,14 @@ type Caps struct {
 type Request struct {
 	Model    string
 	Messages []message.Message
+	Tools    []ToolDefinition
+}
+
+// ToolDefinition is the provider-neutral schema for one callable tool.
+type ToolDefinition struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema"`
 }
 
 // Stream produces provider events in order.

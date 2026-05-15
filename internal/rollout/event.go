@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/tool"
 )
 
 // Type identifies a rollout event kind.
@@ -19,6 +20,7 @@ type Type string
 const (
 	TypeUserMessage      Type = "user_message"
 	TypeAssistantMessage Type = "assistant_message"
+	TypeToolResult       Type = "tool_result"
 	TypeUsage            Type = "usage"
 	TypeError            Type = "error"
 )
@@ -48,6 +50,15 @@ type UsagePayload struct {
 // ErrorPayload stores a user-readable error.
 type ErrorPayload struct {
 	Message string `json:"message"`
+}
+
+// ToolResultPayload stores one executed tool result.
+type ToolResultPayload struct {
+	ToolUseID string            `json:"tool_use_id"`
+	ToolName  string            `json:"tool_name,omitempty"`
+	Output    string            `json:"output"`
+	IsError   bool              `json:"is_error,omitempty"`
+	Files     []tool.FileChange `json:"files,omitempty"`
 }
 
 // MarshalPayload marshals a typed payload into raw JSON.
@@ -92,6 +103,49 @@ func AssistantMessage(sessionID string, turn int, msg message.Message) (Event, e
 		Message: msg.Clone(),
 		Text:    msg.Text(),
 	})
+}
+
+// ToolResult creates a tool_result event.
+func ToolResult(sessionID string, turn int, toolUseID, toolName string, result tool.Result) (Event, error) {
+	return NewEvent(sessionID, turn, TypeToolResult, ToolResultPayload{
+		ToolUseID: toolUseID,
+		ToolName:  toolName,
+		Output:    result.Content,
+		IsError:   result.IsError,
+		Files:     append([]tool.FileChange(nil), result.Files...),
+	})
+}
+
+// MessageFromEvent converts persisted message-like rollout events to internal messages.
+func MessageFromEvent(event Event) (message.Message, bool, error) {
+	switch event.Type {
+	case TypeUserMessage, TypeAssistantMessage:
+		var payload MessagePayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return message.Message{}, false, fmt.Errorf("decode rollout message event %s: %w", event.ID, err)
+		}
+		msg := payload.Message.Clone()
+		if len(msg.Content) == 0 && payload.Text != "" {
+			switch event.Type {
+			case TypeUserMessage:
+				msg = message.Text(message.RoleUser, payload.Text)
+			case TypeAssistantMessage:
+				msg = message.Text(message.RoleAssistant, payload.Text)
+			}
+		}
+		if len(msg.Content) == 0 {
+			return message.Message{}, false, nil
+		}
+		return msg, true, nil
+	case TypeToolResult:
+		var payload ToolResultPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return message.Message{}, false, fmt.Errorf("decode rollout tool_result event %s: %w", event.ID, err)
+		}
+		return message.New(message.RoleUser, message.ToolResultBlock(payload.ToolUseID, payload.Output, payload.IsError)), true, nil
+	default:
+		return message.Message{}, false, nil
+	}
 }
 
 // Usage creates a usage event.

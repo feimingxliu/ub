@@ -39,26 +39,16 @@ func TestVersionNonEmpty(t *testing.T) {
 	}
 }
 
-func TestPlaceholderSubcommandsErrorWithIterationHint(t *testing.T) {
-	cases := []struct {
-		args []string
-		hint string
-	}{
-		{[]string{"run"}, "I-2"},
+func TestRunWithoutPromptErrors(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"run"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected run without prompt to fail")
 	}
-	for _, c := range cases {
-		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
-			cmd := newRootCmd()
-			cmd.SetOut(&bytes.Buffer{})
-			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs(c.args)
-			err := cmd.Execute()
-			if err == nil {
-				t.Fatalf("expected error from %v, got nil", c.args)
-			}
-			if !strings.Contains(err.Error(), c.hint) {
-				t.Errorf("error %q missing iteration hint %q", err, c.hint)
-			}
-		})
+	if !strings.Contains(err.Error(), "prompt required") {
+		t.Errorf("error %q missing prompt hint", err)
 	}
 }

@@ -68,8 +68,14 @@ func TestChatReturnsOpenAICompatibleEvents(t *testing.T) {
 	}
 	stream, err := p.Chat(context.Background(), provider.Request{
 		Model: "local-test",
+		Tools: []provider.ToolDefinition{{
+			Name:   "read",
+			Schema: json.RawMessage(`{"type":"object"}`),
+		}},
 		Messages: []message.Message{
 			message.Text(message.RoleUser, "ping"),
+			message.New(message.RoleAssistant, message.ToolUseBlock("call_1", "read", json.RawMessage(`{"path":"main.go"}`))),
+			message.New(message.RoleTool, message.ToolResultBlock("call_1", "file content", false)),
 		},
 	})
 	if err != nil {
@@ -85,6 +91,14 @@ func TestChatReturnsOpenAICompatibleEvents(t *testing.T) {
 	}
 	if requestBody["model"] != "local-test" || requestBody["stream"] != true {
 		t.Fatalf("request body = %#v", requestBody)
+	}
+	if len(requestBody["tools"].([]any)) != 1 {
+		t.Fatalf("tools = %#v", requestBody["tools"])
+	}
+	messages := requestBody["messages"].([]any)
+	toolMsg := messages[2].(map[string]any)
+	if toolMsg["role"] != "tool" || toolMsg["tool_call_id"] != "call_1" {
+		t.Fatalf("tool message = %#v", toolMsg)
 	}
 
 	event, err := stream.Next(context.Background())

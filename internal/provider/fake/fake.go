@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -18,8 +19,10 @@ type Script []provider.Event
 
 // Provider implements provider.Provider with an in-memory script.
 type Provider struct {
-	name   string
-	script Script
+	name    string
+	mu      sync.Mutex
+	scripts []Script
+	calls   int
 }
 
 func init() {
@@ -33,7 +36,20 @@ func New(script Script) *Provider {
 
 // NewNamed creates a fake provider with a specific configured name.
 func NewNamed(name string, script Script) *Provider {
-	return &Provider{name: name, script: cloneScript(script)}
+	return NewNamedRounds(name, script)
+}
+
+// NewRounds creates a fake provider named "fake" with one script per Chat call.
+func NewRounds(scripts ...Script) *Provider {
+	return NewNamedRounds("fake", scripts...)
+}
+
+// NewNamedRounds creates a fake provider with one script per Chat call.
+func NewNamedRounds(name string, scripts ...Script) *Provider {
+	if len(scripts) == 0 {
+		scripts = []Script{{}}
+	}
+	return &Provider{name: name, scripts: cloneScripts(scripts)}
 }
 
 // NewFromConfig creates a fake provider from a ProviderConfig script.
@@ -69,7 +85,15 @@ func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Str
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return &stream{events: cloneScript(p.script)}, nil
+	p.mu.Lock()
+	index := p.calls
+	p.calls++
+	if index >= len(p.scripts) {
+		index = len(p.scripts) - 1
+	}
+	script := cloneScript(p.scripts[index])
+	p.mu.Unlock()
+	return &stream{events: script}, nil
 }
 
 // TextDelta creates a text_delta script event.
@@ -174,6 +198,17 @@ func cloneScript(script Script) Script {
 	out := make(Script, len(script))
 	for i, event := range script {
 		out[i] = cloneEvent(event)
+	}
+	return out
+}
+
+func cloneScripts(scripts []Script) []Script {
+	if scripts == nil {
+		return nil
+	}
+	out := make([]Script, len(scripts))
+	for i, script := range scripts {
+		out[i] = cloneScript(script)
 	}
 	return out
 }
