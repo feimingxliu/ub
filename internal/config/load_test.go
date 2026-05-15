@@ -72,6 +72,41 @@ func TestLoadFromDirsExpandsEnvBeforeYAMLParse(t *testing.T) {
 	}
 }
 
+func TestLoadFromDirsParsesFakeProviderScript(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: pong
+      - type: tool_call
+        tool_name: fs.read
+        tool_use_id: call-1
+        input:
+          path: README.md
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	script := cfg.Providers["fake"].Script
+	if len(script) != 2 {
+		t.Fatalf("script len = %d, want 2: %#v", len(script), script)
+	}
+	if script[0].Type != "text_delta" || script[0].Text != "pong" {
+		t.Fatalf("text event = %#v", script[0])
+	}
+	input, ok := script[1].Input.(map[string]any)
+	if !ok || input["path"] != "README.md" {
+		t.Fatalf("tool input = %#v", script[1].Input)
+	}
+}
+
 func TestLoadFromDirsToleratesUnknownTopLevelKeys(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")

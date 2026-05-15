@@ -41,11 +41,25 @@ type Config struct {
 // intentionally narrow: only what the provider factory in I-07/I-08 will
 // consume. APIKey carries `secret:"true"` so config.Redact masks it.
 type ProviderConfig struct {
-	Type    string            `yaml:"type,omitempty"     json:"type,omitempty"`
-	APIKey  string            `yaml:"api_key,omitempty"  json:"api_key,omitempty"  secret:"true"`
-	BaseURL string            `yaml:"base_url,omitempty" json:"base_url,omitempty"`
-	Headers map[string]string `yaml:"headers,omitempty"  json:"headers,omitempty"`
-	Timeout time.Duration     `yaml:"timeout,omitempty"  json:"timeout,omitempty"`
+	Type    string                `yaml:"type,omitempty"     json:"type,omitempty"`
+	APIKey  string                `yaml:"api_key,omitempty"  json:"api_key,omitempty"  secret:"true"`
+	BaseURL string                `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	Headers map[string]string     `yaml:"headers,omitempty"  json:"headers,omitempty"`
+	Timeout time.Duration         `yaml:"timeout,omitempty"  json:"timeout,omitempty"`
+	Script  []ProviderScriptEvent `yaml:"script,omitempty"   json:"script,omitempty"`
+}
+
+// ProviderScriptEvent is used by the fake provider to produce deterministic
+// stream events from configuration.
+type ProviderScriptEvent struct {
+	Type         string `yaml:"type,omitempty"          json:"type,omitempty"`
+	Text         string `yaml:"text,omitempty"          json:"text,omitempty"`
+	ToolUseID    string `yaml:"tool_use_id,omitempty"   json:"tool_use_id,omitempty"`
+	ToolName     string `yaml:"tool_name,omitempty"     json:"tool_name,omitempty"`
+	Input        any    `yaml:"input,omitempty"         json:"input,omitempty"`
+	InputTokens  int    `yaml:"input_tokens,omitempty"  json:"input_tokens,omitempty"`
+	OutputTokens int    `yaml:"output_tokens,omitempty" json:"output_tokens,omitempty"`
+	Error        string `yaml:"error,omitempty"         json:"error,omitempty"`
 }
 
 // TUIConfig controls how the Bubble Tea interface renders.

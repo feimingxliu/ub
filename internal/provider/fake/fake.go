@@ -1,0 +1,191 @@
+// Package fake implements a deterministic script-driven provider.
+package fake
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"strings"
+
+	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/provider"
+)
+
+// Script is the ordered event list emitted by the fake provider.
+type Script []provider.Event
+
+// Provider implements provider.Provider with an in-memory script.
+type Provider struct {
+	name   string
+	script Script
+}
+
+func init() {
+	provider.Register("fake", NewFromConfig)
+}
+
+// New creates a fake provider named "fake".
+func New(script Script) *Provider {
+	return NewNamed("fake", script)
+}
+
+// NewNamed creates a fake provider with a specific configured name.
+func NewNamed(name string, script Script) *Provider {
+	return &Provider{name: name, script: cloneScript(script)}
+}
+
+// NewFromConfig creates a fake provider from a ProviderConfig script.
+func NewFromConfig(name string, cfg config.ProviderConfig) (provider.Provider, error) {
+	script := make(Script, 0, len(cfg.Script))
+	for i, item := range cfg.Script {
+		event, err := eventFromConfig(item)
+		if err != nil {
+			return nil, fmt.Errorf("fake provider %q script[%d]: %w", name, i, err)
+		}
+		script = append(script, event)
+	}
+	return NewNamed(name, script), nil
+}
+
+// Name returns the configured provider name.
+func (p *Provider) Name() string {
+	return p.name
+}
+
+// Caps returns the deterministic capabilities fake exposes for tests.
+func (p *Provider) Caps() provider.Caps {
+	return provider.Caps{
+		SupportsTools:     true,
+		SupportsStreaming: true,
+		MaxContextTokens:  1_000_000,
+		SupportsVision:    true,
+	}
+}
+
+// Chat returns a fresh stream over the provider script.
+func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Stream, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return &stream{events: cloneScript(p.script)}, nil
+}
+
+// TextDelta creates a text_delta script event.
+func TextDelta(text string) provider.Event {
+	return provider.Event{Type: provider.EventTextDelta, Text: text}
+}
+
+// ToolCall creates a tool_call script event.
+func ToolCall(name string, input any) provider.Event {
+	raw, err := json.Marshal(input)
+	if err != nil {
+		raw = []byte(`null`)
+	}
+	return provider.Event{
+		Type:      provider.EventToolCall,
+		ToolUseID: "fake-tool-call-1",
+		ToolName:  name,
+		Input:     raw,
+	}
+}
+
+// Usage creates a usage script event.
+func Usage(inputTokens, outputTokens int) provider.Event {
+	return provider.Event{
+		Type: provider.EventUsage,
+		Usage: &provider.Usage{
+			InputTokens:  inputTokens,
+			OutputTokens: outputTokens,
+		},
+	}
+}
+
+// Done creates a done script event.
+func Done() provider.Event {
+	return provider.Event{Type: provider.EventDone}
+}
+
+// Error creates an error script event.
+func Error(message string) provider.Event {
+	return provider.Event{Type: provider.EventError, Err: errors.New(message)}
+}
+
+type stream struct {
+	events []provider.Event
+	next   int
+	closed bool
+}
+
+func (s *stream) Next(ctx context.Context) (provider.Event, error) {
+	if err := ctx.Err(); err != nil {
+		return provider.Event{}, err
+	}
+	if s.closed {
+		return provider.Event{}, io.EOF
+	}
+	if s.next >= len(s.events) {
+		return provider.Event{}, io.EOF
+	}
+	event := cloneEvent(s.events[s.next])
+	s.next++
+	return event, nil
+}
+
+func (s *stream) Close() error {
+	s.closed = true
+	return nil
+}
+
+func eventFromConfig(item config.ProviderScriptEvent) (provider.Event, error) {
+	switch strings.TrimSpace(item.Type) {
+	case string(provider.EventTextDelta):
+		return TextDelta(item.Text), nil
+	case string(provider.EventToolCall):
+		raw, err := json.Marshal(item.Input)
+		if err != nil {
+			return provider.Event{}, fmt.Errorf("marshal tool input: %w", err)
+		}
+		if len(raw) == 0 {
+			raw = []byte(`null`)
+		}
+		return provider.Event{
+			Type:      provider.EventToolCall,
+			ToolUseID: item.ToolUseID,
+			ToolName:  item.ToolName,
+			Input:     raw,
+		}, nil
+	case string(provider.EventUsage):
+		return Usage(item.InputTokens, item.OutputTokens), nil
+	case string(provider.EventDone):
+		return Done(), nil
+	case string(provider.EventError):
+		return Error(item.Error), nil
+	default:
+		return provider.Event{}, fmt.Errorf("unknown event type %q", item.Type)
+	}
+}
+
+func cloneScript(script Script) Script {
+	if script == nil {
+		return nil
+	}
+	out := make(Script, len(script))
+	for i, event := range script {
+		out[i] = cloneEvent(event)
+	}
+	return out
+}
+
+func cloneEvent(event provider.Event) provider.Event {
+	out := event
+	if event.Input != nil {
+		out.Input = append([]byte(nil), event.Input...)
+	}
+	if event.Usage != nil {
+		usage := *event.Usage
+		out.Usage = &usage
+	}
+	return out
+}

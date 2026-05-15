@@ -6,11 +6,15 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/feimingxliu/ub/internal/config"
 	logx "github.com/feimingxliu/ub/internal/log"
+	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/provider"
+	_ "github.com/feimingxliu/ub/internal/provider/fake"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
@@ -79,6 +83,7 @@ func newRootCmd() *cobra.Command {
 	root.SetVersionTemplate("{{.Version}}\n")
 
 	root.AddCommand(newRunCmd())
+	root.AddCommand(newChatCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newSessionsCmd())
 
@@ -93,6 +98,23 @@ func newRunCmd() *cobra.Command {
 			return notImplemented("I-22 (TUI) / I-21 (headless agent)")
 		},
 	}
+}
+
+func newChatCmd() *cobra.Command {
+	var providerName string
+	var model string
+
+	cmd := &cobra.Command{
+		Use:   "chat [prompt|-]",
+		Short: "Send one prompt to a provider",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runChat(cmd, args[0], providerName, model)
+		},
+	}
+	cmd.Flags().StringVar(&providerName, "provider", "", "provider config name")
+	cmd.Flags().StringVar(&model, "model", "", "model id override")
+	return cmd
 }
 
 func newConfigCmd() *cobra.Command {
@@ -153,6 +175,105 @@ func newSessionsCmd() *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string) error {
+	prompt, err := readChatPrompt(cmd, promptArg)
+	if err != nil {
+		return err
+	}
+
+	cfg, _, err := config.Load()
+	if err != nil {
+		return err
+	}
+	providerName, model, err := selectChatProvider(cfg, providerFlag, modelFlag)
+	if err != nil {
+		return err
+	}
+	providerCfg, ok := cfg.Providers[providerName]
+	if !ok {
+		return fmt.Errorf("provider %q not configured", providerName)
+	}
+	p, err := provider.New(providerName, providerCfg)
+	if err != nil {
+		return err
+	}
+
+	stream, err := p.Chat(cmd.Context(), provider.Request{
+		Model:    model,
+		Messages: []message.Message{message.Text(message.RoleUser, prompt)},
+	})
+	if err != nil {
+		return err
+	}
+	defer stream.Close()
+
+	for {
+		event, err := stream.Next(cmd.Context())
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		switch event.Type {
+		case provider.EventTextDelta:
+			if _, err := io.WriteString(cmd.OutOrStdout(), event.Text); err != nil {
+				return err
+			}
+		case provider.EventUsage:
+			continue
+		case provider.EventDone:
+			return nil
+		case provider.EventToolCall:
+			if event.ToolName == "" {
+				return fmt.Errorf("ub chat does not execute tool calls yet")
+			}
+			return fmt.Errorf("ub chat does not execute tool calls yet: received %q", event.ToolName)
+		case provider.EventError:
+			if event.Err != nil {
+				return event.Err
+			}
+			return fmt.Errorf("provider returned error event")
+		default:
+			return fmt.Errorf("provider returned unsupported event type %q", event.Type)
+		}
+	}
+}
+
+func readChatPrompt(cmd *cobra.Command, promptArg string) (string, error) {
+	if promptArg != "-" {
+		return promptArg, nil
+	}
+	raw, err := io.ReadAll(cmd.InOrStdin())
+	if err != nil {
+		return "", fmt.Errorf("read stdin prompt: %w", err)
+	}
+	return string(raw), nil
+}
+
+func selectChatProvider(cfg *config.Config, providerFlag, modelFlag string) (string, string, error) {
+	providerName := strings.TrimSpace(providerFlag)
+	model := strings.TrimSpace(modelFlag)
+	if model == "" && cfg != nil {
+		model = strings.TrimSpace(cfg.DefaultModel)
+	}
+	if providerName == "" {
+		providerName = providerFromModel(model)
+	}
+	if providerName == "" {
+		return "", "", fmt.Errorf("provider required: set --provider or default_model as <provider>/<model>")
+	}
+	return providerName, model, nil
+}
+
+func providerFromModel(model string) string {
+	providerName, _, ok := strings.Cut(model, "/")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(providerName)
 }
 
 func runSessionsLS(cmd *cobra.Command) error {

@@ -102,6 +102,40 @@
         },
         "timeout": {
           "type": "integer"
+        },
+        "script": {
+          "items": {
+            "$ref": "#/$defs/ProviderScriptEvent"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ProviderScriptEvent": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "input": true,
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "error": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
