@@ -1,0 +1,133 @@
+package config
+
+// Merge folds layers from lowest precedence (left) to highest (right).
+//
+// The strategy is a shallow merge of the top-level Config struct:
+//
+//   - Scalar fields are overwritten when the right-hand layer has a
+//     non-zero value (treating zero as "unset" - acceptable for V1).
+//   - Map fields (Providers, MCPServers, LSPServers) merge by key, and
+//     the value is REPLACED wholesale when both sides have the same
+//     key. We deliberately do NOT recurse into ProviderConfig etc.,
+//     because partial overrides (api_key from one layer, base_url from
+//     another) make debugging harder than re-stating the whole entry.
+//   - Struct fields containing scalars only (TUIConfig, ContextConfig)
+//     are merged field-by-field via dedicated helpers - within those
+//     structs we DO use "non-zero wins" since they have no nested maps.
+//   - Slice fields are replaced wholesale (not appended). None of the
+//     current Config fields are top-level slices, but this rule applies
+//     to slices inside nested structs (e.g., LSPServerConfig.Args) -
+//     which is moot because nested structs are replaced as values.
+//   - The Unknown bag is merged map-style: same-key values are replaced.
+//
+// Nil layers are skipped. The result is always a fresh Config; layers
+// are never mutated.
+func Merge(layers ...*Config) *Config {
+	out := &Config{}
+	for _, layer := range layers {
+		if layer == nil {
+			continue
+		}
+		mergeInto(out, layer)
+	}
+	return out
+}
+
+func mergeInto(dst, src *Config) {
+	if src.DefaultModel != "" {
+		dst.DefaultModel = src.DefaultModel
+	}
+	if src.SmallModel != "" {
+		dst.SmallModel = src.SmallModel
+	}
+	mergeProviderMap(&dst.Providers, src.Providers)
+	mergeMCPMap(&dst.MCPServers, src.MCPServers)
+	mergeLSPMap(&dst.LSPServers, src.LSPServers)
+	mergeTUI(&dst.TUI, src.TUI)
+	mergePermissions(&dst.Permissions, src.Permissions)
+	mergeContext(&dst.Context, src.Context)
+	mergeUnknown(&dst.Unknown, src.Unknown)
+}
+
+func mergeProviderMap(dst *map[string]ProviderConfig, src map[string]ProviderConfig) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string]ProviderConfig, len(src))
+	}
+	for k, v := range src {
+		(*dst)[k] = v // wholesale value replacement, see Merge doc
+	}
+}
+
+func mergeMCPMap(dst *map[string]MCPServerConfig, src map[string]MCPServerConfig) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string]MCPServerConfig, len(src))
+	}
+	for k, v := range src {
+		(*dst)[k] = v
+	}
+}
+
+func mergeLSPMap(dst *map[string]LSPServerConfig, src map[string]LSPServerConfig) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string]LSPServerConfig, len(src))
+	}
+	for k, v := range src {
+		(*dst)[k] = v
+	}
+}
+
+func mergeTUI(dst *TUIConfig, src TUIConfig) {
+	if src.Theme != "" {
+		dst.Theme = src.Theme
+	}
+	if src.Compact {
+		dst.Compact = src.Compact
+	}
+}
+
+func mergePermissions(dst *PermissionConfig, src PermissionConfig) {
+	// PermissionConfig is all bools. We treat "true" as the deliberate
+	// override; "false" as "leave alone". Users who want to force a
+	// permission off in a later layer can still do so by setting an
+	// upstream layer to true and the closer one will see the spec
+	// override semantics covered in I-20.
+	if src.AutoAllowSafe {
+		dst.AutoAllowSafe = src.AutoAllowSafe
+	}
+	if src.AutoAllowWrite {
+		dst.AutoAllowWrite = src.AutoAllowWrite
+	}
+	if src.AutoAllowExec {
+		dst.AutoAllowExec = src.AutoAllowExec
+	}
+}
+
+func mergeContext(dst *ContextConfig, src ContextConfig) {
+	if src.TriggerRatio != 0 {
+		dst.TriggerRatio = src.TriggerRatio
+	}
+	if src.KeepRecentTurns != 0 {
+		dst.KeepRecentTurns = src.KeepRecentTurns
+	}
+}
+
+func mergeUnknown(dst *map[string]any, src map[string]any) {
+	if len(src) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = make(map[string]any, len(src))
+	}
+	for k, v := range src {
+		(*dst)[k] = v
+	}
+}

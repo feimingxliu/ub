@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt lint tidy clean run version
+.PHONY: build test vet fmt lint schema tidy clean run version
 
 BIN := ub
 
@@ -28,6 +28,9 @@ lint: vet
 	if [ -n "$$out" ]; then \
 		echo "unformatted files:" >&2 ; echo "$$out" >&2 ; exit 1 ; \
 	fi
+
+schema:
+	go run ./cmd/gen-schema
 
 tidy:
 	go mod tidy

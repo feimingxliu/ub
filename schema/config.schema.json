@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/feimingxliu/ub/internal/config/config",
+  "$defs": {
+    "ContextConfig": {
+      "properties": {
+        "trigger_ratio": {
+          "type": "number"
+        },
+        "keep_recent_turns": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "LSPServerConfig": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "file_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "MCPServerConfig": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "url": {
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PermissionConfig": {
+      "properties": {
+        "auto_allow_safe": {
+          "type": "boolean"
+        },
+        "auto_allow_write": {
+          "type": "boolean"
+        },
+        "auto_allow_exec": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ProviderConfig": {
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "timeout": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TUIConfig": {
+      "properties": {
+        "theme": {
+          "type": "string"
+        },
+        "compact": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "properties": {
+    "default_model": {
+      "type": "string"
+    },
+    "small_model": {
+      "type": "string"
+    },
+    "providers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ProviderConfig"
+      },
+      "type": "object"
+    },
+    "tui": {
+      "$ref": "#/$defs/TUIConfig"
+    },
+    "permissions": {
+      "$ref": "#/$defs/PermissionConfig"
+    },
+    "mcp_servers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/MCPServerConfig"
+      },
+      "type": "object"
+    },
+    "lsp_servers": {
+      "additionalProperties": {
+        "$ref": "#/$defs/LSPServerConfig"
+      },
+      "type": "object"
+    },
+    "context": {
+      "$ref": "#/$defs/ContextConfig"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object"
+}

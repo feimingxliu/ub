@@ -1,14 +1,12 @@
 // Package cli wires the cobra command tree for the ub binary.
-//
-// I-01 only sets up the skeleton: a root command with --version and three
-// placeholder subcommands (run / config / sessions). Real behavior lands in
-// later iterations (see docs/roadmap.md).
 package cli
 
 import (
 	"fmt"
 	"os"
 
+	"github.com/feimingxliu/ub/internal/config"
+	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 )
 
@@ -56,14 +54,37 @@ func newConfigCmd() *cobra.Command {
 		Use:   "show",
 		Short: "Print the merged effective configuration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return notImplemented("I-02")
+			cfg, _, err := config.Load()
+			if err != nil {
+				return err
+			}
+			redacted := config.Redact(cfg)
+			out, err := yaml.Marshal(redacted)
+			if err != nil {
+				return fmt.Errorf("marshal config: %w", err)
+			}
+			_, err = cmd.OutOrStdout().Write(out)
+			return err
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "path",
 		Short: "List configuration files used in the current invocation",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return notImplemented("I-02")
+			_, files, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if len(files) == 0 {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "(no config files loaded; using built-in defaults)")
+				return err
+			}
+			for _, file := range files {
+				if _, err := fmt.Fprintln(cmd.OutOrStdout(), file); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	})
 	return cmd
