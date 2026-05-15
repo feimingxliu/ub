@@ -45,7 +45,6 @@ func TestPlaceholderSubcommandsErrorWithIterationHint(t *testing.T) {
 		hint string
 	}{
 		{[]string{"run"}, "I-2"},
-		{[]string{"sessions", "ls"}, "I-03"},
 	}
 	for _, c := range cases {
 		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
