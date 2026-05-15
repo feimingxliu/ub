@@ -16,6 +16,7 @@ import (
 	"github.com/invopop/jsonschema"
 
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tool/procgroup"
 )
 
 type bashArgs struct {
@@ -86,7 +87,7 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	cmd.Stdin = devNull
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	setProcessGroup(cmd)
+	procgroup.Set(cmd)
 
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -102,10 +103,10 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	killGroup := func(reason string) {
 		killOnce.Do(func() {
 			killReason = reason
-			_ = killProcessGroup(pid, syscall.SIGTERM)
+			_ = procgroup.Kill(pid, syscall.SIGTERM)
 			go func() {
 				time.Sleep(2 * time.Second)
-				_ = killProcessGroup(pid, syscall.SIGKILL)
+				_ = procgroup.Kill(pid, syscall.SIGKILL)
 			}()
 		})
 	}
