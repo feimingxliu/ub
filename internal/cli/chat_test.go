@@ -2,6 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +146,45 @@ providers:
 	}
 	if got := out.String(); got != "inferred" {
 		t.Fatalf("stdout = %q, want inferred", got)
+	}
+}
+
+func TestChatWithAnthropicProvider(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"msg_1",
+			"type":"message",
+			"role":"assistant",
+			"model":"claude-test",
+			"content":[{"type":"text","text":"anthropic-ok"}],
+			"stop_reason":"end_turn",
+			"stop_sequence":null,
+			"usage":{"input_tokens":1,"output_tokens":1}
+		}`)
+	}))
+	defer server.Close()
+
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  anthropic:
+    type: anthropic
+    api_key: sk-test
+    base_url: `+server.URL+`
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "anthropic", "--model", "claude-test", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat anthropic: %v", err)
+	}
+	if got := out.String(); got != "anthropic-ok" {
+		t.Fatalf("stdout = %q, want anthropic-ok", got)
 	}
 }
 

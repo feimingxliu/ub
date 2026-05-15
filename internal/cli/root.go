@@ -14,6 +14,7 @@ import (
 	logx "github.com/feimingxliu/ub/internal/log"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
+	_ "github.com/feimingxliu/ub/internal/provider/anthropic"
 	_ "github.com/feimingxliu/ub/internal/provider/fake"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/goccy/go-yaml"
