@@ -14,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 )
 
 func TestNewFromConfigRequiresAPIKey(t *testing.T) {
@@ -39,6 +40,38 @@ func TestFactoryCreatesAnthropicProvider(t *testing.T) {
 	}
 	if !p.Caps().SupportsStreaming {
 		t.Fatalf("I-10 provider should support streaming")
+	}
+}
+
+func TestToMessageParamsSetsThinkingBudget(t *testing.T) {
+	params, err := toMessageParams(provider.Request{
+		Model:     "claude-test",
+		Messages:  []message.Message{message.Text(message.RoleUser, "ping")},
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortHigh},
+	})
+	if err != nil {
+		t.Fatalf("toMessageParams: %v", err)
+	}
+	budget := params.Thinking.GetBudgetTokens()
+	if budget == nil || *budget != 4096 {
+		t.Fatalf("thinking budget = %v, want 4096", budget)
+	}
+	if params.MaxTokens <= 4096 {
+		t.Fatalf("MaxTokens = %d, want greater than thinking budget", params.MaxTokens)
+	}
+}
+
+func TestToMessageParamsOmitsThinkingForNone(t *testing.T) {
+	params, err := toMessageParams(provider.Request{
+		Model:     "claude-test",
+		Messages:  []message.Message{message.Text(message.RoleUser, "ping")},
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortNone},
+	})
+	if err != nil {
+		t.Fatalf("toMessageParams: %v", err)
+	}
+	if budget := params.Thinking.GetBudgetTokens(); budget != nil {
+		t.Fatalf("thinking budget = %v, want nil", *budget)
 	}
 }
 

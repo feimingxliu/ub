@@ -20,6 +20,13 @@ type ControlRunner interface {
 	Models() []string
 }
 
+// EffortControlRunner optionally lets slash commands update reasoning effort.
+type EffortControlRunner interface {
+	SetEffort(effort string) error
+	Effort() string
+	Efforts() []string
+}
+
 // ApprovalControlRunner optionally lets slash commands update the approval
 // model used by auto mode.
 type ApprovalControlRunner interface {

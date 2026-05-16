@@ -107,6 +107,44 @@ func TestLoadFromDirsParsesFakeProviderScript(t *testing.T) {
 	}
 }
 
+func TestLoadFromDirsParsesReasoningAndModelCapabilities(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `reasoning:
+  effort: high
+approval_agent:
+  provider: openai
+  model: reviewer
+  reasoning:
+    effort: low
+providers:
+  openai:
+    type: openai
+    models:
+      custom:
+        supports_reasoning: true
+        supported_efforts: [low, high]
+        default_effort: low
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Reasoning.Effort != "high" {
+		t.Fatalf("reasoning effort = %q", cfg.Reasoning.Effort)
+	}
+	if cfg.ApprovalAgent.Reasoning.Effort != "low" {
+		t.Fatalf("approval reasoning effort = %q", cfg.ApprovalAgent.Reasoning.Effort)
+	}
+	model := cfg.Providers["openai"].Models["custom"]
+	if !model.SupportsReasoning || model.DefaultEffort != "low" || len(model.SupportedEfforts) != 2 {
+		t.Fatalf("model config = %#v", model)
+	}
+}
+
 func TestLoadFromDirsParsesProfilesWithoutSelectingThem(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")

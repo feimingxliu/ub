@@ -9,6 +9,9 @@
         },
         "model": {
           "type": "string"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/Config"
         }
       },
       "additionalProperties": false,
@@ -80,6 +83,24 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "ModelConfig": {
+      "properties": {
+        "supports_reasoning": {
+          "type": "boolean"
+        },
+        "supported_efforts": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default_effort": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "PermissionConfig": {
       "properties": {
         "auto_allow_safe": {
@@ -108,6 +129,9 @@
         },
         "execution_mode": {
           "type": "string"
+        },
+        "reasoning": {
+          "$ref": "#/$defs/Config"
         },
         "approval_agent": {
           "$ref": "#/$defs/ApprovalAgentConfig"
@@ -168,6 +192,12 @@
         },
         "timeout": {
           "type": "integer"
+        },
+        "models": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ModelConfig"
+          },
+          "type": "object"
         },
         "script": {
           "items": {
@@ -235,6 +265,9 @@
     },
     "execution_mode": {
       "type": "string"
+    },
+    "reasoning": {
+      "$ref": "#/$defs/Config"
     },
     "approval_agent": {
       "$ref": "#/$defs/ApprovalAgentConfig"

@@ -1,5 +1,7 @@
 package config
 
+import "github.com/feimingxliu/ub/internal/reasoning"
+
 // Merge folds layers from lowest precedence (left) to highest (right).
 //
 // The strategy is a shallow merge of the top-level Config struct:
@@ -46,6 +48,7 @@ func mergeInto(dst, src *Config) {
 	if src.ExecutionMode != "" {
 		dst.ExecutionMode = src.ExecutionMode
 	}
+	mergeReasoning(&dst.Reasoning, src.Reasoning)
 	mergeApprovalAgent(&dst.ApprovalAgent, src.ApprovalAgent)
 	mergeProviderMap(&dst.Providers, src.Providers)
 	mergeProfileMap(&dst.Profiles, src.Profiles)
@@ -66,6 +69,16 @@ func mergeApprovalAgent(dst *ApprovalAgentConfig, src ApprovalAgentConfig) {
 	}
 	if src.Model != "" {
 		dst.Model = src.Model
+	}
+	mergeReasoning(&dst.Reasoning, src.Reasoning)
+}
+
+func mergeReasoning(dst *reasoning.Config, src reasoning.Config) {
+	if src.Effort != "" {
+		dst.Effort = src.Effort
+	}
+	if src.Summary != "" {
+		dst.Summary = src.Summary
 	}
 }
 

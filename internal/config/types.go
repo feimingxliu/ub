@@ -16,6 +16,8 @@ package config
 
 import "time"
 
+import "github.com/feimingxliu/ub/internal/reasoning"
+
 // Config is the merged effective configuration.
 //
 // Each leaf field carries both a `yaml:` and `json:` tag so that
@@ -29,6 +31,7 @@ type Config struct {
 	DefaultProvider string                     `yaml:"default_provider,omitempty" json:"default_provider,omitempty"`
 	SmallModel      string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
 	ExecutionMode   string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	Reasoning       reasoning.Config           `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
 	ApprovalAgent   ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
 	Providers       map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
 	Profiles        map[string]ProfileConfig   `yaml:"profiles,omitempty"      json:"profiles,omitempty"`
@@ -49,6 +52,7 @@ type ProfileConfig struct {
 	DefaultProvider string                     `yaml:"default_provider,omitempty" json:"default_provider,omitempty"`
 	SmallModel      string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
 	ExecutionMode   string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	Reasoning       reasoning.Config           `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
 	ApprovalAgent   ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
 	Providers       map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
 	ToolsDisabled   []string                   `yaml:"tools_disabled,omitempty" json:"tools_disabled,omitempty"`
@@ -61,20 +65,29 @@ type ProfileConfig struct {
 
 // ApprovalAgentConfig selects the secondary model used by auto mode.
 type ApprovalAgentConfig struct {
-	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Model    string `yaml:"model,omitempty"    json:"model,omitempty"`
+	Provider  string           `yaml:"provider,omitempty"  json:"provider,omitempty"`
+	Model     string           `yaml:"model,omitempty"     json:"model,omitempty"`
+	Reasoning reasoning.Config `yaml:"reasoning,omitempty" json:"reasoning,omitempty"`
 }
 
 // ProviderConfig describes one LLM provider entry. The set of fields is
 // intentionally narrow: only what the provider factory in I-07/I-08 will
 // consume. APIKey carries `secret:"true"` so config.Redact masks it.
 type ProviderConfig struct {
-	Type    string                `yaml:"type,omitempty"     json:"type,omitempty"`
-	APIKey  string                `yaml:"api_key,omitempty"  json:"api_key,omitempty"  secret:"true"`
-	BaseURL string                `yaml:"base_url,omitempty" json:"base_url,omitempty"`
-	Headers map[string]string     `yaml:"headers,omitempty"  json:"headers,omitempty"`
-	Timeout time.Duration         `yaml:"timeout,omitempty"  json:"timeout,omitempty"`
-	Script  []ProviderScriptEvent `yaml:"script,omitempty"   json:"script,omitempty"`
+	Type    string                 `yaml:"type,omitempty"     json:"type,omitempty"`
+	APIKey  string                 `yaml:"api_key,omitempty"  json:"api_key,omitempty"  secret:"true"`
+	BaseURL string                 `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	Headers map[string]string      `yaml:"headers,omitempty"  json:"headers,omitempty"`
+	Timeout time.Duration          `yaml:"timeout,omitempty"  json:"timeout,omitempty"`
+	Models  map[string]ModelConfig `yaml:"models,omitempty"   json:"models,omitempty"`
+	Script  []ProviderScriptEvent  `yaml:"script,omitempty"   json:"script,omitempty"`
+}
+
+// ModelConfig overrides built-in model capability metadata.
+type ModelConfig struct {
+	SupportsReasoning bool               `yaml:"supports_reasoning,omitempty" json:"supports_reasoning,omitempty"`
+	SupportedEfforts  []reasoning.Effort `yaml:"supported_efforts,omitempty"  json:"supported_efforts,omitempty"`
+	DefaultEffort     reasoning.Effort   `yaml:"default_effort,omitempty"     json:"default_effort,omitempty"`
 }
 
 // ProviderScriptEvent is used by the fake provider to produce deterministic

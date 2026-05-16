@@ -14,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 )
 
 func TestNewFromConfigRequiresAPIKey(t *testing.T) {
@@ -39,6 +40,34 @@ func TestFactoryCreatesOpenAIProvider(t *testing.T) {
 	}
 	if !p.Caps().SupportsStreaming {
 		t.Fatalf("openai provider should support streaming")
+	}
+}
+
+func TestToChatCompletionParamsSetsReasoningEffort(t *testing.T) {
+	params, err := toChatCompletionParams(provider.Request{
+		Model:     "gpt-test",
+		Messages:  []message.Message{message.Text(message.RoleUser, "ping")},
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortHigh},
+	})
+	if err != nil {
+		t.Fatalf("toChatCompletionParams: %v", err)
+	}
+	if string(params.ReasoningEffort) != "high" {
+		t.Fatalf("ReasoningEffort = %q, want high", params.ReasoningEffort)
+	}
+}
+
+func TestToChatCompletionParamsOmitsReasoningEffortForNone(t *testing.T) {
+	params, err := toChatCompletionParams(provider.Request{
+		Model:     "gpt-test",
+		Messages:  []message.Message{message.Text(message.RoleUser, "ping")},
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortNone},
+	})
+	if err != nil {
+		t.Fatalf("toChatCompletionParams: %v", err)
+	}
+	if params.ReasoningEffort != "" {
+		t.Fatalf("ReasoningEffort = %q, want empty", params.ReasoningEffort)
 	}
 }
 

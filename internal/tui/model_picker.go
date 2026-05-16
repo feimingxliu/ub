@@ -7,10 +7,19 @@ import (
 type modelPicker struct {
 	models []string
 	index  int
+	title  string
 }
 
 func newModelPicker(models []string, current string) *modelPicker {
-	picker := &modelPicker{models: append([]string(nil), models...)}
+	return newValuePicker(models, current, "select model (enter select, esc cancel)")
+}
+
+func newEffortPicker(efforts []string, current string) *modelPicker {
+	return newValuePicker(efforts, current, "select effort (enter select, esc cancel)")
+}
+
+func newValuePicker(models []string, current, title string) *modelPicker {
+	picker := &modelPicker{models: append([]string(nil), models...), title: title}
 	for i, model := range picker.models {
 		if model == current {
 			picker.index = i
@@ -46,7 +55,7 @@ func (p *modelPicker) view(width int) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("select model (enter select, esc cancel)")
+	b.WriteString(p.title)
 	for i, model := range p.models {
 		b.WriteByte('\n')
 		marker := "  "

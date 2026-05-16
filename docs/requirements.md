@@ -43,7 +43,7 @@
 | MCP | 接入外部 MCP server（http / stdio / sse），扩展工具集 |
 | LSP | 接入 LSP，向模型提供 diagnostics 与 references |
 | TUI | Bubble Tea 实现的 chat UI、diff view、权限弹窗、状态栏 |
-| 配置 | YAML 配置文件（JSON Schema 校验）；运行时通过 slash 命令切换 provider/model/mode |
+| 配置 | YAML 配置文件（JSON Schema 校验）；运行时通过 slash 命令切换 provider/model/mode/effort |
 | 测试 | 单元测试 + 基于 vcr 的 LLM 请求录制 / 回放 |
 
 ### 3.2 Out of Scope（V1，可能 V2+）
@@ -81,6 +81,8 @@
 - F-PROV-5：**所有 provider 均可覆盖 `base_url`**，用于走第三方网关 / 代理 / 自建反代（LiteLLM、Cloudflare AI Gateway、Helicone、OneAPI、自建 Anthropic 兼容服务等）；未配置则使用 SDK 默认 endpoint
 - F-PROV-6：所有 provider 均可自定义额外 HTTP headers（如 `x-org-id`、自家网关鉴权头）和超时
 - F-PROV-7：provider 事件流可选返回 `reasoning_delta`；只有后端 API 提供可展示 reasoning/thinking 时才透传，未提供时不得合成
+- F-PROV-8：系统 MUST 通过 provider 模型列表发现、内置 ModelInfo 表和用户配置覆盖解析模型 reasoning 能力；只有当前模型声明支持时才向 provider 发送 reasoning effort
+- F-PROV-9：OpenAI provider 使用 `reasoning_effort`；Anthropic provider 使用 `thinking` budget；OpenAI-compatible 对未知模型默认不发送 reasoning 参数
 
 ### 4.3 工具系统
 
@@ -125,10 +127,11 @@
 ### 4.8 配置
 
 - F-CFG-1：默认配置位于 `~/.config/ub/config.yaml`；工作目录可有 `.ub/config.yaml` 覆盖
-- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
-- F-CFG-5：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
-- F-CFG-3：配置 schema 用 JSON Schema 描述，IDE 可补全
-- F-CFG-4：（V2）配置变更可通过 `/config reload` 热加载，无需重启。V1 改配置必须重启进程
+- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
+- F-CFG-3：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
+- F-CFG-4：配置 schema 用 JSON Schema 描述，IDE 可补全
+- F-CFG-5：配置支持全局 `reasoning.effort`、`approval_agent.reasoning.effort` 和 `providers.<name>.models.<id>` 能力覆盖；effort 值为 `none|minimal|low|medium|high|xhigh`
+- F-CFG-6：（V2）配置变更可通过 `/config reload` 热加载，无需重启。V1 改配置必须重启进程
 
 ### 4.9 MCP
 
@@ -146,11 +149,11 @@
 
 ### 4.11 TUI
 
-- F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / context % / cwd）
+- F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / effort / mode / context % / cwd）
 - F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式（包括运行中和审批弹窗中）；Esc 中断当前操作而不是退出；聊天区支持 PageUp/PageDown 和鼠标滚轮滚动历史输出
 - F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
-- F-TUI-5：命令：`/model`、`/approval-model`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session
+- F-TUI-5：命令：`/model`、`/approval-model`、`/effort`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级
 - F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
 - F-TUI-7：TUI MUST 在聊天区以紧凑活动行展示 thinking、工具排队/运行/完成/失败、审批结果和错误摘要；同一个 tool call 的状态更新 MUST 合并到同一行，避免 queued/running/done 刷屏；活动行参与宽度换行与聊天区滚动，且不得展示完整工具 JSON 或 secret 值
 
@@ -163,7 +166,7 @@
 - F-DEV-5：`ub doctor` 子命令体检本地环境，输出红绿灯报告：
   - 各 provider 的 base_url 是否可达
   - 各 provider 下当前可用模型列表（对支持 `/v1/models` 端点的拉一次）
-  - 哪些模型声明支持 tool calling（按内置 ModelInfo 表）
+  - 哪些模型声明支持 tool calling 和 reasoning effort（按内置 ModelInfo 表 + 用户覆盖）
   - 外部命令存在性：`rg`、`gopls`、`typescript-language-server`、`npx`
   - 已配置 MCP server 启动连通性
   - API key 环境变量是否就位

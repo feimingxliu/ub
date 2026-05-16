@@ -7,7 +7,9 @@ import (
 
 	"github.com/feimingxliu/ub/internal/approval"
 	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/modelinfo"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 )
 
 type approvalAgentSetup struct {
@@ -16,6 +18,7 @@ type approvalAgentSetup struct {
 	ProviderConfig config.ProviderConfig
 	Model          string
 	Models         []string
+	Reasoning      *reasoning.Config
 }
 
 func newApprovalAgentFromConfig(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string) (approval.Agent, error) {
@@ -72,7 +75,8 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 	if err != nil {
 		return approvalAgentSetup{}, fmt.Errorf("create approval provider %q: %w", providerName, err)
 	}
-	agent, err := approval.NewProviderAgent(p, model)
+	reasoningCfg := modelinfo.RequestConfig(cfg.ApprovalAgent.Reasoning, modelinfo.Resolve(providerName, providerCfg, model))
+	agent, err := approval.NewProviderAgentWithReasoning(p, model, reasoningCfg)
 	if err != nil {
 		return approvalAgentSetup{}, err
 	}
@@ -82,5 +86,6 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 		ProviderConfig: providerCfg,
 		Model:          model,
 		Models:         providerModels(ctx, providerName, providerCfg, model),
+		Reasoning:      reasoningCfg,
 	}, nil
 }

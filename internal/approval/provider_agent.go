@@ -10,6 +10,7 @@ import (
 
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 )
 
 const providerReviewSystemPrompt = `You are ub's command approval reviewer. Review one proposed local command.
@@ -25,12 +26,19 @@ Decision rules:
 // ProviderAgent asks a configured LLM provider to review command approvals for
 // auto mode. It never exposes tools to the provider request.
 type ProviderAgent struct {
-	provider provider.Provider
-	model    string
+	provider  provider.Provider
+	model     string
+	reasoning *reasoning.Config
 }
 
 // NewProviderAgent constructs a provider-backed approval agent.
 func NewProviderAgent(p provider.Provider, model string) (*ProviderAgent, error) {
+	return NewProviderAgentWithReasoning(p, model, nil)
+}
+
+// NewProviderAgentWithReasoning constructs a provider-backed approval agent with
+// an optional reasoning request config.
+func NewProviderAgentWithReasoning(p provider.Provider, model string, cfg *reasoning.Config) (*ProviderAgent, error) {
 	if p == nil {
 		return nil, errors.New("approval provider is required")
 	}
@@ -38,7 +46,7 @@ func NewProviderAgent(p provider.Provider, model string) (*ProviderAgent, error)
 	if model == "" {
 		return nil, errors.New("approval model is required")
 	}
-	return &ProviderAgent{provider: p, model: model}, nil
+	return &ProviderAgent{provider: p, model: model, reasoning: cloneReasoning(cfg)}, nil
 }
 
 // ReviewCommand reviews one sanitized command request.
@@ -48,7 +56,8 @@ func (a *ProviderAgent) ReviewCommand(ctx context.Context, req Request) (Result,
 		return Result{}, fmt.Errorf("marshal approval request: %w", err)
 	}
 	stream, err := a.provider.Chat(ctx, provider.Request{
-		Model: a.model,
+		Model:     a.model,
+		Reasoning: cloneReasoning(a.reasoning),
 		Messages: []message.Message{
 			message.Text(message.RoleSystem, providerReviewSystemPrompt),
 			message.Text(message.RoleUser, "Review this command approval request:\n"+string(payload)),
@@ -89,6 +98,14 @@ func (a *ProviderAgent) ReviewCommand(ctx context.Context, req Request) (Result,
 		}
 	}
 	return parseReviewResult(raw.String())
+}
+
+func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {
+	if cfg == nil {
+		return nil
+	}
+	cp := *cfg
+	return &cp
 }
 
 func parseReviewResult(raw string) (Result, error) {

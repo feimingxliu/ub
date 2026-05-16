@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -378,6 +379,63 @@ func TestSlashModelAndModeUpdateRunner(t *testing.T) {
 	}
 }
 
+func TestSlashEffortUpdatesRunner(t *testing.T) {
+	runner := &scriptedRunner{effort: "low", efforts: []string{"none", "low", "high"}}
+	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
+	model = sendText(t, model, "/effort high")
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.effort != "high" || !strings.Contains(model.View(), "effort: high") {
+		t.Fatalf("effort update failed: runner=%q view=\n%s", runner.effort, model.View())
+	}
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "effort set to high" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashEffortWithoutArgsListsCandidates(t *testing.T) {
+	runner := &scriptedRunner{effort: "low", efforts: []string{"none", "low", "high"}}
+	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
+	model = sendText(t, model, "/effort")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash effort returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := model.View()
+	for _, want := range []string{"select effort", "> low", "  high"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("effort picker missing %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.effort != "high" || !strings.Contains(model.View(), "effort: high") {
+		t.Fatalf("effort picker selection failed: runner=%q view=\n%s", runner.effort, model.View())
+	}
+}
+
+func TestSlashEffortRejectsUnsupportedCandidate(t *testing.T) {
+	runner := &scriptedRunner{effort: "low", efforts: []string{"none", "low"}}
+	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
+	model = sendText(t, model, "/effort high")
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.effort != "low" {
+		t.Fatalf("runner effort changed to %q, want low", runner.effort)
+	}
+	view := model.View()
+	if !strings.Contains(view, "effort: low") || !strings.Contains(view, "not available") {
+		t.Fatalf("invalid effort handling failed:\n%s", view)
+	}
+}
+
 func TestSlashModelWithoutArgsListsCandidates(t *testing.T) {
 	runner := &scriptedRunner{models: []string{"fake/old", "fake/new"}}
 	model := NewModel(Options{Runner: runner, Model: "fake/old", Models: runner.models})
@@ -597,6 +655,62 @@ func TestTabCompletesSlashCommand(t *testing.T) {
 	}
 }
 
+func TestTabCompletesSlashValueCandidate(t *testing.T) {
+	model := NewModel(Options{Model: "fake/current", Effort: "low", Efforts: []string{"none", "low", "high"}})
+	model = sendText(t, model, "/effort h")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("tab returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "/effort high" {
+		t.Fatalf("input = %q, want /effort high", got)
+	}
+}
+
+func TestEnterSelectsSlashValueCandidate(t *testing.T) {
+	runner := &scriptedRunner{effort: "low", efforts: []string{"none", "low", "high"}}
+	model := NewModel(Options{Runner: runner, Model: "fake/current", Effort: "low", Efforts: runner.efforts})
+	model = sendText(t, model, "/effort h")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("enter returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.effort != "high" || model.InputValue() != "" {
+		t.Fatalf("effort/input = %q/%q, want high/empty", runner.effort, model.InputValue())
+	}
+	if !strings.Contains(model.View(), "effort set to high") || !strings.Contains(model.View(), "effort: high") {
+		t.Fatalf("enter did not apply selected effort:\n%s", model.View())
+	}
+}
+
+func TestArrowSelectsSlashValueCandidate(t *testing.T) {
+	runner := &scriptedRunner{effort: "none", efforts: []string{"none", "low", "high"}}
+	model := NewModel(Options{Runner: runner, Model: "fake/current", Effort: "none", Efforts: runner.efforts})
+	model = sendText(t, model, "/effort ")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if cmd != nil {
+		t.Fatalf("down returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if view := model.View(); !strings.Contains(view, "  none") || !strings.Contains(view, "> low") {
+		t.Fatalf("down did not move effort selection:\n%s", view)
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("enter returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.effort != "low" {
+		t.Fatalf("effort = %q, want low", runner.effort)
+	}
+}
+
 func TestArrowSelectsSlashSuggestion(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "/m")
@@ -758,8 +872,18 @@ func TestSlashModelSuggestionsRenderCandidates(t *testing.T) {
 	model = sendText(t, model, "/model new")
 
 	view := model.View()
-	if !strings.Contains(view, "  fake/new") || strings.Contains(view, "  fake/other") {
+	if !strings.Contains(view, "> fake/new") || strings.Contains(view, "fake/other") {
 		t.Fatalf("view missing filtered model suggestions:\n%s", view)
+	}
+}
+
+func TestSlashEffortSuggestionsRenderCandidates(t *testing.T) {
+	model := NewModel(Options{Model: "fake/current", Effort: "low", Efforts: []string{"none", "low", "high"}})
+	model = sendText(t, model, "/effort h")
+
+	view := model.View()
+	if !strings.Contains(view, "> high") || strings.Contains(view, "\n  low") || strings.Contains(view, "\n> low") {
+		t.Fatalf("view missing filtered effort suggestions:\n%s", view)
 	}
 }
 
@@ -983,6 +1107,8 @@ type scriptedRunner struct {
 	prompts          []string
 	model            string
 	models           []string
+	effort           string
+	efforts          []string
 	approvalModel    string
 	approvalModels   []string
 	mode             string
@@ -1012,6 +1138,24 @@ func (r *scriptedRunner) SetMode(mode string) error {
 
 func (r *scriptedRunner) Models() []string {
 	return append([]string(nil), r.models...)
+}
+
+func (r *scriptedRunner) SetEffort(effort string) error {
+	for _, candidate := range r.efforts {
+		if candidate == effort {
+			r.effort = effort
+			return nil
+		}
+	}
+	return fmt.Errorf("effort %q is not available", effort)
+}
+
+func (r *scriptedRunner) Effort() string {
+	return r.effort
+}
+
+func (r *scriptedRunner) Efforts() []string {
+	return append([]string(nil), r.efforts...)
 }
 
 func (r *scriptedRunner) SetApprovalModel(model string) error {

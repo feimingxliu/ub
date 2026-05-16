@@ -231,6 +231,9 @@ type ModelInfo struct {
     Provider string
     Caps     Caps
     Price    Price  // 可选：输入/输出 per-1M-token
+    SupportsReasoning bool
+    SupportedEfforts  []ReasoningEffort
+    DefaultEffort     ReasoningEffort
 }
 
 type Stream interface {
@@ -242,6 +245,7 @@ type Stream interface {
 **双层抽象**（借鉴 codex-rs 的 `model-provider` + `model-provider-info`）：
 - `Provider` 是行为接口
 - `ModelInfo` 是元信息（含 Caps），存配置文件 + 内置默认表
+- reasoning 能力按 `用户配置覆盖 > 内置 ModelInfo 表 > 保守未知模型` 解析；未知模型默认不发送 reasoning 参数
 
 **所有 provider 的统一可配置项**（不止 openai-compat）：
 
@@ -252,10 +256,17 @@ type ProviderConfig struct {
     BaseURL string            // 可选，覆盖 SDK 默认 endpoint
     Headers map[string]string // 可选，额外 HTTP header（鉴权 / 路由）
     Timeout time.Duration     // 可选
+    Models  map[string]ModelConfig // 可选，覆盖模型能力
 }
 ```
 
 构造 anthropic / openai 客户端时把 `BaseURL` 传给官方 SDK 的 option（`anthropic.WithBaseURL` / `openai.WithBaseURL`），都是 SDK 直接支持的。用途：LiteLLM、Cloudflare AI Gateway、Helicone、OneAPI、公司内部反代、企业代理。
+
+**reasoning effort**：
+- `provider.Request` 携带可选 `ReasoningConfig{Effort, Summary}`，Agent 在发送前按当前模型能力校验
+- OpenAI / OpenAI-compatible 映射为 `reasoning_effort`；未知兼容模型默认不发送
+- Anthropic 映射为 `thinking` budget，`none` 不发送 thinking，非 `none` 时自动保证 budget 小于 `max_tokens`
+- TUI 通过 `/effort` 列出和切换当前模型支持的等级，并在状态栏展示当前值
 
 **重要的内部消息表示**：
 不要直接复用 anthropic / openai 的请求类型。在 `internal/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`、`ToolCalls[]`、`ToolResults[]`），各 provider 各自转换。理由：避免被某家 SDK 锁定。

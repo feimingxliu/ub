@@ -9,7 +9,7 @@
 ### Requirement: Slash 命令解析
 
 系统 SHALL 在 TUI 中识别以 `/` 开头的输入，并解析为 slash command。支持的命令 MUST 至少包含 `model`、`mode`、`clear`、`sessions`、`help`、`quit`、`exit`、`config`、`profile`。未知命令 MUST 返回可读错误，不得发送给 Agent。
-当输入框内容以 `/` 开头但尚未提交时，TUI SHOULD 显示匹配命令候选和每条命令的用法说明。候选存在时，上下方向键 SHOULD 移动候选选中项，Tab SHOULD 补全当前选中的命令名，而不是切换执行模式。对于未补全成完整命令的 slash 输入，Enter SHOULD 先选择当前候选，不得直接执行或报未知命令。
+当输入框内容以 `/` 开头但尚未提交时，TUI SHOULD 显示匹配命令候选和每条命令的用法说明。候选存在时，上下方向键 SHOULD 移动候选选中项，Tab SHOULD 补全当前选中的命令名，而不是切换执行模式。对于未补全成完整命令的 slash 输入，Enter SHOULD 先选择当前候选，不得直接执行或报未知命令。对于 `/model`、`/approval-model` 和 `/effort` 的参数候选，TUI SHOULD 同样支持方向键移动候选、Tab 补全当前候选、Enter 选择并执行当前候选。
 
 #### Scenario: 解析 model 命令
 
@@ -39,6 +39,15 @@
 - **THEN** TUI SHOULD 移动 slash 命令候选选中项
 - **WHEN** 用户按 Enter
 - **THEN** TUI SHOULD 把输入补全为选中的 slash 命令名
+
+#### Scenario: 参数候选补全并执行
+
+- **GIVEN** 当前模型支持 effort `high`
+- **WHEN** 用户输入 `/effort h`
+- **WHEN** 用户按 Tab
+- **THEN** TUI SHOULD 把输入补全为 `/effort high`
+- **WHEN** 用户再次输入 `/effort h` 并按 Enter
+- **THEN** TUI SHOULD 选择候选 `high` 并切换当前 effort
 
 ### Requirement: 本地命令执行
 
@@ -112,3 +121,33 @@ TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表；`/h
 - **WHEN** 用户输入 `/sessions sess_1`
 - **THEN** TUI MUST 加载 `sess_1` 的历史
 - **THEN** 后续 Agent turn MUST 继续 `sess_1`
+
+### Requirement: Effort slash 命令
+
+TUI SHALL 支持 `/effort` slash 命令，用于查看和切换当前模型的 reasoning effort。`/effort` 不带参数时 MUST 显示当前模型支持的候选 effort 和当前值；`/effort <value>` MUST 仅在当前模型支持该 value 时更新后续 Agent turn。状态栏 MUST 展示当前 effort；当当前模型不支持 reasoning 时，状态栏 MUST 展示 `effort: none` 或等价空状态。
+
+#### Scenario: effort 无参数列出候选
+
+- **GIVEN** 当前模型支持 `low` 和 `medium`
+- **WHEN** 用户输入 `/effort`
+- **THEN** TUI MUST 显示候选 effort
+- **THEN** 当前 effort MUST 保持不变
+
+#### Scenario: effort 切换生效
+
+- **GIVEN** 当前模型支持 `high`
+- **WHEN** 用户输入 `/effort high`
+- **THEN** 状态栏 MUST 显示 `high`
+- **THEN** 后续 Agent turn MUST 使用 effort `high`
+
+#### Scenario: 非法 effort 不生效
+
+- **GIVEN** 当前模型不支持 `xhigh`
+- **WHEN** 用户输入 `/effort xhigh`
+- **THEN** TUI MUST 显示错误
+- **THEN** 当前 effort MUST 保持不变
+
+#### Scenario: slash 候选包含 effort 命令
+
+- **WHEN** 用户在输入框输入 `/e`
+- **THEN** TUI SHOULD 显示 `/effort [effort]` 的候选说明

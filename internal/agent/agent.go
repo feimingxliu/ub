@@ -13,6 +13,7 @@ import (
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
 )
@@ -33,6 +34,7 @@ type Options struct {
 	ModeFunc   func() execution.Mode
 	MaxTurns   int
 	Events     EventSink
+	Reasoning  *reasoning.Config
 }
 
 // Agent runs a single headless agent loop.
@@ -46,6 +48,7 @@ type Agent struct {
 	modeFunc   func() execution.Mode
 	maxTurns   int
 	events     EventSink
+	reasoning  *reasoning.Config
 }
 
 // Request is one Agent run input.
@@ -100,6 +103,7 @@ func New(opts Options) (*Agent, error) {
 		modeFunc:   opts.ModeFunc,
 		maxTurns:   maxTurns,
 		events:     opts.Events,
+		reasoning:  cloneReasoning(opts.Reasoning),
 	}, nil
 }
 
@@ -124,9 +128,10 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 
 	for turn := 0; turn < a.maxTurns; turn++ {
 		stream, err := a.provider.Chat(ctx, provider.Request{
-			Model:    a.model,
-			Messages: cloneMessages(messages),
-			Tools:    tools,
+			Model:     a.model,
+			Messages:  cloneMessages(messages),
+			Tools:     tools,
+			Reasoning: cloneReasoning(a.reasoning),
 		})
 		if err != nil {
 			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
@@ -162,6 +167,14 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	return Result{}, a.recordError(ctx, req.SessionID, req.Turn, ErrMaxTurns)
+}
+
+func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {
+	if cfg == nil {
+		return nil
+	}
+	cp := *cfg
+	return &cp
 }
 
 func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, stream provider.Stream) (streamResult, error) {

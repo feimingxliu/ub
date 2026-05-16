@@ -14,8 +14,10 @@ import (
 	"github.com/feimingxliu/ub/internal/execution"
 	logx "github.com/feimingxliu/ub/internal/log"
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/modelinfo"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/spf13/cobra"
@@ -66,6 +68,8 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 		Permissions:    permBridge.Requests(),
 		Model:          runner.model,
 		Models:         runner.Models(),
+		Effort:         runner.Effort(),
+		Efforts:        runner.Efforts(),
 		ApprovalModel:  runner.ApprovalModel(),
 		ApprovalModels: runner.ApprovalModels(),
 		Messages:       runner.Messages(),
@@ -83,12 +87,18 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 type tuiAgentRunner struct {
 	cmd                  *cobra.Command
 	provider             provider.Provider
+	providerName         string
+	providerCfg          config.ProviderConfig
 	model                string
 	models               []string
+	reasoningPref        reasoning.Config
+	reasoning            *reasoning.Config
+	efforts              []string
 	approvalProviderName string
 	approvalProviderCfg  config.ProviderConfig
 	approvalModel        string
 	approvalModels       []string
+	approvalReasoning    reasoning.Config
 	mode                 execution.Mode
 	modeMu               sync.RWMutex
 	eventTimeout         time.Duration
@@ -115,6 +125,8 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		return nil, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
 	models := providerModels(cmd.Context(), providerName, providerCfg, model)
+	mainInfo := modelinfo.Resolve(providerName, providerCfg, model)
+	reasoningCfg := modelinfo.RequestConfig(cfg.Reasoning, mainInfo)
 	mode, err := execution.ParseMode(cfg.ExecutionMode)
 	if err != nil {
 		return nil, err
@@ -130,12 +142,18 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	return &tuiAgentRunner{
 		cmd:                  cmd,
 		provider:             p,
+		providerName:         providerName,
+		providerCfg:          providerCfg,
 		model:                model,
 		models:               models,
+		reasoningPref:        cfg.Reasoning,
+		reasoning:            reasoningCfg,
+		efforts:              modelinfo.EffortOptions(mainInfo),
 		approvalProviderName: approvalSetup.ProviderName,
 		approvalProviderCfg:  approvalSetup.ProviderConfig,
 		approvalModel:        approvalSetup.Model,
 		approvalModels:       approvalSetup.Models,
+		approvalReasoning:    cfg.ApprovalAgent.Reasoning,
 		mode:                 mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
@@ -169,6 +187,7 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		Model:      r.model,
 		Mode:       r.currentMode(),
 		ModeFunc:   r.currentMode,
+		Reasoning:  cloneReasoningConfig(r.reasoning),
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},
@@ -244,6 +263,7 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 	if strings.TrimSpace(state.session.Model) != "" {
 		r.model = state.session.Model
 		r.models = appendModelCandidate(r.models, state.session.Model)
+		r.refreshReasoning()
 	}
 	return r.sessionState(), nil
 }
@@ -291,6 +311,18 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	}
 	r.model = model
 	r.models = appendModelCandidate(r.models, model)
+	r.refreshReasoning()
+	return nil
+}
+
+func (r *tuiAgentRunner) SetEffort(effort string) error {
+	info := modelinfo.Resolve(r.providerName, r.providerCfg, r.model)
+	parsed, err := modelinfo.ValidateEffort(info, effort)
+	if err != nil {
+		return err
+	}
+	r.reasoningPref.Effort = parsed
+	r.refreshReasoning()
 	return nil
 }
 
@@ -339,6 +371,26 @@ func (r *tuiAgentRunner) Models() []string {
 	return append([]string(nil), r.models...)
 }
 
+func (r *tuiAgentRunner) Effort() string {
+	if r == nil || r.reasoning == nil || r.reasoning.Effort == "" {
+		return string(reasoning.EffortNone)
+	}
+	return string(r.reasoning.Effort)
+}
+
+func (r *tuiAgentRunner) Efforts() []string {
+	if r == nil {
+		return nil
+	}
+	return append([]string(nil), r.efforts...)
+}
+
+func (r *tuiAgentRunner) refreshReasoning() {
+	info := modelinfo.Resolve(r.providerName, r.providerCfg, r.model)
+	r.efforts = modelinfo.EffortOptions(info)
+	r.reasoning = modelinfo.RequestConfig(r.reasoningPref, info)
+}
+
 func (r *tuiAgentRunner) ApprovalModel() string {
 	if r == nil {
 		return ""
@@ -358,7 +410,8 @@ func (r *tuiAgentRunner) newApprovalAgent(model string) (approval.Agent, error) 
 	if err != nil {
 		return nil, fmt.Errorf("create approval provider %q: %w", r.approvalProviderName, err)
 	}
-	return approval.NewProviderAgent(p, model)
+	reasoningCfg := modelinfo.RequestConfig(r.approvalReasoning, modelinfo.Resolve(r.approvalProviderName, r.approvalProviderCfg, model))
+	return approval.NewProviderAgentWithReasoning(p, model, reasoningCfg)
 }
 
 func providerModels(ctx context.Context, providerName string, providerCfg config.ProviderConfig, current string) []string {

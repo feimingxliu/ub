@@ -18,6 +18,7 @@ import (
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/provider/fake"
+	"github.com/feimingxliu/ub/internal/reasoning"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tool/fs"
@@ -35,15 +36,37 @@ func (p *scriptProvider) Caps() provider.Caps {
 
 func (p *scriptProvider) Chat(_ context.Context, req provider.Request) (provider.Stream, error) {
 	p.requests = append(p.requests, provider.Request{
-		Model:    req.Model,
-		Messages: cloneMessages(req.Messages),
-		Tools:    append([]provider.ToolDefinition(nil), req.Tools...),
+		Model:     req.Model,
+		Messages:  cloneMessages(req.Messages),
+		Tools:     append([]provider.ToolDefinition(nil), req.Tools...),
+		Reasoning: cloneReasoning(req.Reasoning),
 	})
 	idx := len(p.requests) - 1
 	if idx >= len(p.scripts) {
 		return nil, errors.New("unexpected extra chat call")
 	}
 	return fake.New(p.scripts[idx]).Chat(context.Background(), req)
+}
+
+func TestAgentPassesReasoningConfig(t *testing.T) {
+	reg := tool.New()
+	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
+	a, err := New(Options{
+		Provider:  p,
+		Tools:     reg,
+		Model:     "reasoner",
+		Mode:      execution.ModeWork,
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortHigh},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "hi", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.requests) != 1 || p.requests[0].Reasoning == nil || p.requests[0].Reasoning.Effort != reasoning.EffortHigh {
+		t.Fatalf("request reasoning = %#v", p.requests)
+	}
 }
 
 func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {

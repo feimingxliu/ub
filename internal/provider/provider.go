@@ -11,6 +11,7 @@ import (
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/reasoning"
 )
 
 // Provider is the behavior interface implemented by every model backend.
@@ -31,9 +32,10 @@ type Caps struct {
 
 // Request is the provider-neutral chat request.
 type Request struct {
-	Model    string
-	Messages []message.Message
-	Tools    []ToolDefinition
+	Model     string
+	Messages  []message.Message
+	Tools     []ToolDefinition
+	Reasoning *reasoning.Config
 }
 
 // ToolDefinition is the provider-neutral schema for one callable tool.

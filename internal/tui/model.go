@@ -26,6 +26,8 @@ type Options struct {
 	Permissions    <-chan PermissionRequest
 	Model          string
 	Models         []string
+	Effort         string
+	Efforts        []string
 	ApprovalModel  string
 	ApprovalModels []string
 	Messages       []InitialMessage
@@ -66,6 +68,7 @@ type Model struct {
 	running        bool
 	events         <-chan Event
 	models         []string
+	efforts        []string
 	approvalModel  string
 	approvalModels []string
 	picker         *modelPicker
@@ -100,6 +103,17 @@ func NewModel(opts Options) Model {
 			models = runner.Models()
 		}
 	}
+	effort := strings.TrimSpace(opts.Effort)
+	efforts := opts.Efforts
+	if effortRunner, ok := opts.Runner.(EffortControlRunner); ok {
+		if effort == "" {
+			effort = effortRunner.Effort()
+		}
+		if len(efforts) == 0 {
+			efforts = effortRunner.Efforts()
+		}
+	}
+	effort = defaultString(effort, "none")
 	approvalModel := strings.TrimSpace(opts.ApprovalModel)
 	approvalModels := opts.ApprovalModels
 	if approvalRunner, ok := opts.Runner.(ApprovalControlRunner); ok {
@@ -118,6 +132,7 @@ func NewModel(opts Options) Model {
 		permReqs:       opts.Permissions,
 		ctx:            ctx,
 		models:         normalizeModels(models, modelName),
+		efforts:        normalizeOptions(efforts, effort),
 		approvalModel:  approvalModel,
 		approvalModels: normalizeModels(approvalModels, approvalModel),
 		history:        promptHistoryFromMessages(opts.Messages),
@@ -125,6 +140,7 @@ func NewModel(opts Options) Model {
 		timeout:        opts.EventTimeout,
 		status: statusBar{
 			model:         modelName,
+			effort:        effort,
 			executionMode: defaultString(opts.ExecutionMode, string(execution.ModeWork)),
 			cwd:           defaultString(opts.Cwd, "."),
 			turn:          opts.Turn,
@@ -218,6 +234,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.messages.append(systemRole, "approval model set to "+selected)
 					return m, nil
 				}
+				if target == "effort" {
+					if err := m.setEffort(selected); err != nil {
+						m.messages.append(systemRole, err.Error())
+						return m, nil
+					}
+					m.messages.append(systemRole, "effort set to "+selected)
+					return m, nil
+				}
 				if err := m.setModel(selected); err != nil {
 					m.messages.append(systemRole, err.Error())
 					return m, nil
@@ -290,6 +314,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollMessages(-m.pageScrollLines())
 			return m, nil
 		case "up":
+			if m.moveSlashValueSelection(-1) {
+				return m, nil
+			}
 			if m.moveSlashSelection(-1) {
 				return m, nil
 			}
@@ -297,6 +324,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "down":
+			if m.moveSlashValueSelection(1) {
+				return m, nil
+			}
 			if m.moveSlashSelection(1) {
 				return m, nil
 			}
@@ -309,6 +339,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.running {
 				return m, nil
 			}
+			if m.completeSlashValue() {
+				return m, nil
+			}
 			if m.completeSlash() {
 				return m, nil
 			}
@@ -318,6 +351,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.running {
 				return m, nil
+			}
+			if updated, cmd, ok := m.acceptSlashValueSuggestion(); ok {
+				return updated, cmd
 			}
 			if m.completeSlashOnEnter() {
 				return m, nil
@@ -457,7 +493,7 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "config":
 		approvalModel := defaultString(m.approvalModel, "none")
-		m.messages.append(systemRole, fmt.Sprintf("model=%s approval_model=%s mode=%s cwd=%s", m.status.model, approvalModel, m.status.executionMode, m.status.cwd))
+		m.messages.append(systemRole, fmt.Sprintf("model=%s effort=%s approval_model=%s mode=%s cwd=%s", m.status.model, m.status.effort, approvalModel, m.status.executionMode, m.status.cwd))
 		return m, nil
 	case "sessions":
 		if len(cmd.Args) > 0 {
@@ -483,6 +519,19 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.messages.append(systemRole, "model set to "+model)
+		return m, nil
+	case "effort":
+		if len(cmd.Args) == 0 {
+			m.picker = newEffortPicker(m.efforts, m.status.effort)
+			m.pickerTarget = "effort"
+			return m, nil
+		}
+		effort := strings.Join(cmd.Args, " ")
+		if err := m.setEffort(effort); err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		m.messages.append(systemRole, "effort set to "+m.status.effort)
 		return m, nil
 	case "approval-model":
 		if len(cmd.Args) == 0 {
@@ -791,7 +840,38 @@ func (m *Model) setModel(model string) error {
 	}
 	m.status.model = model
 	m.models = normalizeModels(m.models, model)
+	m.refreshEffortFromRunner()
 	return nil
+}
+
+func (m *Model) setEffort(effort string) error {
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return fmt.Errorf("effort cannot be empty")
+	}
+	if runner, ok := m.runner.(EffortControlRunner); ok {
+		if err := runner.SetEffort(effort); err != nil {
+			return err
+		}
+		m.refreshEffortFromRunner()
+		return nil
+	}
+	if !modelAllowed(m.efforts, effort) {
+		return fmt.Errorf("effort %q is not available for the current model; use /effort to list candidates", effort)
+	}
+	m.status.effort = effort
+	m.efforts = normalizeModels(m.efforts, effort)
+	return nil
+}
+
+func (m *Model) refreshEffortFromRunner() {
+	runner, ok := m.runner.(EffortControlRunner)
+	if !ok {
+		return
+	}
+	effort := defaultString(runner.Effort(), "none")
+	m.status.effort = effort
+	m.efforts = normalizeOptions(runner.Efforts(), effort)
 }
 
 func (m *Model) setApprovalModel(model string) error {
@@ -855,6 +935,7 @@ func (m Model) switchSession(id string) (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(state.Model) != "" {
 		m.status.model = state.Model
 		m.models = normalizeModels(m.models, state.Model)
+		m.refreshEffortFromRunner()
 	}
 	m.status.turn = state.Turn
 	return m, nil
@@ -879,11 +960,8 @@ func (m Model) slashSuggestions(width int) string {
 	if !strings.HasPrefix(value, "/") {
 		return ""
 	}
-	if strings.HasPrefix(raw, "/model ") {
-		return m.modelSuggestions(strings.TrimSpace(strings.TrimPrefix(raw, "/model")), width)
-	}
-	if strings.HasPrefix(raw, "/approval-model ") {
-		return modelSuggestionsFrom(m.approvalModels, strings.TrimSpace(strings.TrimPrefix(raw, "/approval-model")), width, "approval model")
+	if suggestions := m.slashValueSuggestions(width); suggestions != "" {
+		return suggestions
 	}
 	matches := slash.Match(value)
 	if len(matches) == 0 {
@@ -919,29 +997,44 @@ func (m Model) sessionPickerView(width int) string {
 }
 
 func (m Model) modelSuggestions(prefix string, width int) string {
-	return modelSuggestionsFrom(m.models, prefix, width, "model")
+	return valueSuggestionsFrom(filterValueSuggestions(m.models, prefix), width, "model", m.slashIdx)
 }
 
-func modelSuggestionsFrom(models []string, prefix string, width int, label string) string {
+func valueSuggestionsFrom(values []string, width int, label string, selected int) string {
 	var b strings.Builder
-	matches := 0
-	for _, model := range models {
-		if prefix != "" && !strings.Contains(strings.ToLower(model), strings.ToLower(prefix)) {
-			continue
-		}
-		if matches > 0 {
+	for i, value := range values {
+		if i > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString(truncateText("  "+model, width))
-		matches++
-		if matches >= 8 {
-			break
+		marker := "  "
+		if i == selectedIndex(selected, len(values)) {
+			marker = "> "
 		}
+		b.WriteString(truncateText(marker+value, width))
 	}
-	if matches == 0 {
+	if len(values) == 0 {
 		return truncateText("  no matching "+label, width)
 	}
 	return b.String()
+}
+
+func filterValueSuggestions(values []string, prefix string) []string {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if prefix != "" && !strings.Contains(strings.ToLower(value), prefix) {
+			continue
+		}
+		out = append(out, value)
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
 }
 
 func normalizeModels(models []string, current string) []string {
@@ -961,6 +1054,29 @@ func normalizeModels(models []string, current string) []string {
 	add(current)
 	for _, model := range models {
 		add(model)
+	}
+	return out
+}
+
+func normalizeOptions(options []string, current string) []string {
+	current = strings.TrimSpace(current)
+	seen := map[string]struct{}{}
+	var out []string
+	for _, option := range options {
+		option = strings.TrimSpace(option)
+		if option == "" {
+			continue
+		}
+		if _, ok := seen[option]; ok {
+			continue
+		}
+		seen[option] = struct{}{}
+		out = append(out, option)
+	}
+	if current != "" {
+		if _, ok := seen[current]; !ok {
+			out = append([]string{current}, out...)
+		}
 	}
 	return out
 }
@@ -987,6 +1103,33 @@ func (m *Model) completeSlash() bool {
 	return true
 }
 
+func (m *Model) completeSlashValue() bool {
+	values, command, _, ok := m.slashValueMatches()
+	if !ok || len(values) == 0 {
+		return false
+	}
+	selected := values[selectedIndex(m.slashIdx, len(values))]
+	m.input.SetValue("/" + command + " " + selected)
+	m.input.CursorEnd()
+	m.slashIdx = 0
+	m.resetPromptHistoryNavigation()
+	return true
+}
+
+func (m Model) acceptSlashValueSuggestion() (tea.Model, tea.Cmd, bool) {
+	values, command, _, ok := m.slashValueMatches()
+	if !ok || len(values) == 0 {
+		return m, nil, false
+	}
+	selected := values[selectedIndex(m.slashIdx, len(values))]
+	next := "/" + command + " " + selected
+	m.input.SetValue("")
+	m.slashIdx = 0
+	m.resetPromptHistoryNavigation()
+	updated, cmd := m.executeSlash(next)
+	return updated, cmd, true
+}
+
 func (m *Model) completeSlashOnEnter() bool {
 	raw := m.input.Value()
 	value := strings.TrimSpace(raw)
@@ -1008,6 +1151,18 @@ func (m *Model) moveSlashSelection(delta int) bool {
 	return true
 }
 
+func (m *Model) moveSlashValueSelection(delta int) bool {
+	values, _, _, ok := m.slashValueMatches()
+	if !ok {
+		return false
+	}
+	if len(values) == 0 {
+		return true
+	}
+	m.slashIdx = (selectedIndex(m.slashIdx, len(values)) + delta + len(values)) % len(values)
+	return true
+}
+
 func (m Model) slashCommandMatches() []slash.Spec {
 	raw := m.input.Value()
 	value := strings.TrimSpace(raw)
@@ -1017,17 +1172,67 @@ func (m Model) slashCommandMatches() []slash.Spec {
 	return slash.Match(value)
 }
 
+func (m Model) slashValueSuggestions(width int) string {
+	values, _, label, ok := m.slashValueMatches()
+	if !ok {
+		return ""
+	}
+	return valueSuggestionsFrom(values, width, label, m.slashIdx)
+}
+
+func (m Model) slashValueMatches() ([]string, string, string, bool) {
+	source, ok := m.slashValueSource()
+	if !ok {
+		return nil, "", "", false
+	}
+	return filterValueSuggestions(source.values, source.prefix), source.command, source.label, true
+}
+
+type slashValueSource struct {
+	command string
+	label   string
+	prefix  string
+	values  []string
+}
+
+func (m Model) slashValueSource() (slashValueSource, bool) {
+	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "model"); ok {
+		return slashValueSource{command: "model", label: "model", prefix: prefix, values: m.models}, true
+	}
+	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "effort"); ok {
+		return slashValueSource{command: "effort", label: "effort", prefix: prefix, values: m.efforts}, true
+	}
+	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "approval-model"); ok {
+		return slashValueSource{command: "approval-model", label: "approval model", prefix: prefix, values: m.approvalModels}, true
+	}
+	return slashValueSource{}, false
+}
+
+func slashCommandArgPrefix(raw, command string) (string, bool) {
+	value := strings.TrimLeft(raw, " \t\r\n")
+	head := "/" + command
+	if !strings.HasPrefix(strings.ToLower(value), head) {
+		return "", false
+	}
+	rest := value[len(head):]
+	if rest == "" || !strings.ContainsAny(rest[:1], " \t\r\n") {
+		return "", false
+	}
+	return strings.TrimSpace(rest), true
+}
+
 func (m Model) selectedSlashIndex(matches []slash.Spec) int {
-	if len(matches) == 0 {
+	return selectedIndex(m.slashIdx, len(matches))
+}
+
+func selectedIndex(index, length int) int {
+	if length == 0 || index < 0 {
 		return 0
 	}
-	if m.slashIdx < 0 {
-		return 0
+	if index >= length {
+		return length - 1
 	}
-	if m.slashIdx >= len(matches) {
-		return len(matches) - 1
-	}
-	return m.slashIdx
+	return index
 }
 
 func slashInputHasArgs(raw string) bool {

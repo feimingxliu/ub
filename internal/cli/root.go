@@ -359,6 +359,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		Rollout:    state.rollout,
 		Model:      model,
 		Mode:       mode,
+		Reasoning:  chatReasoningConfig(cfg, providerName, providerCfg, model),
 	})
 	if err != nil {
 		return err
@@ -451,8 +452,9 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 
 	requestMessages := append(cloneMessages(state.history), userMsg)
 	stream, err := p.Chat(cmd.Context(), provider.Request{
-		Model:    model,
-		Messages: requestMessages,
+		Model:     model,
+		Messages:  requestMessages,
+		Reasoning: chatReasoningConfig(cfg, providerName, providerCfg, model),
 	})
 	if err != nil {
 		return recordChatError(cmd, state, fmt.Errorf("provider %q chat: %w", providerName, err))

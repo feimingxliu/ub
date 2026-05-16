@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/feimingxliu/ub/internal/reasoning"
+)
 
 func TestMergeScalarsMapsAndSlices(t *testing.T) {
 	base := &Config{
@@ -64,9 +68,11 @@ func TestMergeDefaults(t *testing.T) {
 	got := Merge(Defaults(), &Config{
 		TUI:           TUIConfig{Theme: "light"},
 		ExecutionMode: ModePlan,
+		Reasoning:     reasoning.Config{Effort: reasoning.EffortHigh},
 		ApprovalAgent: ApprovalAgentConfig{
-			Provider: "openai",
-			Model:    "gpt-test",
+			Provider:  "openai",
+			Model:     "gpt-test",
+			Reasoning: reasoning.Config{Effort: reasoning.EffortLow},
 		},
 		ToolsDisabled: []string{"bash"},
 		Context: ContextConfig{
@@ -84,6 +90,9 @@ func TestMergeDefaults(t *testing.T) {
 	}
 	if got.ApprovalAgent.Provider != "openai" || got.ApprovalAgent.Model != "gpt-test" {
 		t.Fatalf("approval agent = %#v", got.ApprovalAgent)
+	}
+	if got.Reasoning.Effort != reasoning.EffortHigh || got.ApprovalAgent.Reasoning.Effort != reasoning.EffortLow {
+		t.Fatalf("reasoning = %#v approval=%#v", got.Reasoning, got.ApprovalAgent.Reasoning)
 	}
 	if len(got.ToolsDisabled) != 1 || got.ToolsDisabled[0] != "bash" {
 		t.Fatalf("tools disabled = %#v", got.ToolsDisabled)

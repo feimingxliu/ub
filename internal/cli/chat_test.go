@@ -17,6 +17,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 )
@@ -42,7 +43,7 @@ func (p captureProvider) Caps() provider.Caps {
 }
 
 func (p captureProvider) Chat(ctx context.Context, req provider.Request) (provider.Stream, error) {
-	copied := provider.Request{Model: req.Model, Messages: cloneTestMessages(req.Messages)}
+	copied := provider.Request{Model: req.Model, Messages: cloneTestMessages(req.Messages), Reasoning: cloneReasoningConfig(req.Reasoning)}
 	captureRequests = append(captureRequests, copied)
 	return &captureStream{events: []provider.Event{
 		{Type: provider.EventTextDelta, Text: "captured"},
@@ -298,6 +299,40 @@ providers:
 	}
 	if got := captureRequests[0].Model; got != "capture/test-model" {
 		t.Fatalf("model = %q, want full default_model", got)
+	}
+}
+
+func TestChatPassesReasoningForConfiguredModel(t *testing.T) {
+	captureRequests = nil
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_provider: capture
+default_model: custom-reasoner
+reasoning:
+  effort: high
+providers:
+  capture:
+    type: capture
+    models:
+      custom-reasoner:
+        supports_reasoning: true
+        supported_efforts: [low, high]
+        default_effort: low
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat reasoning: %v", err)
+	}
+	if len(captureRequests) != 1 {
+		t.Fatalf("capture request len = %d, want 1", len(captureRequests))
+	}
+	if captureRequests[0].Reasoning == nil || captureRequests[0].Reasoning.Effort != reasoning.EffortHigh {
+		t.Fatalf("request reasoning = %#v", captureRequests[0].Reasoning)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
+	"github.com/feimingxliu/ub/internal/reasoning"
 )
 
 const defaultMaxTokens int64 = 1024
@@ -84,6 +85,12 @@ func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
 		Model:     sdk.Model(req.Model),
 		MaxTokens: defaultMaxTokens,
 	}
+	if budget := thinkingBudget(req.Reasoning); budget > 0 {
+		params.Thinking = sdk.ThinkingConfigParamOfEnabled(budget)
+		if params.MaxTokens <= budget {
+			params.MaxTokens = budget + 1024
+		}
+	}
 	tools, err := toToolParams(req.Tools)
 	if err != nil {
 		return sdk.MessageNewParams{}, err
@@ -123,6 +130,24 @@ func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
 		return sdk.MessageNewParams{}, errors.New("anthropic request requires at least one user or assistant message")
 	}
 	return params, nil
+}
+
+func thinkingBudget(cfg *reasoning.Config) int64 {
+	if cfg == nil {
+		return 0
+	}
+	switch cfg.Effort {
+	case reasoning.EffortMinimal, reasoning.EffortLow:
+		return 1024
+	case reasoning.EffortMedium:
+		return 2048
+	case reasoning.EffortHigh:
+		return 4096
+	case reasoning.EffortXHigh:
+		return 8192
+	default:
+		return 0
+	}
 }
 
 func toToolParams(defs []provider.ToolDefinition) ([]sdk.ToolUnionParam, error) {
