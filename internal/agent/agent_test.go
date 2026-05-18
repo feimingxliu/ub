@@ -115,6 +115,61 @@ func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAgentFinalizesWithoutToolsAfterMaxTurns(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	writer := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+		{fake.TextDelta("final from gathered file"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Rollout:    writer,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		MaxTurns:   1,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_limit", Prompt: "inspect", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "final from gathered file" {
+		t.Fatalf("text = %q, want final", res.Text)
+	}
+	if len(p.requests) != 2 {
+		t.Fatalf("chat calls = %d, want 2", len(p.requests))
+	}
+	if len(p.requests[0].Tools) == 0 {
+		t.Fatalf("first request missing tools")
+	}
+	if len(p.requests[1].Tools) != 0 {
+		t.Fatalf("final request tools = %#v, want none", p.requests[1].Tools)
+	}
+	if !containsText(p.requests[1].Messages, "Do not call tools") {
+		t.Fatalf("final request missing no-tool instruction: %#v", p.requests[1].Messages)
+	}
+	if containsText(res.Messages, "Do not call tools") {
+		t.Fatalf("result history leaked internal no-tool instruction: %#v", res.Messages)
+	}
+	if !hasEventType(writer.events, rollout.TypeAssistantMessage) {
+		t.Fatalf("events missing final assistant message: %#v", writer.events)
+	}
+}
+
 func TestAgentEmitsRuntimeEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/config"
+	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
@@ -23,6 +24,8 @@ const defaultMaxTurns = 25
 
 // ErrMaxTurns is returned when a run exceeds its provider/tool loop limit.
 var ErrMaxTurns = errors.New("agent: max turns reached")
+
+const maxTurnsFinalInstruction = "Tool iteration limit reached for this turn. Do not call tools. Answer the user's request now using the information already gathered. If the available information is incomplete, say what is missing concisely."
 
 // Options configures an Agent.
 type Options struct {
@@ -181,7 +184,51 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 			}
 		}
 	}
-	return Result{}, a.recordError(ctx, req.SessionID, req.Turn, ErrMaxTurns)
+	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages)
+}
+
+func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn int, messages []message.Message) (Result, error) {
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Status:       "running",
+		Summary:      fmt.Sprintf("tool loop reached %d turns; finalizing without tools", a.maxTurns),
+	})
+
+	requestMessages := cloneMessages(messages)
+	requestMessages = append(requestMessages, message.Text(message.RoleSystem, maxTurnsFinalInstruction))
+	estimated := contextmgr.Estimate(requestMessages, a.model)
+	a.emitContextUsage(estimated)
+	stream, err := a.provider.Chat(ctx, provider.Request{
+		Model:     a.model,
+		Messages:  cloneMessages(requestMessages),
+		Reasoning: cloneReasoning(a.reasoning),
+	})
+	if err != nil {
+		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool request failed: %v", ErrMaxTurns, err))
+	}
+	consumed, err := a.consumeStream(ctx, sessionID, turn, stream, estimated)
+	closeErr := stream.Close()
+	if err != nil {
+		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool stream failed: %v", ErrMaxTurns, err))
+	}
+	if closeErr != nil {
+		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool stream close failed: %v", ErrMaxTurns, closeErr))
+	}
+	if len(consumed.toolCalls) > 0 {
+		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool response still requested %d tool call(s)", ErrMaxTurns, len(consumed.toolCalls)))
+	}
+	if len(consumed.message.Content) == 0 {
+		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool response was empty", ErrMaxTurns))
+	}
+	messages = append(messages, consumed.message)
+	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
+		return rollout.AssistantMessage(sessionID, turn, consumed.message)
+	}); err != nil {
+		return Result{}, err
+	}
+	a.emit(Event{Type: EventDone, Text: consumed.text})
+	return Result{Text: consumed.text, Messages: messages}, nil
 }
 
 func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {
