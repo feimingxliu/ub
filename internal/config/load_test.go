@@ -126,6 +126,7 @@ providers:
         supports_reasoning: true
         supported_efforts: [low, high]
         default_effort: low
+        max_context_tokens: 200000
 `)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
@@ -140,7 +141,7 @@ providers:
 		t.Fatalf("approval reasoning effort = %q", cfg.ApprovalAgent.Reasoning.Effort)
 	}
 	model := cfg.Providers["openai"].Models["custom"]
-	if !model.SupportsReasoning || model.DefaultEffort != "low" || len(model.SupportedEfforts) != 2 {
+	if !model.SupportsReasoning || model.DefaultEffort != "low" || len(model.SupportedEfforts) != 2 || model.MaxContextTokens != 200000 {
 		t.Fatalf("model config = %#v", model)
 	}
 }

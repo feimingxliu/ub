@@ -16,6 +16,7 @@ type Info struct {
 	SupportsReasoning bool
 	SupportedEfforts  []reasoning.Effort
 	DefaultEffort     reasoning.Effort
+	MaxContextTokens  int
 }
 
 // Resolve returns model capabilities from user config, built-ins, and a
@@ -115,6 +116,9 @@ func userModelConfig(providerCfg config.ProviderConfig, model string) (config.Mo
 }
 
 func mergeConfigInfo(base Info, cfg config.ModelConfig) Info {
+	if cfg.MaxContextTokens > 0 {
+		base.MaxContextTokens = cfg.MaxContextTokens
+	}
 	efforts := normalizeEfforts(cfg.SupportedEfforts)
 	supports := cfg.SupportsReasoning || len(efforts) > 0 || cfg.DefaultEffort != ""
 	base.SupportsReasoning = supports

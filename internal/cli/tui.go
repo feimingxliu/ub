@@ -235,17 +235,18 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		return nil, err
 	}
 	a, err := agent.New(agent.Options{
-		Provider:        r.provider,
-		Tools:           reg,
-		Permission:      r.permission,
-		Rollout:         r.state.rollout,
-		Model:           r.model,
-		Mode:            r.currentMode(),
-		ModeFunc:        r.currentMode,
-		Reasoning:       cloneReasoningConfig(r.reasoning),
-		SummaryProvider: r.summaryProvider,
-		SummaryModel:    r.summaryModel,
-		Context:         r.contextCfg,
+		Provider:         r.provider,
+		Tools:            reg,
+		Permission:       r.permission,
+		Rollout:          r.state.rollout,
+		Model:            r.model,
+		Mode:             r.currentMode(),
+		ModeFunc:         r.currentMode,
+		Reasoning:        cloneReasoningConfig(r.reasoning),
+		MaxContextTokens: modelinfo.Resolve(r.providerName, r.providerCfg, r.model).MaxContextTokens,
+		SummaryProvider:  r.summaryProvider,
+		SummaryModel:     r.summaryModel,
+		Context:          r.contextCfg,
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},

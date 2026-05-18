@@ -157,7 +157,7 @@ func (a *Agent) shouldSummarize(estimated int) bool {
 	if estimated <= 0 {
 		return false
 	}
-	maxContext := a.provider.Caps().MaxContextTokens
+	maxContext := a.effectiveMaxContextTokens()
 	if maxContext <= 0 {
 		return false
 	}
@@ -235,7 +235,7 @@ func (a *Agent) emitContextUsage(used int, reset bool) {
 	if used <= 0 {
 		return
 	}
-	maxContext := a.provider.Caps().MaxContextTokens
+	maxContext := a.effectiveMaxContextTokens()
 	ratio := 0.0
 	if maxContext > 0 {
 		ratio = float64(used) / float64(maxContext)
@@ -247,6 +247,13 @@ func (a *Agent) emitContextUsage(used int, reset bool) {
 		ContextRatio:      ratio,
 		ContextReset:      reset,
 	})
+}
+
+func (a *Agent) effectiveMaxContextTokens() int {
+	if a.maxContextTokens > 0 {
+		return a.maxContextTokens
+	}
+	return a.provider.Caps().MaxContextTokens
 }
 
 func splitSummaryWindow(messages []message.Message, keepRecentTurns int) ([]message.Message, []message.Message, bool) {

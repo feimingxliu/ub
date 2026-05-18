@@ -124,12 +124,12 @@
 - F-CTX-3：Summary 由小模型（配置可指定）生成；摘要替换早期消息，保留最近 N 轮原文
 - F-CTX-4：Summary 事件本身写入 rollout，下次恢复 session 可从 summary 起步
 - F-CTX-5：TUI 可通过 `/compact` 主动触发一次 summary/压缩；手动触发复用同一 summary 策略，但不依赖自动阈值
-- F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量；provider 声明最大上下文时同时上报 context 百分比
+- F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量；当前模型配置或 provider 声明最大上下文时同时上报 context 百分比，模型级 `max_context_tokens` 优先
 
 ### 4.8 配置
 
 - F-CFG-1：默认配置位于 `~/.config/ub/config.yaml`；工作目录可有 `.ub/config.yaml` 覆盖
-- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`
+- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`；`providers.<name>.models.<model>` 可声明 reasoning 能力和 `max_context_tokens`
 - F-CFG-3：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
 - F-CFG-4：配置 schema 用 JSON Schema 描述，IDE 可补全
 - F-CFG-5：配置支持全局 `reasoning.effort`、`approval_agent.reasoning.effort` 和 `providers.<name>.models.<id>` 能力覆盖；effort 值为 `none|minimal|low|medium|high|xhigh`

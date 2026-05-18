@@ -15,11 +15,12 @@ func TestResolveUsesUserModelConfig(t *testing.T) {
 				SupportsReasoning: true,
 				SupportedEfforts:  []reasoning.Effort{reasoning.EffortLow, reasoning.EffortHigh},
 				DefaultEffort:     reasoning.EffortHigh,
+				MaxContextTokens:  200000,
 			},
 		},
 	}, "custom")
 
-	if !info.SupportsReasoning || info.DefaultEffort != reasoning.EffortHigh {
+	if !info.SupportsReasoning || info.DefaultEffort != reasoning.EffortHigh || info.MaxContextTokens != 200000 {
 		t.Fatalf("info = %#v", info)
 	}
 	if got := EffortOptions(info); len(got) != 3 || got[0] != "none" || got[2] != "high" {

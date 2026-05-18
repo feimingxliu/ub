@@ -29,36 +29,38 @@ const maxTurnsFinalInstruction = "Tool iteration limit reached for this turn. Do
 
 // Options configures an Agent.
 type Options struct {
-	Provider        provider.Provider
-	Tools           *tool.Registry
-	Permission      *permission.Manager
-	Rollout         rollout.Writer
-	Model           string
-	Mode            execution.Mode
-	ModeFunc        func() execution.Mode
-	MaxTurns        int
-	Events          EventSink
-	Reasoning       *reasoning.Config
-	SummaryProvider provider.Provider
-	SummaryModel    string
-	Context         config.ContextConfig
+	Provider         provider.Provider
+	Tools            *tool.Registry
+	Permission       *permission.Manager
+	Rollout          rollout.Writer
+	Model            string
+	Mode             execution.Mode
+	ModeFunc         func() execution.Mode
+	MaxTurns         int
+	Events           EventSink
+	Reasoning        *reasoning.Config
+	MaxContextTokens int
+	SummaryProvider  provider.Provider
+	SummaryModel     string
+	Context          config.ContextConfig
 }
 
 // Agent runs a single headless agent loop.
 type Agent struct {
-	provider        provider.Provider
-	tools           *tool.Registry
-	permission      *permission.Manager
-	rollout         rollout.Writer
-	model           string
-	mode            execution.Mode
-	modeFunc        func() execution.Mode
-	maxTurns        int
-	events          EventSink
-	reasoning       *reasoning.Config
-	summaryProvider provider.Provider
-	summaryModel    string
-	contextCfg      config.ContextConfig
+	provider         provider.Provider
+	tools            *tool.Registry
+	permission       *permission.Manager
+	rollout          rollout.Writer
+	model            string
+	mode             execution.Mode
+	modeFunc         func() execution.Mode
+	maxTurns         int
+	events           EventSink
+	reasoning        *reasoning.Config
+	maxContextTokens int
+	summaryProvider  provider.Provider
+	summaryModel     string
+	contextCfg       config.ContextConfig
 }
 
 // Request is one Agent run input.
@@ -104,19 +106,20 @@ func New(opts Options) (*Agent, error) {
 		maxTurns = defaultMaxTurns
 	}
 	return &Agent{
-		provider:        opts.Provider,
-		tools:           opts.Tools,
-		permission:      opts.Permission,
-		rollout:         opts.Rollout,
-		model:           strings.TrimSpace(opts.Model),
-		mode:            mode,
-		modeFunc:        opts.ModeFunc,
-		maxTurns:        maxTurns,
-		events:          opts.Events,
-		reasoning:       cloneReasoning(opts.Reasoning),
-		summaryProvider: opts.SummaryProvider,
-		summaryModel:    strings.TrimSpace(opts.SummaryModel),
-		contextCfg:      opts.Context,
+		provider:         opts.Provider,
+		tools:            opts.Tools,
+		permission:       opts.Permission,
+		rollout:          opts.Rollout,
+		model:            strings.TrimSpace(opts.Model),
+		mode:             mode,
+		modeFunc:         opts.ModeFunc,
+		maxTurns:         maxTurns,
+		events:           opts.Events,
+		reasoning:        cloneReasoning(opts.Reasoning),
+		maxContextTokens: opts.MaxContextTokens,
+		summaryProvider:  opts.SummaryProvider,
+		summaryModel:     strings.TrimSpace(opts.SummaryModel),
+		contextCfg:       opts.Context,
 	}, nil
 }
 

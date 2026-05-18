@@ -258,6 +258,13 @@ type ProviderConfig struct {
     Timeout time.Duration     // 可选
     Models  map[string]ModelConfig // 可选，覆盖模型能力
 }
+
+type ModelConfig struct {
+    SupportsReasoning bool
+    SupportedEfforts  []reasoning.Effort
+    DefaultEffort     reasoning.Effort
+    MaxContextTokens  int // 可选，模型级 context window 覆盖
+}
 ```
 
 构造 anthropic / openai 客户端时把 `BaseURL` 传给官方 SDK 的 option（`anthropic.WithBaseURL` / `openai.WithBaseURL`），都是 SDK 直接支持的。用途：LiteLLM、Cloudflare AI Gateway、Helicone、OneAPI、公司内部反代、企业代理。
@@ -270,6 +277,7 @@ type ProviderConfig struct {
 
 **上下文压缩与状态栏**：
 - Agent 每次发起 provider 请求前估算请求消息 token，并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏以紧凑 `ctx` 段展示最近一次用量
+- max context 优先读取 `providers.<name>.models.<model>.max_context_tokens`，未配置时回退 provider `Caps().MaxContextTokens`
 - 自动 summary 按 `context.trigger_ratio` 触发；TUI 的 `/compact` 可主动触发同一 summary 逻辑，保留最近 `context.keep_recent_turns` 个 user turn
 - 读取 rollout 历史时遇到 `Summary` 事件即从该 summary message 重新开始构造上下文，避免恢复 session 后重新带上已压缩旧消息
 

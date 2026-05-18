@@ -88,6 +88,7 @@ type ModelConfig struct {
 	SupportsReasoning bool               `yaml:"supports_reasoning,omitempty" json:"supports_reasoning,omitempty"`
 	SupportedEfforts  []reasoning.Effort `yaml:"supported_efforts,omitempty"  json:"supported_efforts,omitempty"`
 	DefaultEffort     reasoning.Effort   `yaml:"default_effort,omitempty"     json:"default_effort,omitempty"`
+	MaxContextTokens  int                `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"`
 }
 
 // ProviderScriptEvent is used by the fake provider to produce deterministic

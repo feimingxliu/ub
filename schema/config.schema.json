@@ -96,6 +96,9 @@
         },
         "default_effort": {
           "type": "string"
+        },
+        "max_context_tokens": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,

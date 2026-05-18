@@ -796,6 +796,50 @@ func TestAgentDoesNotSummarizeBelowThreshold(t *testing.T) {
 	}
 }
 
+func TestAgentUsesModelContextOverrideForSummaryThreshold(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps: provider.Caps{MaxContextTokens: 20},
+		scripts: []fake.Script{
+			{fake.TextDelta("ok"), fake.Done()},
+		},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("summary should not run")},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider:         main,
+		SummaryProvider:  summary,
+		Tools:            reg,
+		Permission:       perm,
+		Model:            "fake/model",
+		Mode:             execution.ModeWork,
+		MaxContextTokens: 1_000_000,
+		Context:          config.ContextConfig{TriggerRatio: 0.01, KeepRecentTurns: 3},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "current", Turn: 1, History: turnHistory(5)}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+	}
+	contextEvent, ok := firstContextEvent(events)
+	if !ok || contextEvent.ContextMaxTokens != 1_000_000 {
+		t.Fatalf("context event = %#v ok=%v, want model override max", contextEvent, ok)
+	}
+	if got := main.requests[0].Messages; containsRole(got, message.RoleSystem) {
+		t.Fatalf("main request unexpectedly summarized: %#v", got)
+	}
+}
+
 func TestAgentSummaryFailureRecordsRolloutError(t *testing.T) {
 	reg := tool.New()
 	perm := newPermissionManager(t, nil)
