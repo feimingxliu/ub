@@ -99,6 +99,10 @@ type tuiAgentRunner struct {
 	approvalModel        string
 	approvalModels       []string
 	approvalReasoning    reasoning.Config
+	summaryProvider      provider.Provider
+	summaryModel         string
+	summaryUsesCurrent   bool
+	contextCfg           config.ContextConfig
 	mode                 execution.Mode
 	modeMu               sync.RWMutex
 	eventTimeout         time.Duration
@@ -135,6 +139,10 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
+	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	if err != nil {
+		return nil, err
+	}
 	perm, err := permission.NewManager(permission.Options{Asker: asker, ApprovalAgent: approvalSetup.Agent})
 	if err != nil {
 		return nil, err
@@ -154,6 +162,10 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		approvalModel:        approvalSetup.Model,
 		approvalModels:       approvalSetup.Models,
 		approvalReasoning:    cfg.ApprovalAgent.Reasoning,
+		summaryProvider:      summarySetup.Provider,
+		summaryModel:         summarySetup.Model,
+		summaryUsesCurrent:   summarySetup.UsesCurrentModel,
+		contextCfg:           cfg.Context,
 		mode:                 mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
@@ -180,14 +192,17 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		return err
 	}
 	a, err := agent.New(agent.Options{
-		Provider:   r.provider,
-		Tools:      reg,
-		Permission: r.permission,
-		Rollout:    r.state.rollout,
-		Model:      r.model,
-		Mode:       r.currentMode(),
-		ModeFunc:   r.currentMode,
-		Reasoning:  cloneReasoningConfig(r.reasoning),
+		Provider:        r.provider,
+		Tools:           reg,
+		Permission:      r.permission,
+		Rollout:         r.state.rollout,
+		Model:           r.model,
+		Mode:            r.currentMode(),
+		ModeFunc:        r.currentMode,
+		Reasoning:       cloneReasoningConfig(r.reasoning),
+		SummaryProvider: r.summaryProvider,
+		SummaryModel:    r.summaryModel,
+		Context:         r.contextCfg,
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},
@@ -311,6 +326,9 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	}
 	r.model = model
 	r.models = appendModelCandidate(r.models, model)
+	if r.summaryUsesCurrent {
+		r.summaryModel = model
+	}
 	r.refreshReasoning()
 	return nil
 }

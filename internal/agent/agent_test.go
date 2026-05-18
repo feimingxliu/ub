@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +14,8 @@ import (
 	"github.com/invopop/jsonschema"
 
 	"github.com/feimingxliu/ub/internal/approval"
+	"github.com/feimingxliu/ub/internal/config"
+	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
@@ -27,11 +30,15 @@ import (
 type scriptProvider struct {
 	scripts  []fake.Script
 	requests []provider.Request
+	caps     provider.Caps
 }
 
 func (p *scriptProvider) Name() string { return "script" }
 func (p *scriptProvider) Caps() provider.Caps {
-	return provider.Caps{SupportsTools: true, SupportsStreaming: true}
+	caps := p.caps
+	caps.SupportsTools = true
+	caps.SupportsStreaming = true
+	return caps
 }
 
 func (p *scriptProvider) Chat(_ context.Context, req provider.Request) (provider.Stream, error) {
@@ -524,6 +531,166 @@ func TestAgentWritesRolloutEvents(t *testing.T) {
 	}
 }
 
+func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps: provider.Caps{MaxContextTokens: 20},
+		scripts: []fake.Script{
+			{fake.TextDelta("final"), fake.Done()},
+		},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("summary of early work"), fake.Done()},
+	}}
+	writer := &recordingRollout{}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context: config.ContextConfig{
+			TriggerRatio:    0.01,
+			KeepRecentTurns: 3,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	history := turnHistory(5)
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_sum", Prompt: "current prompt", Turn: 7, History: history})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "final" {
+		t.Fatalf("text = %q, want final", res.Text)
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("summary requests = %d, want 1", len(summary.requests))
+	}
+	if summary.requests[0].Model != "small" {
+		t.Fatalf("summary model = %q, want small", summary.requests[0].Model)
+	}
+	if len(main.requests) != 1 {
+		t.Fatalf("main requests = %d, want 1", len(main.requests))
+	}
+	got := main.requests[0].Messages
+	if len(got) == 0 || got[0].Role != message.RoleSystem || !strings.Contains(got[0].Text(), "summary of early work") {
+		t.Fatalf("main request first message = %#v", got)
+	}
+	if containsText(got, "user 1") || containsText(got, "user 2") || containsText(got, "user 3") {
+		t.Fatalf("main request kept summarized messages: %#v", got)
+	}
+	for _, want := range []string{"user 4", "user 5", "current prompt"} {
+		if !containsText(got, want) {
+			t.Fatalf("main request missing %q: %#v", want, got)
+		}
+	}
+	if !hasEventType(writer.events, rollout.TypeSummary) {
+		t.Fatalf("events missing summary: %#v", writer.events)
+	}
+}
+
+func TestAgentDoesNotSummarizeBelowThreshold(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps: provider.Caps{MaxContextTokens: 1_000_000},
+		scripts: []fake.Script{
+			{fake.TextDelta("ok"), fake.Done()},
+		},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("summary should not run")},
+	}}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.8, KeepRecentTurns: 3},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "short", Turn: 1, History: turnHistory(5)}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+	}
+	if got := main.requests[0].Messages; containsRole(got, message.RoleSystem) {
+		t.Fatalf("main request unexpectedly summarized: %#v", got)
+	}
+}
+
+func TestAgentSummaryFailureRecordsRolloutError(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{caps: provider.Caps{MaxContextTokens: 20}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("summary failed")},
+	}}
+	writer := &recordingRollout{}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.01, KeepRecentTurns: 3},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = a.Run(context.Background(), Request{SessionID: "sess_fail", Prompt: "current", Turn: 2, History: turnHistory(5)})
+	if err == nil || !strings.Contains(err.Error(), "summary provider") {
+		t.Fatalf("Run error = %v, want summary provider error", err)
+	}
+	if len(main.requests) != 0 {
+		t.Fatalf("main provider was called after summary failure")
+	}
+	if !hasEventType(writer.events, rollout.TypeError) {
+		t.Fatalf("events missing error: %#v", writer.events)
+	}
+}
+
+func TestAgentUsageCalibratesTokenEstimate(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	model := "usage-calibration-test"
+	msgs := []message.Message{message.Text(message.RoleUser, "calibrate")}
+	before := contextmgr.Estimate(msgs, model)
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.Usage(before*2, 1), fake.TextDelta("ok"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:   main,
+		Tools:      reg,
+		Permission: perm,
+		Model:      model,
+		Mode:       execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "calibrate", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	after := contextmgr.Estimate(msgs, model)
+	if after <= before {
+		t.Fatalf("estimate after usage = %d, before = %d, want larger", after, before)
+	}
+}
+
 type recordingRollout struct {
 	events []rollout.Event
 }
@@ -534,6 +701,44 @@ func (w *recordingRollout) Append(_ context.Context, event rollout.Event) error 
 }
 
 func (w *recordingRollout) Close() error { return nil }
+
+func turnHistory(turns int) []message.Message {
+	out := make([]message.Message, 0, turns*2)
+	for i := 1; i <= turns; i++ {
+		out = append(out,
+			message.Text(message.RoleUser, fmt.Sprintf("user %d", i)),
+			message.Text(message.RoleAssistant, fmt.Sprintf("assistant %d", i)),
+		)
+	}
+	return out
+}
+
+func containsText(messages []message.Message, text string) bool {
+	for _, msg := range messages {
+		if strings.Contains(msg.Text(), text) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsRole(messages []message.Message, role message.Role) bool {
+	for _, msg := range messages {
+		if msg.Role == role {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEventType(events []rollout.Event, typ rollout.Type) bool {
+	for _, event := range events {
+		if event.Type == typ {
+			return true
+		}
+	}
+	return false
+}
 
 func newTestAgent(t *testing.T, p provider.Provider, reg *tool.Registry, perm *permission.Manager, mode execution.Mode) *Agent {
 	t.Helper()

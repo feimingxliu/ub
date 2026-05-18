@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
@@ -25,30 +26,36 @@ var ErrMaxTurns = errors.New("agent: max turns reached")
 
 // Options configures an Agent.
 type Options struct {
-	Provider   provider.Provider
-	Tools      *tool.Registry
-	Permission *permission.Manager
-	Rollout    rollout.Writer
-	Model      string
-	Mode       execution.Mode
-	ModeFunc   func() execution.Mode
-	MaxTurns   int
-	Events     EventSink
-	Reasoning  *reasoning.Config
+	Provider        provider.Provider
+	Tools           *tool.Registry
+	Permission      *permission.Manager
+	Rollout         rollout.Writer
+	Model           string
+	Mode            execution.Mode
+	ModeFunc        func() execution.Mode
+	MaxTurns        int
+	Events          EventSink
+	Reasoning       *reasoning.Config
+	SummaryProvider provider.Provider
+	SummaryModel    string
+	Context         config.ContextConfig
 }
 
 // Agent runs a single headless agent loop.
 type Agent struct {
-	provider   provider.Provider
-	tools      *tool.Registry
-	permission *permission.Manager
-	rollout    rollout.Writer
-	model      string
-	mode       execution.Mode
-	modeFunc   func() execution.Mode
-	maxTurns   int
-	events     EventSink
-	reasoning  *reasoning.Config
+	provider        provider.Provider
+	tools           *tool.Registry
+	permission      *permission.Manager
+	rollout         rollout.Writer
+	model           string
+	mode            execution.Mode
+	modeFunc        func() execution.Mode
+	maxTurns        int
+	events          EventSink
+	reasoning       *reasoning.Config
+	summaryProvider provider.Provider
+	summaryModel    string
+	contextCfg      config.ContextConfig
 }
 
 // Request is one Agent run input.
@@ -94,16 +101,19 @@ func New(opts Options) (*Agent, error) {
 		maxTurns = defaultMaxTurns
 	}
 	return &Agent{
-		provider:   opts.Provider,
-		tools:      opts.Tools,
-		permission: opts.Permission,
-		rollout:    opts.Rollout,
-		model:      strings.TrimSpace(opts.Model),
-		mode:       mode,
-		modeFunc:   opts.ModeFunc,
-		maxTurns:   maxTurns,
-		events:     opts.Events,
-		reasoning:  cloneReasoning(opts.Reasoning),
+		provider:        opts.Provider,
+		tools:           opts.Tools,
+		permission:      opts.Permission,
+		rollout:         opts.Rollout,
+		model:           strings.TrimSpace(opts.Model),
+		mode:            mode,
+		modeFunc:        opts.ModeFunc,
+		maxTurns:        maxTurns,
+		events:          opts.Events,
+		reasoning:       cloneReasoning(opts.Reasoning),
+		summaryProvider: opts.SummaryProvider,
+		summaryModel:    strings.TrimSpace(opts.SummaryModel),
+		contextCfg:      opts.Context,
 	}, nil
 }
 
@@ -127,16 +137,21 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	for turn := 0; turn < a.maxTurns; turn++ {
+		prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages)
+		if err != nil {
+			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+		}
+		messages = prepared.messages
 		stream, err := a.provider.Chat(ctx, provider.Request{
 			Model:     a.model,
-			Messages:  cloneMessages(messages),
+			Messages:  cloneMessages(prepared.messages),
 			Tools:     tools,
 			Reasoning: cloneReasoning(a.reasoning),
 		})
 		if err != nil {
 			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 		}
-		consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream)
+		consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
 		closeErr := stream.Close()
 		if err != nil {
 			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
@@ -177,7 +192,7 @@ func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {
 	return &cp
 }
 
-func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, stream provider.Stream) (streamResult, error) {
+func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, stream provider.Stream, estimatedTokens int) (streamResult, error) {
 	var text strings.Builder
 	var blocks []message.ContentBlock
 	var calls []toolCall
@@ -209,6 +224,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			a.emitToolActivity(call, "queued", summarizeToolInput(call.Name, call.Input), "", false)
 		case provider.EventUsage:
 			if event.Usage != nil {
+				observeInputUsage(a.model, estimatedTokens, event.Usage.InputTokens)
 				if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
 					return rollout.Usage(sessionID, turn, event.Usage.InputTokens, event.Usage.OutputTokens)
 				}); err != nil {

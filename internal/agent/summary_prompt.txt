@@ -1,0 +1,11 @@
+Summarize the earlier conversation so the main coding agent can continue accurately.
+
+Preserve:
+- User goals, constraints, and explicit preferences.
+- Important facts, decisions, file paths, commands, errors, and test results.
+- Open tasks and any unresolved risks.
+
+Do not invent details. Keep the summary concise but complete enough to replace the earlier messages.
+
+Conversation:
+{{conversation}}

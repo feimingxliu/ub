@@ -342,6 +342,10 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
+	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	if err != nil {
+		return err
+	}
 	perm, err := permission.NewManager(permission.Options{Asker: autoAllowAsker{}, ApprovalAgent: approvalAgent})
 	if err != nil {
 		return err
@@ -353,13 +357,16 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	defer state.store.Close()
 
 	a, err := agent.New(agent.Options{
-		Provider:   p,
-		Tools:      reg,
-		Permission: perm,
-		Rollout:    state.rollout,
-		Model:      model,
-		Mode:       mode,
-		Reasoning:  chatReasoningConfig(cfg, providerName, providerCfg, model),
+		Provider:        p,
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         state.rollout,
+		Model:           model,
+		Mode:            mode,
+		Reasoning:       chatReasoningConfig(cfg, providerName, providerCfg, model),
+		SummaryProvider: summarySetup.Provider,
+		SummaryModel:    summarySetup.Model,
+		Context:         cfg.Context,
 	})
 	if err != nil {
 		return err

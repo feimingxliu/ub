@@ -127,6 +127,30 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 	}
 }
 
+func TestSummaryEventAndMessageFromEvent(t *testing.T) {
+	event, err := Summary("sess_summary", 4, "Earlier work summary.", 8, 6, 1200)
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if event.Type != TypeSummary {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeSummary)
+	}
+	var payload SummaryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.Text != "Earlier work summary." || payload.CompressedMessages != 8 || payload.KeptMessages != 6 || payload.EstimatedTokens != 1200 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if !ok || msg.Role != message.RoleSystem || msg.Text() != "Conversation summary:\nEarlier work summary." {
+		t.Fatalf("message = %#v, ok=%v", msg, ok)
+	}
+}
+
 func TestAppendVisibleAfterReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "ub.db")

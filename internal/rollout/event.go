@@ -21,6 +21,7 @@ const (
 	TypeUserMessage      Type = "user_message"
 	TypeAssistantMessage Type = "assistant_message"
 	TypeToolResult       Type = "tool_result"
+	TypeSummary          Type = "summary"
 	TypeUsage            Type = "usage"
 	TypeError            Type = "error"
 )
@@ -59,6 +60,14 @@ type ToolResultPayload struct {
 	Output    string            `json:"output"`
 	IsError   bool              `json:"is_error,omitempty"`
 	Files     []tool.FileChange `json:"files,omitempty"`
+}
+
+// SummaryPayload stores an automatic context summary.
+type SummaryPayload struct {
+	Text               string `json:"text"`
+	CompressedMessages int    `json:"compressed_messages,omitempty"`
+	KeptMessages       int    `json:"kept_messages,omitempty"`
+	EstimatedTokens    int    `json:"estimated_tokens,omitempty"`
 }
 
 // MarshalPayload marshals a typed payload into raw JSON.
@@ -116,6 +125,21 @@ func ToolResult(sessionID string, turn int, toolUseID, toolName string, result t
 	})
 }
 
+// Summary creates a summary event.
+func Summary(sessionID string, turn int, text string, compressedMessages, keptMessages, estimatedTokens int) (Event, error) {
+	return NewEvent(sessionID, turn, TypeSummary, SummaryPayload{
+		Text:               text,
+		CompressedMessages: compressedMessages,
+		KeptMessages:       keptMessages,
+		EstimatedTokens:    estimatedTokens,
+	})
+}
+
+// SummaryMessage converts summary text into the system message sent to providers.
+func SummaryMessage(text string) message.Message {
+	return message.Text(message.RoleSystem, "Conversation summary:\n"+text)
+}
+
 // MessageFromEvent converts persisted message-like rollout events to internal messages.
 func MessageFromEvent(event Event) (message.Message, bool, error) {
 	switch event.Type {
@@ -143,6 +167,15 @@ func MessageFromEvent(event Event) (message.Message, bool, error) {
 			return message.Message{}, false, fmt.Errorf("decode rollout tool_result event %s: %w", event.ID, err)
 		}
 		return message.New(message.RoleTool, message.ToolResultBlock(payload.ToolUseID, payload.Output, payload.IsError)), true, nil
+	case TypeSummary:
+		var payload SummaryPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return message.Message{}, false, fmt.Errorf("decode rollout summary event %s: %w", event.ID, err)
+		}
+		if payload.Text == "" {
+			return message.Message{}, false, nil
+		}
+		return SummaryMessage(payload.Text), true, nil
 	default:
 		return message.Message{}, false, nil
 	}
