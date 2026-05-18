@@ -15,6 +15,7 @@ import (
 	"github.com/feimingxliu/ub/internal/permission"
 	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
 	"github.com/feimingxliu/ub/internal/tui/slash"
+	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
 // Options configures the initial TUI shell.
@@ -59,6 +60,7 @@ type Model struct {
 	input          textinput.Model
 	messages       messageList
 	status         statusBar
+	styles         tuitheme.Styles
 	runner         Runner
 	permReqs       <-chan PermissionRequest
 	pending        *PermissionRequest
@@ -87,9 +89,14 @@ type Model struct {
 
 // NewModel creates the root TUI model.
 func NewModel(opts Options) Model {
+	styles := tuitheme.Default()
 	input := textinput.New()
 	input.Placeholder = "Type a message"
-	input.Prompt = "> "
+	input.Prompt = "› "
+	input.PromptStyle = styles.Input.Prompt
+	input.TextStyle = styles.Input.Text
+	input.PlaceholderStyle = styles.Input.Placeholder
+	input.Cursor.Style = styles.Input.Cursor
 	input.Width = defaultViewWidth - 2
 	input.Focus()
 	ctx := opts.Context
@@ -128,6 +135,7 @@ func NewModel(opts Options) Model {
 	m := Model{
 		input:          input,
 		messages:       newMessageList(),
+		styles:         styles,
 		runner:         opts.Runner,
 		permReqs:       opts.Permissions,
 		ctx:            ctx,
@@ -158,6 +166,13 @@ func (m Model) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case streamEventMsg:
+		return m.handleStreamEvent(msg)
+	case permissionRequestMsg:
+		return m.handlePermissionRequest(msg)
+	}
+
 	if m.pending != nil {
 		if mouse, ok := msg.(tea.MouseMsg); ok {
 			switch mouse.Type {
@@ -282,6 +297,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.MouseMsg:
 		switch msg.Type {
+		case tea.MouseLeft:
+			if m.toggleMessageAt(msg.X, msg.Y) {
+				return m, nil
+			}
 		case tea.MouseWheelUp:
 			m.scrollMessages(3)
 			return m, nil
@@ -380,30 +399,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.events = events
 				m.runID++
 				runID := m.runID
-				m.messages.appendOrUpdate(activityRole, thinkingActivityKey(runID), "Thinking...")
+				m.messages.startActivityGroup(activityGroupKey(runID), "Thinking...")
 				return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
 			}
 			return m, nil
 		}
-	case streamEventMsg:
-		if msg.runID != m.runID {
-			return m, nil
-		}
-		if !msg.ok {
-			m.running = false
-			m.status.state = statusIdle
-			m.cancel = nil
-			return m, nil
-		}
-		cmd := waitForEventFromUpdate(msg.event, &m)
-		return m, cmd
-	case permissionRequestMsg:
-		if !msg.ok {
-			return m, nil
-		}
-		m.pending = &msg.request
-		m.modal = permissiondialog.New(msg.request.Request)
-		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -411,12 +411,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
+	if msg.runID != m.runID {
+		return m, nil
+	}
+	if !msg.ok {
+		m.running = false
+		m.status.state = statusIdle
+		m.cancel = nil
+		m.pending = nil
+		return m, nil
+	}
+	cmd := waitForEventFromUpdate(msg.event, &m)
+	return m, cmd
+}
+
+func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea.Cmd) {
+	if !msg.ok {
+		return m, nil
+	}
+	m.pending = &msg.request
+	m.modal = permissiondialog.New(msg.request.Request)
+	return m, nil
+}
+
 // View implements tea.Model.
 func (m Model) View() string {
 	var b strings.Builder
 	width := contentWidth(m.width)
 	footer := m.footerView(width)
-	b.WriteString(m.messages.view(width, m.messageViewHeight(footer), m.clampedScroll()))
+	b.WriteString(m.messages.view(width, m.messageViewHeight(footer), m.clampedScroll(), m.styles))
 	b.WriteString("\n\n")
 	b.WriteString(footer)
 	return b.String()
@@ -444,12 +468,19 @@ func (m Model) footerView(width int) string {
 		b.WriteString(suggestions)
 		b.WriteByte('\n')
 	}
-	b.WriteString(m.status.view(width))
+	b.WriteString(m.status.view(width, m.styles))
 	if m.pending != nil {
 		b.WriteString("\n\n")
 		b.WriteString(m.modal.View())
 	}
 	return b.String()
+}
+
+func (m *Model) toggleMessageAt(x, y int) bool {
+	width := contentWidth(m.width)
+	footer := m.footerView(width)
+	height := m.messageViewHeight(footer)
+	return m.messages.toggleAt(width, height, m.clampedScroll(), x, y, m.styles)
 }
 
 // MessageTexts returns the rendered message text values for tests.
@@ -577,12 +608,13 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	switch event.Type {
 	case EventDeltaText:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.removePlaceholderActivityGroup(activityGroupKey(m.runID))
 		m.messages.appendAssistantDelta(event.Text)
 		m.status.state = statusStreaming
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventActivity:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		m.messages.appendOrUpdate(activityRole, activityEventKey(event), activityEventText(event))
+		m.messages.appendOrUpdateActivityInGroup(activityGroupKey(m.runID), event)
 		m.status.state = statusForActivity(event)
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallStart:
@@ -597,15 +629,22 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventPermission:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		m.messages.append(systemRole, permissionEventText(event))
+		m.messages.appendPermissionEvent(event)
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventDone:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		if m.messages.removePlaceholderActivityGroup(activityGroupKey(m.runID)) {
+			m.status.state = statusFinalizing
+			m.cancel = nil
+			return waitForEventWithTimeout(m.events, m.runID, m.timeout)
+		}
+		m.messages.finishActivityGroup(activityGroupKey(m.runID), "done")
 		m.status.state = statusFinalizing
 		m.cancel = nil
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventError:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.finishActivityGroup(activityGroupKey(m.runID), "failed")
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -666,6 +705,10 @@ func activityEventKey(event Event) string {
 
 func thinkingActivityKey(runID int) string {
 	return fmt.Sprintf("thinking:%d", runID)
+}
+
+func activityGroupKey(runID int) string {
+	return fmt.Sprintf("activity:%d", runID)
 }
 
 func toolActivityText(event Event) string {
@@ -965,7 +1008,7 @@ func (m Model) slashSuggestions(width int) string {
 	}
 	matches := slash.Match(value)
 	if len(matches) == 0 {
-		return truncateText("  no matching slash command", width)
+		return m.styles.Render(m.styles.Picker.Empty, truncateText("  no matching slash command", width))
 	}
 	selected := m.selectedSlashIndex(matches)
 	var b strings.Builder
@@ -977,7 +1020,12 @@ func (m Model) slashSuggestions(width int) string {
 		if i == selected {
 			marker = "> "
 		}
-		b.WriteString(truncateText(fmt.Sprintf("%s%-34s %s", marker, spec.Usage, spec.Description), width))
+		line := truncateText(fmt.Sprintf("%s%-34s %s", marker, spec.Usage, spec.Description), width)
+		if i == selected {
+			b.WriteString(m.styles.Render(m.styles.Picker.Selected, line))
+			continue
+		}
+		b.WriteString(m.styles.Render(m.styles.Picker.Item, line))
 	}
 	return b.String()
 }
@@ -986,21 +1034,21 @@ func (m Model) pickerView(width int) string {
 	if m.picker == nil {
 		return ""
 	}
-	return m.picker.view(width)
+	return m.picker.view(width, m.styles)
 }
 
 func (m Model) sessionPickerView(width int) string {
 	if m.sessions == nil {
 		return ""
 	}
-	return m.sessions.view(width)
+	return m.sessions.view(width, m.styles)
 }
 
 func (m Model) modelSuggestions(prefix string, width int) string {
-	return valueSuggestionsFrom(filterValueSuggestions(m.models, prefix), width, "model", m.slashIdx)
+	return valueSuggestionsFrom(filterValueSuggestions(m.models, prefix), width, "model", m.slashIdx, m.styles)
 }
 
-func valueSuggestionsFrom(values []string, width int, label string, selected int) string {
+func valueSuggestionsFrom(values []string, width int, label string, selected int, styles tuitheme.Styles) string {
 	var b strings.Builder
 	for i, value := range values {
 		if i > 0 {
@@ -1010,10 +1058,15 @@ func valueSuggestionsFrom(values []string, width int, label string, selected int
 		if i == selectedIndex(selected, len(values)) {
 			marker = "> "
 		}
-		b.WriteString(truncateText(marker+value, width))
+		line := truncateText(marker+value, width)
+		if i == selectedIndex(selected, len(values)) {
+			b.WriteString(styles.Render(styles.Picker.Selected, line))
+			continue
+		}
+		b.WriteString(styles.Render(styles.Picker.Item, line))
 	}
 	if len(values) == 0 {
-		return truncateText("  no matching "+label, width)
+		return styles.Render(styles.Picker.Empty, truncateText("  no matching "+label, width))
 	}
 	return b.String()
 }
@@ -1177,7 +1230,7 @@ func (m Model) slashValueSuggestions(width int) string {
 	if !ok {
 		return ""
 	}
-	return valueSuggestionsFrom(values, width, label, m.slashIdx)
+	return valueSuggestionsFrom(values, width, label, m.slashIdx, m.styles)
 }
 
 func (m Model) slashValueMatches() ([]string, string, string, bool) {

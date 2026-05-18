@@ -3,13 +3,13 @@ package permissiondialog
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui/diffview"
+	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
 // Model is a small, focused permission modal state.
@@ -93,57 +93,63 @@ func (m Model) SelectedDiffPath() string {
 	return m.Diff.SelectedPath()
 }
 
-// View renders the modal as plain text.
+// View renders the modal.
 func (m Model) View() string {
+	styles := tuitheme.Default()
 	req := m.Request
 	var b strings.Builder
-	b.WriteString("Permission required\n")
-	b.WriteString(fmt.Sprintf("tool: %s\n", fallback(req.Tool, "unknown")))
-	b.WriteString(fmt.Sprintf("risk: %s\n", fallback(string(req.Risk), "unknown")))
-	b.WriteString(fmt.Sprintf("mode: %s\n", fallback(string(req.Mode), "default")))
+	b.WriteString(styles.Render(styles.Modal.Title, "Permission required"))
+	b.WriteByte('\n')
+	b.WriteString(fieldLine(styles, "tool", fallback(req.Tool, "unknown")))
+	b.WriteString(fieldLine(styles, "risk", fallback(string(req.Risk), "unknown")))
+	b.WriteString(fieldLine(styles, "mode", fallback(string(req.Mode), "default")))
 	if req.Mode == execution.ModePlan && req.Risk == tool.RiskExec {
-		b.WriteString("Plan mode: command may still have side effects\n")
+		b.WriteString(styles.Render(styles.Modal.Warning, "Plan mode: command may still have side effects"))
+		b.WriteByte('\n')
 	}
 	if strings.TrimSpace(req.ApprovalReason) != "" {
-		b.WriteString("approval agent: ")
-		b.WriteString(req.ApprovalReason)
-		b.WriteByte('\n')
+		b.WriteString(fieldLine(styles, "approval agent", req.ApprovalReason))
 	}
 	if len(req.Args) > 0 {
-		b.WriteString("args: ")
-		b.WriteString(compactJSON(req.Args))
-		b.WriteByte('\n')
+		b.WriteString(fieldLine(styles, "args", compactJSON(req.Args)))
 	}
 	if req.Preview != nil {
 		if strings.TrimSpace(req.Preview.Summary) != "" {
-			b.WriteString("preview: ")
-			b.WriteString(req.Preview.Summary)
-			b.WriteByte('\n')
+			b.WriteString(fieldLine(styles, "preview", req.Preview.Summary))
 		}
 		if len(req.Preview.Files) > 0 {
 			if m.Expanded {
 				b.WriteString(m.Diff.View())
 				b.WriteByte('\n')
 			} else {
-				b.WriteString("press d to show diff\n")
+				b.WriteString(styles.Render(styles.Modal.Help, "press d to show diff"))
+				b.WriteByte('\n')
 			}
 		}
 	}
-	b.WriteString("choose an action (up/down, enter to confirm)\n")
+	b.WriteString(styles.Render(styles.Modal.Help, "choose an action (up/down, enter to confirm)"))
+	b.WriteByte('\n')
 	for i, option := range options {
 		marker := "  "
 		if i == m.selected {
 			marker = "> "
 		}
-		b.WriteString(marker)
-		b.WriteString(option.Label)
+		line := marker + option.Label
+		if i == m.selected {
+			b.WriteString(styles.Render(styles.Modal.Selected, line))
+		} else {
+			b.WriteString(styles.Render(styles.Modal.Option, line))
+		}
 		b.WriteByte('\n')
-		b.WriteString("    ")
-		b.WriteString(option.Description)
+		b.WriteString(styles.Render(styles.Modal.Help, "    "+option.Description))
 		b.WriteByte('\n')
 	}
-	b.WriteString("shortcuts: 1-5")
-	return b.String()
+	b.WriteString(styles.Render(styles.Modal.Help, "shortcuts: 1-5"))
+	return styles.Render(styles.Modal.Box, b.String())
+}
+
+func fieldLine(styles tuitheme.Styles, label, value string) string {
+	return styles.Render(styles.Modal.Value, label+": "+value) + "\n"
 }
 
 // SelectedDecision returns the currently highlighted decision.

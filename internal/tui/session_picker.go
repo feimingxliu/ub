@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
 type sessionPicker struct {
@@ -42,12 +44,12 @@ func (p *sessionPicker) previous() {
 	p.index = (p.index + len(p.sessions) - 1) % len(p.sessions)
 }
 
-func (p *sessionPicker) view(width int) string {
+func (p *sessionPicker) view(width int, styles tuitheme.Styles) string {
 	if p == nil || len(p.sessions) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("select session (enter switch, esc cancel)")
+	b.WriteString(styles.Render(styles.Picker.Title, "select session (enter switch, esc cancel)"))
 	for i, sess := range p.sessions {
 		b.WriteByte('\n')
 		marker := "  "
@@ -70,7 +72,12 @@ func (p *sessionPicker) view(width int) string {
 		if !sess.UpdatedAt.IsZero() {
 			updated = sess.UpdatedAt.Local().Format("2006-01-02 15:04")
 		}
-		b.WriteString(truncateText(fmt.Sprintf("%s%s %s  %s  %s  %s", marker, current, sess.ID, updated, model, title), width))
+		line := truncateText(fmt.Sprintf("%s%s %s  %s  %s  %s", marker, current, sess.ID, updated, model, title), width)
+		if i == p.index {
+			b.WriteString(styles.Render(styles.Picker.Selected, line))
+			continue
+		}
+		b.WriteString(styles.Render(styles.Picker.Item, line))
 	}
 	return b.String()
 }

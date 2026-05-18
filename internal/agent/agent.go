@@ -254,6 +254,7 @@ func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 		}
 		preview = &pv
 	}
+	a.emitToolActivity(call, "running", summarizeToolInput(call.Name, call.Input), "", false)
 	if a.permission != nil {
 		approvalObserved := false
 		result, err := a.permission.Ask(ctx, permission.Request{
@@ -283,7 +284,6 @@ func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 			return result
 		}
 	}
-	a.emitToolActivity(call, "running", summarizeToolInput(call.Name, call.Input), "", false)
 	result, err := t.Execute(ctx, call.Input)
 	if err != nil {
 		result := tool.Result{Content: err.Error(), IsError: true}

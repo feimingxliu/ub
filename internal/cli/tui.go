@@ -161,10 +161,10 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 }
 
 func effectiveTUIEventTimeout(timeout time.Duration) time.Duration {
-	if timeout > 0 {
-		return timeout
-	}
-	return 120 * time.Second
+	// Provider/tool timeouts are enforced in their own layers. The TUI event
+	// waiter must not turn normal waits for human approval or long-running
+	// tools into a synthetic fatal error.
+	return 0
 }
 
 func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- tui.Event) error {

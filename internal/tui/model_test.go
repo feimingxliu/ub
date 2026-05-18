@@ -9,10 +9,13 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
 func TestModelEchoesInputOnEnter(t *testing.T) {
@@ -32,7 +35,7 @@ func TestModelEchoesInputOnEnter(t *testing.T) {
 		t.Fatalf("input = %q, want empty", got)
 	}
 	view := model.View()
-	for _, want := range []string{"> hello", "model: fake/test", "mode: plan", "cwd: /work"} {
+	for _, want := range []string{"› hello", "model: fake/test", "mode: plan", "cwd: /work"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -168,6 +171,8 @@ func TestModelRendersActivityEvents(t *testing.T) {
 		{Type: EventDone},
 	}}
 	model := NewModel(Options{Runner: runner})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	model = assertModel(t, updated)
 	model = sendText(t, model, "inspect")
 
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -176,12 +181,27 @@ func TestModelRendersActivityEvents(t *testing.T) {
 
 	view := model.View()
 	for _, want := range []string{
-		"~ thinking: checking repository context",
-		"~ Read path=main.go",
-		"~ permission approval_agent allow bash: read-only command",
+		"tools: 1 done",
+		"permissions: 1",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	updated, cmd = model.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 2})
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view = model.View()
+	for _, want := range []string{
+		"checking repository context",
+		"Read path=main.go",
+		"permission approval_agent allow bash: read-only command",
+		"package main",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expanded view missing %q:\n%s", want, view)
 		}
 	}
 	if strings.Contains(view, "assistant:") || strings.Contains(view, "user:") {
@@ -212,8 +232,235 @@ func TestToolActivityUpdatesInPlace(t *testing.T) {
 	model = assertModel(t, updated)
 
 	got := model.MessageTexts()
-	if len(got) != 1 || got[0] != "Read path=main.go" {
+	if len(got) != 1 || got[0] != "tools: 1 done · last: Read path=main.go" {
 		t.Fatalf("messages = %#v, want single updated tool activity", got)
+	}
+}
+
+func TestActivityGroupSummaryShowsLatestActiveTools(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 2
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_read", ToolName: "read", Status: "done", Summary: "path=main.go", Content: "file content"},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_test", ToolName: "bash", Status: "running", Summary: "cmd=go test ./..."},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_grep", ToolName: "grep", Status: "queued", Summary: "pattern=TODO"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 2, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("activity event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	got := model.MessageTexts()
+	if len(got) != 1 {
+		t.Fatalf("messages = %#v, want one activity group", got)
+	}
+	for _, want := range []string{"1 running", "1 queued", "now: pattern=TODO, cmd=go test ./..."} {
+		if !strings.Contains(got[0], want) {
+			t.Fatalf("summary missing %q: %#v", want, got)
+		}
+	}
+	if strings.Contains(got[0], "path=main.go") {
+		t.Fatalf("summary should prioritize active tools over completed tools: %#v", got)
+	}
+}
+
+func TestMarkdownMessagesRenderReadableBlocks(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{{
+		Role: assistantRole,
+		Text: "# Plan\n\n- inspect repository\n- patch renderer\n\n```go\nfmt.Println(\"ok\")\n```",
+	}}})
+
+	view := model.View()
+	for _, want := range []string{"Plan", "inspect repository", "patch renderer", `fmt.Println("ok")`} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("markdown view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestPlainMessageRenderHasNoANSI(t *testing.T) {
+	list := newMessageList()
+	list.append(userRole, "# Title\n\n- item")
+
+	view := list.view(60, 20, 0, tuitheme.Plain())
+	if strings.Contains(view, "\x1b[") {
+		t.Fatalf("plain render contains ANSI:\n%q", view)
+	}
+	for _, want := range []string{"Title", "item"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("plain render missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestStyledMessageRenderContainsANSIAndSymbols(t *testing.T) {
+	oldProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	defer lipgloss.SetColorProfile(oldProfile)
+
+	model := NewModel(Options{Model: "fake/test"})
+	model = sendText(t, model, "hello")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+
+	view := model.View()
+	if !strings.Contains(view, "\x1b[") || !strings.Contains(view, "› ") || !strings.Contains(view, "hello") {
+		t.Fatalf("styled render missing ANSI or role symbol:\n%q", view)
+	}
+}
+
+func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
+	model := NewModel(Options{})
+	model = sendText(t, model, "first")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "second")
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+
+	model.messages.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_1",
+		ToolName:     "read",
+		Status:       "done",
+		Summary:      "path=main.go",
+		Content:      "file content",
+	})
+	if strings.Contains(model.View(), "file content") {
+		t.Fatalf("tool detail should default collapsed:\n%s", model.View())
+	}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("up returned unexpected command")
+	}
+	if got := model.InputValue(); got != "second" {
+		t.Fatalf("up input = %q, want second", got)
+	}
+	if strings.Contains(model.View(), "└ file content") {
+		t.Fatalf("up should not expand activity:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("down returned unexpected command")
+	}
+	if got := model.InputValue(); got != "" {
+		t.Fatalf("down input = %q, want empty draft", got)
+	}
+	if strings.Contains(model.View(), "└ file content") {
+		t.Fatalf("down should not expand activity:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("enter returned unexpected command")
+	}
+	if strings.Contains(model.View(), "└ file content") {
+		t.Fatalf("enter should not expand activity:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("space returned unexpected command")
+	}
+	if strings.Contains(model.View(), "└ file content") {
+		t.Fatalf("space should not expand activity:\n%s", model.View())
+	}
+}
+
+func TestMouseTogglesActivityBlocks(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		Summary:      "checking context",
+		Content:      "full reasoning summary",
+	})
+	if strings.Contains(model.View(), "full reasoning summary") {
+		t.Fatalf("thinking detail should default collapsed:\n%s", model.View())
+	}
+
+	updated, cmd := model.Update(tea.MouseMsg{
+		Type:   tea.MouseLeft,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		Y:      0,
+	})
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "└ full reasoning summary") {
+		t.Fatalf("mouse click did not expand activity:\n%s", model.View())
+	}
+}
+
+func TestCollapsedActivityBlocksShareRowsAndMouseTargetsChip(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_read",
+		ToolName:     "read",
+		Status:       "done",
+		Summary:      "path=main.go",
+		Content:      "read detail",
+	})
+	model.messages.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_grep",
+		ToolName:     "grep",
+		Status:       "done",
+		Summary:      "pattern=TODO",
+		Content:      "grep detail",
+	})
+
+	view := model.messages.view(80, 20, 0, tuitheme.Plain())
+	lines := strings.Split(view, "\n")
+	if len(lines) != 1 {
+		t.Fatalf("collapsed activity blocks should share a row:\n%s", view)
+	}
+	if !strings.Contains(lines[0], "Read path=main.go") || !strings.Contains(lines[0], "Searched pattern=TODO") {
+		t.Fatalf("compact row missing tool chips:\n%s", view)
+	}
+
+	x := strings.Index(lines[0], "Searched")
+	if x < 0 {
+		t.Fatalf("second chip not found:\n%s", view)
+	}
+	updated, cmd := model.Update(tea.MouseMsg{
+		Type:   tea.MouseLeft,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      x,
+		Y:      0,
+	})
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	rendered := model.View()
+	if !strings.Contains(rendered, "└ grep detail") {
+		t.Fatalf("mouse click did not expand second activity:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "└ read detail") {
+		t.Fatalf("mouse click expanded wrong activity:\n%s", rendered)
 	}
 }
 
@@ -537,6 +784,8 @@ func TestSlashModelRejectsUnsupportedCandidate(t *testing.T) {
 
 func TestPermissionEventRendersInConversation(t *testing.T) {
 	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
 	model.running = true
 	model.runID = 4
 	model.events = make(chan Event)
@@ -557,8 +806,17 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 		t.Fatal("permission event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "approval_agent") || !strings.Contains(got[0], "read-only command") {
-		t.Fatalf("messages = %#v, want approval result", got)
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "permissions: 1" {
+		t.Fatalf("messages = %#v, want permission summary", got)
+	}
+	updated, cmd = model.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 0})
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := model.View()
+	if !strings.Contains(view, "approval_agent") || !strings.Contains(view, "read-only command") {
+		t.Fatalf("expanded permission view missing detail:\n%s", view)
 	}
 }
 
@@ -634,6 +892,77 @@ func TestShiftTabCyclesModeDuringPermission(t *testing.T) {
 	case decision := <-response:
 		t.Fatalf("mode switch resolved permission unexpectedly: %q", decision)
 	default:
+	}
+}
+
+func TestStreamEventsContinueDuringPermissionModeSwitch(t *testing.T) {
+	response := make(chan permission.Decision, 1)
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner, ExecutionMode: "plan"})
+	model.running = true
+	model.status.state = statusTool
+	model.runID = 9
+	model.events = make(chan Event)
+
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 9,
+		ok:    true,
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "queued", Summary: "cmd=go test ./..."},
+	})
+	if cmd == nil {
+		t.Fatal("queued event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+
+	updated, _ = model.Update(permissionRequestMsg{request: PermissionRequest{
+		Request:  permission.Request{Tool: "bash", Risk: tool.RiskExec, Mode: execution.ModePlan},
+		Response: response,
+	}, ok: true})
+	model = assertModel(t, updated)
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if cmd != nil {
+		t.Fatalf("shift+tab returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.mode != "auto" || !strings.Contains(model.View(), "mode: auto") {
+		t.Fatalf("permission mode switch failed: runner=%q view=\n%s", runner.mode, model.View())
+	}
+
+	updated, cmd = model.Update(streamEventMsg{
+		runID: 9,
+		ok:    true,
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "done", Summary: "cmd=go test ./...", Content: "completed"},
+	})
+	if cmd == nil {
+		t.Fatal("done event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "done") || strings.Contains(got[0], "queued") {
+		t.Fatalf("messages = %#v, want done summary while permission is open", got)
+	}
+	if model.pending == nil {
+		t.Fatal("stream event should not close pending permission modal")
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		msg := cmd()
+		if _, ok := msg.(permissionRequestMsg); ok {
+			t.Fatalf("unexpected immediate permission request: %#v", msg)
+		}
+	}
+	select {
+	case got := <-response:
+		if got != permission.DecisionAllow {
+			t.Fatalf("decision = %q, want allow once", got)
+		}
+	default:
+		t.Fatal("approval did not resolve permission")
+	}
+	if model.pending != nil {
+		t.Fatalf("permission modal still pending after approval")
 	}
 }
 
@@ -941,10 +1270,10 @@ func TestViewWrapsLongMessagesToWidth(t *testing.T) {
 	model = assertModel(t, updated)
 
 	view := model.View()
-	if strings.Contains(view, "> abcdefghijklmnopqrstuvwxyz") {
+	if strings.Contains(view, "› abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("long line was not wrapped:\n%s", view)
 	}
-	if !strings.Contains(view, "> abcdefghijklmnopqrstuv") || !strings.Contains(view, "  wxyz") {
+	if !strings.Contains(view, "› abcdefghijklmnopqrstuv") || !strings.Contains(view, "  wxyz") {
 		t.Fatalf("wrapped message missing expected fragments:\n%s", view)
 	}
 }
@@ -965,10 +1294,10 @@ func TestViewWrapsLongActivityAndKeepsRedaction(t *testing.T) {
 	if strings.Contains(view, "secret-token") {
 		t.Fatalf("view leaked secret:\n%s", view)
 	}
-	if !strings.Contains(view, "[redacted]") || !strings.Contains(view, "~ Writing command...") {
+	if !strings.Contains(view, "[redacted]") || !strings.Contains(view, "• Writing command...") {
 		t.Fatalf("activity view missing summary:\n%s", view)
 	}
-	if strings.Contains(view, "~ Writing command... cmd=[redacted], cwd=/workspace, detail=abcdefghijklmnopqrstuvwxyz") {
+	if strings.Contains(view, "• Writing command... cmd=[redacted], cwd=/workspace, detail=abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("activity line was not wrapped:\n%s", view)
 	}
 }

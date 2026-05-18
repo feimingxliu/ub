@@ -9,6 +9,7 @@ import (
 	"github.com/alecthomas/chroma/v2/styles"
 
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
 // Model renders and navigates a set of file diffs.
@@ -65,22 +66,21 @@ func (m Model) SelectedPath() string {
 
 // View renders the selected file diff.
 func (m Model) View() string {
+	theme := tuitheme.Default()
 	if len(m.files) == 0 {
-		return "No diff preview"
+		return theme.Render(theme.Diff.Help, "No diff preview")
 	}
 	file := m.files[m.selected]
 	var b strings.Builder
-	b.WriteString(m.tabs())
+	b.WriteString(theme.Render(theme.Diff.Tabs, m.tabs()))
 	b.WriteByte('\n')
-	b.WriteString(file.Path)
+	b.WriteString(theme.Render(theme.Diff.Path, file.Path))
 	if strings.TrimSpace(file.Kind) != "" {
-		b.WriteString(" (")
-		b.WriteString(file.Kind)
-		b.WriteByte(')')
+		b.WriteString(theme.Render(theme.Diff.Kind, " ("+file.Kind+")"))
 	}
 	b.WriteByte('\n')
 	if strings.TrimSpace(file.UnifiedDiff) == "" {
-		b.WriteString("(empty diff)")
+		b.WriteString(theme.Render(theme.Diff.Help, "(empty diff)"))
 		return b.String()
 	}
 	b.WriteString(highlight(file.Path, file.UnifiedDiff))

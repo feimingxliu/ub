@@ -2,6 +2,8 @@ package tui
 
 import (
 	"strings"
+
+	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
 type modelPicker struct {
@@ -50,19 +52,24 @@ func (p *modelPicker) previous() {
 	p.index = (p.index + len(p.models) - 1) % len(p.models)
 }
 
-func (p *modelPicker) view(width int) string {
+func (p *modelPicker) view(width int, styles tuitheme.Styles) string {
 	if p == nil || len(p.models) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(p.title)
+	b.WriteString(styles.Render(styles.Picker.Title, p.title))
 	for i, model := range p.models {
 		b.WriteByte('\n')
 		marker := "  "
 		if i == p.index {
 			marker = "> "
 		}
-		b.WriteString(truncateText(marker+model, width))
+		line := truncateText(marker+model, width)
+		if i == p.index {
+			b.WriteString(styles.Render(styles.Picker.Selected, line))
+			continue
+		}
+		b.WriteString(styles.Render(styles.Picker.Item, line))
 	}
 	return b.String()
 }
