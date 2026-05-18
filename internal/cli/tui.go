@@ -103,6 +103,7 @@ type tuiAgentRunner struct {
 	summaryModel         string
 	summaryUsesCurrent   bool
 	contextCfg           config.ContextConfig
+	tools                *toolRuntime
 	mode                 execution.Mode
 	modeMu               sync.RWMutex
 	eventTimeout         time.Duration
@@ -147,6 +148,11 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
+	tools, err := newToolRuntime(cmd.Context(), cfg)
+	if err != nil {
+		return nil, err
+	}
+	writeToolWarnings(cmd.ErrOrStderr(), tools.Warnings)
 	return &tuiAgentRunner{
 		cmd:                  cmd,
 		provider:             p,
@@ -166,6 +172,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		summaryModel:         summarySetup.Model,
 		summaryUsesCurrent:   summarySetup.UsesCurrentModel,
 		contextCfg:           cfg.Context,
+		tools:                tools,
 		mode:                 mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
@@ -230,13 +237,9 @@ func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) e
 }
 
 func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) (*agent.Agent, error) {
-	reg, err := localToolRegistry()
-	if err != nil {
-		return nil, err
-	}
 	a, err := agent.New(agent.Options{
 		Provider:         r.provider,
-		Tools:            reg,
+		Tools:            r.tools.Registry,
 		Permission:       r.permission,
 		Rollout:          r.state.rollout,
 		Model:            r.model,
@@ -258,11 +261,24 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 }
 
 func (r *tuiAgentRunner) Close() error {
-	if r == nil || r.state == nil || r.closedStore {
+	if r == nil {
 		return nil
 	}
+	var err error
+	if r.tools != nil {
+		if closeErr := r.tools.Close(); closeErr != nil {
+			err = closeErr
+		}
+		r.tools = nil
+	}
+	if r.state == nil || r.closedStore {
+		return err
+	}
 	r.closedStore = true
-	return r.state.store.Close()
+	if closeErr := r.state.store.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func (r *tuiAgentRunner) ListSessions(ctx context.Context) ([]tui.SessionInfo, error) {

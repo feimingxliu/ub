@@ -16,6 +16,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
 	logx "github.com/feimingxliu/ub/internal/log"
+	lspruntime "github.com/feimingxliu/ub/internal/lsp"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -29,6 +30,8 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tool/fs"
 	"github.com/feimingxliu/ub/internal/tool/job"
+	lsptool "github.com/feimingxliu/ub/internal/tool/lsp"
+	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
 	"github.com/goccy/go-yaml"
@@ -334,10 +337,12 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
-	reg, err := localToolRegistry()
+	tools, err := newToolRuntime(cmd.Context(), cfg)
 	if err != nil {
 		return err
 	}
+	defer tools.Close()
+	writeToolWarnings(cmd.ErrOrStderr(), tools.Warnings)
 	approvalAgent, err := newApprovalAgentFromConfig(cmd.Context(), cfg, providerName, model)
 	if err != nil {
 		return err
@@ -358,7 +363,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 
 	a, err := agent.New(agent.Options{
 		Provider:         p,
-		Tools:            reg,
+		Tools:            tools.Registry,
 		Permission:       perm,
 		Rollout:          state.rollout,
 		Model:            model,
@@ -388,14 +393,43 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	return finishChatSession(cmd, state, prompt, model)
 }
 
-func localToolRegistry() (*tool.Registry, error) {
+type toolRuntime struct {
+	Registry *tool.Registry
+	Warnings []error
+	close    func() error
+}
+
+func (r *toolRuntime) Close() error {
+	if r == nil || r.close == nil {
+		return nil
+	}
+	return r.close()
+}
+
+func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("get cwd: %w", err)
 	}
 	reg := tool.New()
+	var warnings []error
+	var closers []func() error
+	var lspManager *lspruntime.Manager
+	if cfg != nil && len(cfg.LSPServers) > 0 {
+		var lspWarnings []error
+		lspManager, lspWarnings = lspruntime.StartConfigured(ctx, cwd, cfg.LSPServers)
+		warnings = append(warnings, lspWarnings...)
+		if lspManager != nil {
+			closers = append(closers, lspManager.Close)
+		}
+	}
+	if err := fs.RegisterWithNotifier(reg, cwd, lspManager); err != nil {
+		return nil, err
+	}
+	if err := lsptool.Register(reg, lspManager); err != nil {
+		return nil, err
+	}
 	for _, register := range []func(*tool.Registry, string) error{
-		fs.Register,
 		search.Register,
 		shell.Register,
 		job.Register,
@@ -404,7 +438,33 @@ func localToolRegistry() (*tool.Registry, error) {
 			return nil, err
 		}
 	}
-	return reg, nil
+	runtime := &toolRuntime{
+		Registry: reg,
+		Warnings: warnings,
+		close: func() error {
+			var err error
+			for i := len(closers) - 1; i >= 0; i-- {
+				if closeErr := closers[i](); closeErr != nil && err == nil {
+					err = closeErr
+				}
+			}
+			return err
+		},
+	}
+	if cfg != nil {
+		closeMCP, warnings := mcptool.RegisterConfigured(ctx, reg, cfg.MCPServers)
+		closers = append(closers, closeMCP)
+		runtime.Warnings = append(runtime.Warnings, warnings...)
+	}
+	return runtime, nil
+}
+
+func writeToolWarnings(w io.Writer, warnings []error) {
+	for _, warning := range warnings {
+		if warning != nil {
+			fmt.Fprintf(w, "warning: %v\n", warning)
+		}
+	}
 }
 
 type autoAllowAsker struct{}

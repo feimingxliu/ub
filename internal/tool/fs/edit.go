@@ -26,14 +26,20 @@ type editArgs struct {
 }
 
 type editTool struct {
-	root   string
-	schema *jsonschema.Schema
+	root     string
+	notifier ChangeNotifier
+	schema   *jsonschema.Schema
 }
 
 func newEditTool(root string) *editTool {
+	return newEditToolWithNotifier(root, nil)
+}
+
+func newEditToolWithNotifier(root string, notifier ChangeNotifier) *editTool {
 	return &editTool{
-		root:   root,
-		schema: jsonschema.Reflect(&editArgs{}),
+		root:     root,
+		notifier: notifier,
+		schema:   jsonschema.Reflect(&editArgs{}),
 	}
 }
 
@@ -104,7 +110,7 @@ func (t *editTool) Preview(_ context.Context, raw json.RawMessage) (tool.Preview
 	}, nil
 }
 
-func (t *editTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
+func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	a, abs, err := t.parseAndResolve(raw)
 	if err != nil {
 		return tool.Result{}, err
@@ -131,8 +137,9 @@ func (t *editTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result,
 	if err := os.WriteFile(abs, []byte(after), 0o644); err != nil {
 		return tool.Result{}, fmt.Errorf("edit: write %s: %w", rel, err)
 	}
+	notifySuffix := notifyChanged(ctx, t.notifier, abs)
 	return tool.Result{
-		Content: fmt.Sprintf("edited %s (%d replacement(s))", rel, count),
+		Content: fmt.Sprintf("edited %s (%d replacement(s))%s", rel, count, notifySuffix),
 		Files: []tool.FileChange{{
 			Path: rel,
 			Kind: tool.KindModify,

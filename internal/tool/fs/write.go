@@ -20,14 +20,20 @@ type writeArgs struct {
 }
 
 type writeTool struct {
-	root   string
-	schema *jsonschema.Schema
+	root     string
+	notifier ChangeNotifier
+	schema   *jsonschema.Schema
 }
 
 func newWriteTool(root string) *writeTool {
+	return newWriteToolWithNotifier(root, nil)
+}
+
+func newWriteToolWithNotifier(root string, notifier ChangeNotifier) *writeTool {
 	return &writeTool{
-		root:   root,
-		schema: jsonschema.Reflect(&writeArgs{}),
+		root:     root,
+		notifier: notifier,
+		schema:   jsonschema.Reflect(&writeArgs{}),
 	}
 }
 
@@ -77,7 +83,7 @@ func (t *writeTool) Preview(_ context.Context, raw json.RawMessage) (tool.Previe
 	}, nil
 }
 
-func (t *writeTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
+func (t *writeTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	a, abs, err := t.parseAndResolve(raw)
 	if err != nil {
 		return tool.Result{}, err
@@ -95,8 +101,9 @@ func (t *writeTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result
 	if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
 		return tool.Result{}, fmt.Errorf("write: %s: %w", rel, err)
 	}
+	notifySuffix := notifyChanged(ctx, t.notifier, abs)
 	return tool.Result{
-		Content: fmt.Sprintf("wrote %s (%d bytes)", rel, len(a.Content)),
+		Content: fmt.Sprintf("wrote %s (%d bytes)%s", rel, len(a.Content), notifySuffix),
 		Files: []tool.FileChange{{
 			Path: rel,
 			Kind: kind,
