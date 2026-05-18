@@ -1014,6 +1014,9 @@ func (m *Model) updateContextUsage(event Event) {
 	if event.ContextUsedTokens <= 0 {
 		return
 	}
+	if m.status.contextUsedTokens > 0 && event.ContextUsedTokens < m.status.contextUsedTokens && !event.ContextReset {
+		return
+	}
 	m.status.contextUsedTokens = event.ContextUsedTokens
 	m.status.contextMaxTokens = event.ContextMaxTokens
 	m.status.contextRatio = event.ContextRatio

@@ -706,7 +706,7 @@ func TestAgentManualCompactSummarizesHistory(t *testing.T) {
 		t.Fatalf("events missing summary: %#v", writer.events)
 	}
 	contextEvent, ok := firstContextEvent(events)
-	if !ok || contextEvent.ContextMaxTokens != 1000 || contextEvent.ContextUsedTokens <= 0 || contextEvent.ContextRatio <= 0 {
+	if !ok || contextEvent.ContextMaxTokens != 1000 || contextEvent.ContextUsedTokens <= 0 || contextEvent.ContextRatio <= 0 || !contextEvent.ContextReset {
 		t.Fatalf("context event = %#v, ok=%v", contextEvent, ok)
 	}
 	if events[len(events)-1].Type != EventDone {

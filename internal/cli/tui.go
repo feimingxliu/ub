@@ -574,6 +574,7 @@ func convertAgentEvent(event agent.Event) tui.Event {
 			ContextUsedTokens: event.ContextUsedTokens,
 			ContextMaxTokens:  event.ContextMaxTokens,
 			ContextRatio:      event.ContextRatio,
+			ContextReset:      event.ContextReset,
 		}
 	case agent.EventToolCallStart:
 		return tui.Event{Type: tui.EventToolCallStart, ToolName: event.ToolName}

@@ -51,7 +51,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 	requestMessages := cloneMessages(messages)
 	estimated := contextmgr.Estimate(requestMessages, a.model)
 	if !a.shouldSummarize(estimated) {
-		a.emitContextUsage(estimated)
+		a.emitContextUsage(estimated, false)
 		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
 	}
 	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated)
@@ -59,7 +59,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 		return preparedMessages{}, err
 	}
 	if !ok {
-		a.emitContextUsage(estimated)
+		a.emitContextUsage(estimated, false)
 		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
 	}
 	a.emit(Event{
@@ -68,7 +68,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 		Status:       "done",
 		Summary:      fmt.Sprintf("summarized %d earlier messages", compacted.compactedMessages),
 	})
-	a.emitContextUsage(compacted.estimatedTokens)
+	a.emitContextUsage(compacted.estimatedTokens, true)
 	return preparedMessages{
 		messages:        compacted.messages,
 		estimatedTokens: compacted.estimatedTokens,
@@ -88,7 +88,7 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 		return CompactResult{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 	}
 	if !ok {
-		a.emitContextUsage(estimated)
+		a.emitContextUsage(estimated, false)
 		reason := "nothing to compact yet"
 		a.emit(Event{
 			Type:         EventActivity,
@@ -110,7 +110,7 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 		Status:       "done",
 		Summary:      fmt.Sprintf("compacted %d earlier messages", compacted.compactedMessages),
 	})
-	a.emitContextUsage(compacted.estimatedTokens)
+	a.emitContextUsage(compacted.estimatedTokens, true)
 	a.emit(Event{Type: EventDone, Text: compacted.summary})
 	return CompactResult{
 		Messages:          compacted.messages,
@@ -231,7 +231,7 @@ func observeInputUsage(model string, estimated, actual int) {
 	contextmgr.ObserveUsage(model, estimated, actual)
 }
 
-func (a *Agent) emitContextUsage(used int) {
+func (a *Agent) emitContextUsage(used int, reset bool) {
 	if used <= 0 {
 		return
 	}
@@ -245,6 +245,7 @@ func (a *Agent) emitContextUsage(used int) {
 		ContextUsedTokens: used,
 		ContextMaxTokens:  maxContext,
 		ContextRatio:      ratio,
+		ContextReset:      reset,
 	})
 }
 

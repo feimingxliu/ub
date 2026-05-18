@@ -198,7 +198,7 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 	requestMessages := cloneMessages(messages)
 	requestMessages = append(requestMessages, message.Text(message.RoleSystem, maxTurnsFinalInstruction))
 	estimated := contextmgr.Estimate(requestMessages, a.model)
-	a.emitContextUsage(estimated)
+	a.emitContextUsage(estimated, false)
 	stream, err := a.provider.Chat(ctx, provider.Request{
 		Model:     a.model,
 		Messages:  cloneMessages(requestMessages),

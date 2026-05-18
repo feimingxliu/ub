@@ -814,10 +814,10 @@ func activityGroupTitle(entries []message) string {
 	if permissionCount > 0 {
 		parts = append(parts, fmt.Sprintf("permissions: %d", permissionCount))
 	}
+	if strings.TrimSpace(notice) != "" {
+		parts = append(parts, notice)
+	}
 	if len(parts) == 0 {
-		if strings.TrimSpace(notice) != "" {
-			return notice
-		}
 		return "Activity"
 	}
 	return strings.Join(parts, "  ")

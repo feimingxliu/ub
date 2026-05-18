@@ -44,6 +44,7 @@ type Event struct {
 	ContextUsedTokens int
 	ContextMaxTokens  int
 	ContextRatio      float64
+	ContextReset      bool
 }
 
 // EventSink receives Agent runtime events in emission order.

@@ -115,6 +115,26 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 	updated, _ = model.Update(streamEventMsg{
 		runID: 1,
 		ok:    true,
+		event: Event{Type: EventContext, ContextUsedTokens: 800, ContextMaxTokens: 8000, ContextRatio: 0.10},
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "ctx: 1200/8000 15%") {
+		t.Fatalf("context usage should not shrink without reset:\n%s", model.View())
+	}
+
+	updated, _ = model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventContext, ContextUsedTokens: 800, ContextMaxTokens: 8000, ContextRatio: 0.10, ContextReset: true},
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "ctx: 800/8000 10%") {
+		t.Fatalf("context usage should shrink after reset:\n%s", model.View())
+	}
+
+	updated, _ = model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
 		event: Event{Type: EventContext, ContextUsedTokens: 1200},
 	})
 	model = assertModel(t, updated)
@@ -407,6 +427,29 @@ func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
 	}
 	if strings.Contains(model.View(), "└ file content") {
 		t.Fatalf("space should not expand activity:\n%s", model.View())
+	}
+}
+
+func TestActivityGroupSummaryShowsNoticeWithTools(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 3
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_read", ToolName: "read", Status: "done", Summary: "path=main.go", Content: "file content"},
+		{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "summarized 8 earlier messages"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 3, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("activity event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	got := model.MessageTexts()
+	if len(got) != 1 || !strings.Contains(got[0], "summarized 8 earlier messages") {
+		t.Fatalf("messages = %#v, want notice included with tool summary", got)
 	}
 }
 
