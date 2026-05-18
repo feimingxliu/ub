@@ -517,6 +517,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 	case "help":
 		m.messages.append(systemRole, slashHelp())
 		return m, nil
+	case "compact":
+		return m.startCompact()
 	case "quit", "exit":
 		if m.cancel != nil {
 			m.cancel()
@@ -605,7 +607,10 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 }
 
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
+	m.updateContextUsage(event)
 	switch event.Type {
+	case EventContext:
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventDeltaText:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.removePlaceholderActivityGroup(activityGroupKey(m.runID))
@@ -868,6 +873,24 @@ func nextExecutionMode(current string) string {
 	return string(execution.ModeWork)
 }
 
+func (m Model) startCompact() (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(CompactRunner)
+	if !ok {
+		m.messages.append(systemRole, "compact is unavailable in this runner")
+		return m, nil
+	}
+	m.running = true
+	m.status.state = statusThinking
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancel = cancel
+	events := make(chan Event, 64)
+	m.events = events
+	m.runID++
+	runID := m.runID
+	m.messages.startActivityGroup(activityGroupKey(runID), "Compacting...")
+	return m, tea.Batch(runCompact(ctx, runner, events), waitForEventWithTimeout(events, runID, m.timeout))
+}
+
 func (m *Model) setModel(model string) error {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -981,7 +1004,19 @@ func (m Model) switchSession(id string) (tea.Model, tea.Cmd) {
 		m.refreshEffortFromRunner()
 	}
 	m.status.turn = state.Turn
+	m.status.contextUsedTokens = 0
+	m.status.contextMaxTokens = 0
+	m.status.contextRatio = 0
 	return m, nil
+}
+
+func (m *Model) updateContextUsage(event Event) {
+	if event.ContextUsedTokens <= 0 {
+		return
+	}
+	m.status.contextUsedTokens = event.ContextUsedTokens
+	m.status.contextMaxTokens = event.ContextMaxTokens
+	m.status.contextRatio = event.ContextRatio
 }
 
 func slashHelp() string {

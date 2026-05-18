@@ -123,6 +123,8 @@
 - F-CTX-2：当前 turn + history token 超过 `context_window * threshold`（默认 0.8）时，自动触发 summary
 - F-CTX-3：Summary 由小模型（配置可指定）生成；摘要替换早期消息，保留最近 N 轮原文
 - F-CTX-4：Summary 事件本身写入 rollout，下次恢复 session 可从 summary 起步
+- F-CTX-5：TUI 可通过 `/compact` 主动触发一次 summary/压缩；手动触发复用同一 summary 策略，但不依赖自动阈值
+- F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量；provider 声明最大上下文时同时上报 context 百分比
 
 ### 4.8 配置
 
@@ -149,11 +151,11 @@
 
 ### 4.11 TUI
 
-- F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / effort / mode / context % / cwd）
+- F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / effort / mode / context used/max/% / cwd）
 - F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式（包括运行中和审批弹窗中）；Esc 中断当前操作而不是退出；聊天区支持 PageUp/PageDown 和鼠标滚轮滚动历史输出
 - F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
-- F-TUI-5：命令：`/model`、`/approval-model`、`/effort`、`/mode`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级
+- F-TUI-5：命令：`/model`、`/approval-model`、`/effort`、`/mode`、`/compact`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/compact` 主动压缩当前 session 上下文；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级
 - F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
 - F-TUI-7：TUI MUST 在聊天区以紧凑活动行展示 thinking、工具排队/运行/完成/失败、审批结果和错误摘要；同一个 tool call 的状态更新 MUST 合并到同一行，避免 queued/running/done 刷屏；活动行参与宽度换行与聊天区滚动，且不得展示完整工具 JSON 或 secret 值
 

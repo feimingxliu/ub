@@ -6,6 +6,7 @@ type EventType string
 const (
 	EventDeltaText     EventType = "delta_text"
 	EventActivity      EventType = "activity"
+	EventContext       EventType = "context"
 	EventToolCallStart EventType = "tool_call_start"
 	EventToolCallEnd   EventType = "tool_call_end"
 	EventPermission    EventType = "permission"
@@ -39,6 +40,10 @@ type Event struct {
 	Allowed      bool
 	IsError      bool
 	Err          error
+
+	ContextUsedTokens int
+	ContextMaxTokens  int
+	ContextRatio      float64
 }
 
 // EventSink receives Agent runtime events in emission order.

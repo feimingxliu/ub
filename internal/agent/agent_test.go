@@ -152,28 +152,33 @@ func TestAgentEmitsRuntimeEvents(t *testing.T) {
 		gotTypes = append(gotTypes, event.Type)
 	}
 	wantTypes := []EventType{
+		EventContext,
 		EventDeltaText,
 		EventDeltaText,
 		EventActivity,
 		EventActivity,
 		EventActivity,
+		EventContext,
 		EventDeltaText,
 		EventDone,
 	}
 	if !reflect.DeepEqual(gotTypes, wantTypes) {
 		t.Fatalf("event types = %#v, want %#v", gotTypes, wantTypes)
 	}
-	if events[0].Text != "he" || events[1].Text != "llo" || events[5].Text != "done" {
+	if events[0].ContextUsedTokens <= 0 {
+		t.Fatalf("context event = %#v, want used tokens", events[0])
+	}
+	if events[1].Text != "he" || events[2].Text != "llo" || events[7].Text != "done" {
 		t.Fatalf("delta events = %#v", events)
 	}
-	if events[2].ActivityKind != ActivityTool || events[2].ToolName != "read" || events[2].Status != "queued" || !strings.Contains(events[2].Summary, "path=main.go") {
-		t.Fatalf("queued event = %#v", events[2])
+	if events[3].ActivityKind != ActivityTool || events[3].ToolName != "read" || events[3].Status != "queued" || !strings.Contains(events[3].Summary, "path=main.go") {
+		t.Fatalf("queued event = %#v", events[3])
 	}
-	if events[3].ActivityKind != ActivityTool || events[3].Status != "running" {
-		t.Fatalf("running event = %#v", events[3])
+	if events[4].ActivityKind != ActivityTool || events[4].Status != "running" {
+		t.Fatalf("running event = %#v", events[4])
 	}
-	if events[4].ActivityKind != ActivityTool || events[4].Status != "done" || events[4].IsError {
-		t.Fatalf("done event = %#v", events[4])
+	if events[5].ActivityKind != ActivityTool || events[5].Status != "done" || events[5].IsError {
+		t.Fatalf("done event = %#v", events[5])
 	}
 }
 
@@ -208,8 +213,8 @@ func TestAgentReasoningActivityDoesNotEnterAssistantText(t *testing.T) {
 	if got := res.Messages[len(res.Messages)-1].Text(); got != "answer" {
 		t.Fatalf("assistant text = %q, want answer", got)
 	}
-	if len(events) < 2 || events[0].Type != EventActivity || events[0].ActivityKind != ActivityThinking || events[0].Summary != "checking context" {
-		t.Fatalf("events = %#v, want thinking activity first", events)
+	if !hasActivity(events, ActivityThinking, "checking context") {
+		t.Fatalf("events = %#v, want thinking activity", events)
 	}
 }
 
@@ -595,6 +600,112 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 	}
 }
 
+func TestAgentManualCompactSummarizesHistory(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{caps: provider.Caps{MaxContextTokens: 1000}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("manual summary"), fake.Done()},
+	}}
+	writer := &recordingRollout{}
+	var events []Event
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	result, err := a.Compact(context.Background(), CompactRequest{SessionID: "sess_manual", Turn: 9, History: turnHistory(5)})
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if result.Noop {
+		t.Fatalf("Compact returned noop")
+	}
+	if len(summary.requests) != 1 || summary.requests[0].Model != "small" {
+		t.Fatalf("summary requests = %#v", summary.requests)
+	}
+	if len(result.Messages) == 0 || result.Messages[0].Role != message.RoleSystem || !strings.Contains(result.Messages[0].Text(), "manual summary") {
+		t.Fatalf("result first message = %#v", result.Messages)
+	}
+	if containsText(result.Messages, "user 1") || containsText(result.Messages, "user 2") {
+		t.Fatalf("result kept compacted messages: %#v", result.Messages)
+	}
+	for _, want := range []string{"user 3", "user 4", "user 5"} {
+		if !containsText(result.Messages, want) {
+			t.Fatalf("result missing %q: %#v", want, result.Messages)
+		}
+	}
+	if !hasEventType(writer.events, rollout.TypeSummary) {
+		t.Fatalf("events missing summary: %#v", writer.events)
+	}
+	contextEvent, ok := firstContextEvent(events)
+	if !ok || contextEvent.ContextMaxTokens != 1000 || contextEvent.ContextUsedTokens <= 0 || contextEvent.ContextRatio <= 0 {
+		t.Fatalf("context event = %#v, ok=%v", contextEvent, ok)
+	}
+	if events[len(events)-1].Type != EventDone {
+		t.Fatalf("last event = %#v, want done", events[len(events)-1])
+	}
+}
+
+func TestAgentManualCompactNoopsWithoutPrefix(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("summary should not run")},
+	}}
+	writer := &recordingRollout{}
+	var events []Event
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{KeepRecentTurns: 3},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	history := turnHistory(2)
+	result, err := a.Compact(context.Background(), CompactRequest{SessionID: "sess_noop", Turn: 2, History: history})
+	if err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+	if !result.Noop || !strings.Contains(result.Reason, "nothing to compact") {
+		t.Fatalf("result = %#v, want noop reason", result)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+	}
+	if !reflect.DeepEqual(result.Messages, history) {
+		t.Fatalf("messages changed: %#v", result.Messages)
+	}
+	if hasEventType(writer.events, rollout.TypeSummary) {
+		t.Fatalf("unexpected summary event: %#v", writer.events)
+	}
+	if !hasActivity(events, ActivityNotice, "nothing to compact") {
+		t.Fatalf("events missing noop notice: %#v", events)
+	}
+}
+
 func TestAgentDoesNotSummarizeBelowThreshold(t *testing.T) {
 	reg := tool.New()
 	perm := newPermissionManager(t, nil)
@@ -738,6 +849,24 @@ func hasEventType(events []rollout.Event, typ rollout.Type) bool {
 		}
 	}
 	return false
+}
+
+func hasActivity(events []Event, kind ActivityKind, text string) bool {
+	for _, event := range events {
+		if event.Type == EventActivity && event.ActivityKind == kind && strings.Contains(event.Summary, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstContextEvent(events []Event) (Event, bool) {
+	for _, event := range events {
+		if event.Type == EventContext {
+			return event, true
+		}
+	}
+	return Event{}, false
 }
 
 func newTestAgent(t *testing.T, p provider.Provider, reg *tool.Registry, perm *permission.Manager, mode execution.Mode) *Agent {

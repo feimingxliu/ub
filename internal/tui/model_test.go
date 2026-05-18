@@ -93,6 +93,37 @@ func TestModelStreamsRunnerEvents(t *testing.T) {
 	}
 }
 
+func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	model.running = true
+	model.runID = 1
+	model.events = make(chan Event)
+
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventContext, ContextUsedTokens: 1200, ContextMaxTokens: 8000, ContextRatio: 0.15},
+	})
+	if cmd == nil {
+		t.Fatal("context event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "ctx: 1200/8000 15%") {
+		t.Fatalf("view missing context usage:\n%s", model.View())
+	}
+
+	updated, _ = model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventContext, ContextUsedTokens: 1200},
+	})
+	model = assertModel(t, updated)
+	view := model.View()
+	if !strings.Contains(view, "ctx: 1200") || strings.Contains(view, "ctx: 1200/") {
+		t.Fatalf("view should show used tokens without unknown max:\n%s", view)
+	}
+}
+
 func TestModelDoneFinalizesUntilRunnerCloses(t *testing.T) {
 	events := make(chan Event)
 	model := NewModel(Options{Model: "fake/test"})
@@ -567,6 +598,53 @@ func TestSlashHelpDoesNotCallRunner(t *testing.T) {
 	}
 	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "/model [model]") {
 		t.Fatalf("messages = %#v, want help message", got)
+	}
+}
+
+func TestSlashCompactRunsCompactRunner(t *testing.T) {
+	runner := &scriptedRunner{compactEvents: []Event{
+		{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "compacted 4 earlier messages"},
+		{Type: EventContext, ContextUsedTokens: 900, ContextMaxTokens: 3000, ContextRatio: 0.3},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/compact")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("slash compact returned nil command")
+	}
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	if runner.compactCalls != 1 {
+		t.Fatalf("compact calls = %d, want 1", runner.compactCalls)
+	}
+	if runner.calls != 0 || len(runner.prompts) != 0 {
+		t.Fatalf("prompt runner should not be called: calls=%d prompts=%v", runner.calls, runner.prompts)
+	}
+	view := model.View()
+	if !strings.Contains(view, "compacted 4 earlier messages") || !strings.Contains(view, "ctx: 900/3000 30%") {
+		t.Fatalf("view missing compact result:\n%s", view)
+	}
+}
+
+func TestSlashCompactUnavailable(t *testing.T) {
+	runner := &promptOnlyRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/compact")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash compact returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	if runner.calls != 0 {
+		t.Fatalf("prompt runner calls = %d, want 0", runner.calls)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "compact is unavailable") {
+		t.Fatalf("messages = %#v", got)
 	}
 }
 
@@ -1432,7 +1510,9 @@ func TestStreamWaitTimeoutCancelsRun(t *testing.T) {
 
 type scriptedRunner struct {
 	events           []Event
+	compactEvents    []Event
 	calls            int
+	compactCalls     int
 	prompts          []string
 	model            string
 	models           []string
@@ -1450,6 +1530,14 @@ func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Eve
 	r.calls++
 	r.prompts = append(r.prompts, prompt)
 	for _, event := range r.events {
+		events <- event
+	}
+	return nil
+}
+
+func (r *scriptedRunner) Compact(_ context.Context, events chan<- Event) error {
+	r.compactCalls++
+	for _, event := range r.compactEvents {
 		events <- event
 	}
 	return nil
@@ -1515,6 +1603,15 @@ func (r *scriptedRunner) SwitchSession(_ context.Context, id string) (SessionSta
 
 func (r *scriptedRunner) CurrentSessionID() string {
 	return r.currentSessionID
+}
+
+type promptOnlyRunner struct {
+	calls int
+}
+
+func (r *promptOnlyRunner) Run(_ context.Context, _ string, _ chan<- Event) error {
+	r.calls++
+	return nil
 }
 
 func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {

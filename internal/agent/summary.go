@@ -29,36 +29,128 @@ type preparedMessages struct {
 	estimatedTokens int
 }
 
+// CompactRequest is one manual context compact request.
+type CompactRequest struct {
+	SessionID string
+	Turn      int
+	History   []message.Message
+}
+
+// CompactResult reports the result of a manual context compact request.
+type CompactResult struct {
+	Messages          []message.Message
+	Summary           string
+	CompactedMessages int
+	KeptMessages      int
+	EstimatedTokens   int
+	Noop              bool
+	Reason            string
+}
+
 func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message) (preparedMessages, error) {
 	requestMessages := cloneMessages(messages)
 	estimated := contextmgr.Estimate(requestMessages, a.model)
 	if !a.shouldSummarize(estimated) {
+		a.emitContextUsage(estimated)
 		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
 	}
-	prefix, suffix, ok := splitSummaryWindow(requestMessages, effectiveKeepRecentTurns(a.contextCfg))
-	if !ok {
-		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
-	}
-	summary, err := a.generateSummary(ctx, prefix)
+	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated)
 	if err != nil {
 		return preparedMessages{}, err
 	}
-	requestMessages = append([]message.Message{rollout.SummaryMessage(summary)}, suffix...)
-	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
-		return rollout.Summary(sessionID, turn, summary, len(prefix), len(suffix), estimated)
-	}); err != nil {
-		return preparedMessages{}, err
+	if !ok {
+		a.emitContextUsage(estimated)
+		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
 	}
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityNotice,
 		Status:       "done",
-		Summary:      fmt.Sprintf("summarized %d earlier messages", len(prefix)),
+		Summary:      fmt.Sprintf("summarized %d earlier messages", compacted.compactedMessages),
 	})
+	a.emitContextUsage(compacted.estimatedTokens)
 	return preparedMessages{
-		messages:        requestMessages,
-		estimatedTokens: contextmgr.Estimate(requestMessages, a.model),
+		messages:        compacted.messages,
+		estimatedTokens: compacted.estimatedTokens,
 	}, nil
+}
+
+// Compact manually summarizes earlier history without checking the automatic
+// trigger threshold.
+func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult, error) {
+	if req.Turn <= 0 {
+		req.Turn = 1
+	}
+	messages := cloneMessages(req.History)
+	estimated := contextmgr.Estimate(messages, a.model)
+	compacted, ok, err := a.compactMessages(ctx, req.SessionID, req.Turn, messages, estimated)
+	if err != nil {
+		return CompactResult{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+	}
+	if !ok {
+		a.emitContextUsage(estimated)
+		reason := "nothing to compact yet"
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityNotice,
+			Status:       "done",
+			Summary:      reason,
+		})
+		a.emit(Event{Type: EventDone, Text: reason})
+		return CompactResult{
+			Messages:        messages,
+			EstimatedTokens: estimated,
+			Noop:            true,
+			Reason:          reason,
+		}, nil
+	}
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Status:       "done",
+		Summary:      fmt.Sprintf("compacted %d earlier messages", compacted.compactedMessages),
+	})
+	a.emitContextUsage(compacted.estimatedTokens)
+	a.emit(Event{Type: EventDone, Text: compacted.summary})
+	return CompactResult{
+		Messages:          compacted.messages,
+		Summary:           compacted.summary,
+		CompactedMessages: compacted.compactedMessages,
+		KeptMessages:      compacted.keptMessages,
+		EstimatedTokens:   compacted.estimatedTokens,
+	}, nil
+}
+
+type compactedMessages struct {
+	messages          []message.Message
+	summary           string
+	compactedMessages int
+	keptMessages      int
+	estimatedTokens   int
+}
+
+func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int) (compactedMessages, bool, error) {
+	prefix, suffix, ok := splitSummaryWindow(messages, effectiveKeepRecentTurns(a.contextCfg))
+	if !ok {
+		return compactedMessages{}, false, nil
+	}
+	summary, err := a.generateSummary(ctx, prefix)
+	if err != nil {
+		return compactedMessages{}, false, err
+	}
+	compacted := append([]message.Message{rollout.SummaryMessage(summary)}, suffix...)
+	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
+		return rollout.Summary(sessionID, turn, summary, len(prefix), len(suffix), estimated)
+	}); err != nil {
+		return compactedMessages{}, false, err
+	}
+	return compactedMessages{
+		messages:          compacted,
+		summary:           summary,
+		compactedMessages: len(prefix),
+		keptMessages:      len(suffix),
+		estimatedTokens:   contextmgr.Estimate(compacted, a.model),
+	}, true, nil
 }
 
 func (a *Agent) shouldSummarize(estimated int) bool {
@@ -137,6 +229,23 @@ func observeInputUsage(model string, estimated, actual int) {
 		return
 	}
 	contextmgr.ObserveUsage(model, estimated, actual)
+}
+
+func (a *Agent) emitContextUsage(used int) {
+	if used <= 0 {
+		return
+	}
+	maxContext := a.provider.Caps().MaxContextTokens
+	ratio := 0.0
+	if maxContext > 0 {
+		ratio = float64(used) / float64(maxContext)
+	}
+	a.emit(Event{
+		Type:              EventContext,
+		ContextUsedTokens: used,
+		ContextMaxTokens:  maxContext,
+		ContextRatio:      ratio,
+	})
 }
 
 func splitSummaryWindow(messages []message.Message, keepRecentTurns int) ([]message.Message, []message.Message, bool) {

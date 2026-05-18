@@ -614,6 +614,12 @@ func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) (
 		if err != nil {
 			return err
 		}
+		if event.Type == rollout.TypeSummary {
+			if ok {
+				history = []message.Message{msg}
+			}
+			return nil
+		}
 		if ok {
 			history = append(history, msg)
 		}

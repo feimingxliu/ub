@@ -560,8 +560,9 @@
   - 触发：用 small_model 跑 `summary` prompt 模板（embed template）
   - 替换早期 N-3 轮为单条 system 摘要，保留最近 3 轮
   - rollout 写一条 `Summary` 事件
-- **Out of Scope**：用户手动 `/summarize`、摘要重组策略
-- **验证**：单测：构造超长历史 → 触发 → 历史被替换为 summary + 最近 3 轮；rollout 多一条 Summary 事件
+  - TUI 状态栏展示 context used/max/%；`/compact` 可主动触发同一压缩逻辑
+- **Out of Scope**：摘要重组策略
+- **验证**：单测：构造超长历史 → 触发 → 历史被替换为 summary + 最近 3 轮；rollout 多一条 Summary 事件；`/compact` 主动压缩并刷新状态栏 context 用量
 
 ---
 

@@ -11,13 +11,16 @@ import (
 )
 
 type statusBar struct {
-	model         string
-	effort        string
-	executionMode string
-	cwd           string
-	turn          int
-	state         string
-	width         int
+	model             string
+	effort            string
+	executionMode     string
+	cwd               string
+	turn              int
+	state             string
+	width             int
+	contextUsedTokens int
+	contextMaxTokens  int
+	contextRatio      float64
 }
 
 const (
@@ -35,8 +38,11 @@ func (s statusBar) view(width int, styles tuitheme.Styles) string {
 		{label: "model", value: defaultString(s.model, "unknown")},
 		{label: "effort", value: effort},
 		{label: "mode", value: defaultString(s.executionMode, "work"), semantic: "mode"},
-		{label: "state", value: state, semantic: "state"},
 	}
+	if segment, ok := s.contextSegment(); ok {
+		segments = append(segments, segment)
+	}
+	segments = append(segments, statusSegment{label: "state", value: state, semantic: "state"})
 	if s.turn > 0 {
 		segments = append(segments, statusSegment{label: "turn", value: fmt.Sprintf("%d", s.turn)})
 	}
@@ -70,6 +76,8 @@ func fitStatusSegments(segments []statusSegment, width int) []statusSegment {
 			out[i].value = shrinkStatusValue(out[i].value, max(8, width/4))
 		case "model":
 			out[i].value = shrinkStatusValue(out[i].value, max(10, width/3))
+		case "ctx":
+			out[i].value = shrinkStatusValue(out[i].value, max(8, width/6))
 		}
 	}
 	if statusSegmentsWidth(out) <= width {
@@ -82,6 +90,21 @@ func fitStatusSegments(segments []statusSegment, width int) []statusSegment {
 		}
 	}
 	return out
+}
+
+func (s statusBar) contextSegment() (statusSegment, bool) {
+	if s.contextUsedTokens <= 0 {
+		return statusSegment{}, false
+	}
+	value := fmt.Sprintf("%d", s.contextUsedTokens)
+	if s.contextMaxTokens > 0 {
+		percent := int(s.contextRatio*100 + 0.5)
+		if percent == 0 && s.contextUsedTokens > 0 {
+			percent = int(float64(s.contextUsedTokens)/float64(s.contextMaxTokens)*100 + 0.5)
+		}
+		value = fmt.Sprintf("%d/%d %d%%", s.contextUsedTokens, s.contextMaxTokens, percent)
+	}
+	return statusSegment{label: "ctx", value: value}, true
 }
 
 func statusSegmentsWidth(segments []statusSegment) int {

@@ -722,10 +722,19 @@ func removePlaceholderThinkingEntry(entries []message) []message {
 		return entries
 	}
 	entry := entries[0]
-	if entry.kind == thinkingMessage && strings.TrimSpace(entry.title) == "Thinking..." {
+	if entry.kind == thinkingMessage && isPlaceholderActivityTitle(entry.title) {
 		return nil
 	}
 	return entries
+}
+
+func isPlaceholderActivityTitle(title string) bool {
+	switch strings.TrimSpace(title) {
+	case "Thinking...", "Compacting...":
+		return true
+	default:
+		return false
+	}
 }
 
 func activityEntryKey(event Event) string {
@@ -751,11 +760,16 @@ func activityGroupTitle(entries []message) string {
 	toolCount, queued, running, done, failed := 0, 0, 0, 0, 0
 	permissionCount := 0
 	thinking := ""
+	notice := ""
 	for _, entry := range entries {
 		switch entry.kind {
 		case thinkingMessage:
 			if thinking == "" {
 				thinking = strings.TrimPrefix(defaultString(entry.title, entry.text), "thinking: ")
+			}
+		case noticeMessage:
+			if notice == "" {
+				notice = defaultString(entry.title, entry.text)
 			}
 		case permissionMessage:
 			permissionCount++
@@ -801,6 +815,9 @@ func activityGroupTitle(entries []message) string {
 		parts = append(parts, fmt.Sprintf("permissions: %d", permissionCount))
 	}
 	if len(parts) == 0 {
+		if strings.TrimSpace(notice) != "" {
+			return notice
+		}
 		return "Activity"
 	}
 	return strings.Join(parts, "  ")

@@ -13,6 +13,11 @@ type Runner interface {
 	Run(ctx context.Context, prompt string, events chan<- Event) error
 }
 
+// CompactRunner optionally lets slash commands compact the current session.
+type CompactRunner interface {
+	Compact(ctx context.Context, events chan<- Event) error
+}
+
 // ControlRunner optionally lets slash commands update future runs.
 type ControlRunner interface {
 	SetModel(model string) error
@@ -71,6 +76,7 @@ type EventType string
 const (
 	EventDeltaText     EventType = "delta_text"
 	EventActivity      EventType = "activity"
+	EventContext       EventType = "context"
 	EventToolCallStart EventType = "tool_call_start"
 	EventToolCallEnd   EventType = "tool_call_end"
 	EventPermission    EventType = "permission"
@@ -94,6 +100,10 @@ type Event struct {
 	Allowed      bool
 	IsError      bool
 	Err          error
+
+	ContextUsedTokens int
+	ContextMaxTokens  int
+	ContextRatio      float64
 }
 
 type streamEventMsg struct {
@@ -132,6 +142,16 @@ func runPrompt(ctx context.Context, runner Runner, prompt string, events chan<- 
 	return func() tea.Msg {
 		defer close(events)
 		if err := runner.Run(ctx, prompt, events); err != nil {
+			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+		}
+		return nil
+	}
+}
+
+func runCompact(ctx context.Context, runner CompactRunner, events chan<- Event) tea.Cmd {
+	return func() tea.Msg {
+		defer close(events)
+		if err := runner.Compact(ctx, events); err != nil {
 			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
 		}
 		return nil

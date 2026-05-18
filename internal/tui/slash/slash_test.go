@@ -22,6 +22,16 @@ func TestParseExit(t *testing.T) {
 	}
 }
 
+func TestParseCompact(t *testing.T) {
+	cmd, err := Parse("/compact")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "compact" || len(cmd.Args) != 0 {
+		t.Fatalf("command = %#v, want compact", cmd)
+	}
+}
+
 func TestParseApprovalModel(t *testing.T) {
 	cmd, err := Parse("/approval-model fake/reviewer")
 	if err != nil {

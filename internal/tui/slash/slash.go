@@ -26,6 +26,7 @@ var specs = []Spec{
 	{Name: "effort", Usage: "/effort [effort]", Description: "show or switch reasoning effort for the current model"},
 	{Name: "approval-model", Usage: "/approval-model [model]", Description: "show or switch the auto approval model"},
 	{Name: "mode", Usage: "/mode <work|plan|auto>", Description: "switch execution mode"},
+	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
 	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},
 	{Name: "help", Usage: "/help", Description: "show slash command help"},

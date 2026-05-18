@@ -268,6 +268,11 @@ type ProviderConfig struct {
 - Anthropic 映射为 `thinking` budget，`none` 不发送 thinking，非 `none` 时自动保证 budget 小于 `max_tokens`
 - TUI 通过 `/effort` 列出和切换当前模型支持的等级，并在状态栏展示当前值
 
+**上下文压缩与状态栏**：
+- Agent 每次发起 provider 请求前估算请求消息 token，并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏以紧凑 `ctx` 段展示最近一次用量
+- 自动 summary 按 `context.trigger_ratio` 触发；TUI 的 `/compact` 可主动触发同一 summary 逻辑，保留最近 `context.keep_recent_turns` 个 user turn
+- 读取 rollout 历史时遇到 `Summary` 事件即从该 summary message 重新开始构造上下文，避免恢复 session 后重新带上已压缩旧消息
+
 **重要的内部消息表示**：
 不要直接复用 anthropic / openai 的请求类型。在 `internal/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`、`ToolCalls[]`、`ToolResults[]`），各 provider 各自转换。理由：避免被某家 SDK 锁定。
 

@@ -187,9 +187,52 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		}
 		r.state = state
 	}
-	reg, err := localToolRegistry()
+	a, err := r.newAgent(ctx, events)
 	if err != nil {
 		return err
+	}
+	result, err := a.Run(ctx, agent.Request{
+		SessionID: r.state.sessionID,
+		Turn:      r.state.nextTurn,
+		History:   r.state.history,
+		Prompt:    prompt,
+	})
+	if err != nil {
+		_ = finishChatSession(r.cmd, r.state, prompt, r.model)
+		return err
+	}
+	r.state.history = result.Messages
+	r.state.nextTurn++
+	return finishChatSession(r.cmd, r.state, prompt, r.model)
+}
+
+func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) error {
+	if r.state == nil {
+		return fmt.Errorf("compact requires an active session")
+	}
+	a, err := r.newAgent(ctx, events)
+	if err != nil {
+		return err
+	}
+	result, err := a.Compact(ctx, agent.CompactRequest{
+		SessionID: r.state.sessionID,
+		Turn:      r.state.nextTurn,
+		History:   r.state.history,
+	})
+	if err != nil {
+		_ = finishChatSession(r.cmd, r.state, "", r.model)
+		return err
+	}
+	if !result.Noop {
+		r.state.history = result.Messages
+	}
+	return finishChatSession(r.cmd, r.state, "", r.model)
+}
+
+func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) (*agent.Agent, error) {
+	reg, err := localToolRegistry()
+	if err != nil {
+		return nil, err
 	}
 	a, err := agent.New(agent.Options{
 		Provider:        r.provider,
@@ -208,21 +251,9 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		},
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	result, err := a.Run(ctx, agent.Request{
-		SessionID: r.state.sessionID,
-		Turn:      r.state.nextTurn,
-		History:   r.state.history,
-		Prompt:    prompt,
-	})
-	if err != nil {
-		_ = finishChatSession(r.cmd, r.state, prompt, r.model)
-		return err
-	}
-	r.state.history = result.Messages
-	r.state.nextTurn++
-	return finishChatSession(r.cmd, r.state, prompt, r.model)
+	return a, nil
 }
 
 func (r *tuiAgentRunner) Close() error {
@@ -536,6 +567,13 @@ func convertAgentEvent(event agent.Event) tui.Event {
 			Reason:       event.Reason,
 			Allowed:      event.Allowed,
 			IsError:      event.IsError,
+		}
+	case agent.EventContext:
+		return tui.Event{
+			Type:              tui.EventContext,
+			ContextUsedTokens: event.ContextUsedTokens,
+			ContextMaxTokens:  event.ContextMaxTokens,
+			ContextRatio:      event.ContextRatio,
 		}
 	case agent.EventToolCallStart:
 		return tui.Event{Type: tui.EventToolCallStart, ToolName: event.ToolName}
