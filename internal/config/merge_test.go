@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/feimingxliu/ub/internal/reasoning"
 )
@@ -65,6 +66,7 @@ func TestMergeScalarsMapsAndSlices(t *testing.T) {
 }
 
 func TestMergeDefaults(t *testing.T) {
+	cleanupEnabled := false
 	got := Merge(Defaults(), &Config{
 		TUI:           TUIConfig{Theme: "light"},
 		ExecutionMode: ModePlan,
@@ -78,6 +80,18 @@ func TestMergeDefaults(t *testing.T) {
 		Context: ContextConfig{
 			TriggerRatio:    0.9,
 			KeepRecentTurns: 5,
+		},
+		Cleanup: CleanupConfig{
+			Enabled:  &cleanupEnabled,
+			Interval: 12 * time.Hour,
+			Sessions: CleanupSessionsConfig{
+				MaxAge:                7 * 24 * time.Hour,
+				MinRecentPerWorkspace: 3,
+			},
+			Logs: CleanupLogsConfig{
+				MaxSizeMB:  1,
+				MaxBackups: 2,
+			},
 		},
 		Permissions: PermissionConfig{AutoAllowWrite: true},
 	})
@@ -99,6 +113,16 @@ func TestMergeDefaults(t *testing.T) {
 	}
 	if got.Context.TriggerRatio != 0.9 || got.Context.KeepRecentTurns != 5 {
 		t.Fatalf("context = %#v", got.Context)
+	}
+	if got.Cleanup.CleanupEnabled() {
+		t.Fatalf("cleanup enabled = true, want false")
+	}
+	if got.Cleanup.Interval != 12*time.Hour ||
+		got.Cleanup.Sessions.MaxAge != 7*24*time.Hour ||
+		got.Cleanup.Sessions.MinRecentPerWorkspace != 3 ||
+		got.Cleanup.Logs.MaxSizeMB != 1 ||
+		got.Cleanup.Logs.MaxBackups != 2 {
+		t.Fatalf("cleanup = %#v", got.Cleanup)
 	}
 	if !got.Permissions.AutoAllowSafe || !got.Permissions.AutoAllowWrite {
 		t.Fatalf("permissions = %#v", got.Permissions)

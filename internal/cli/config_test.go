@@ -32,6 +32,9 @@ func TestConfigShowPrintsDefaultYAML(t *testing.T) {
 	if _, ok := decoded["context"]; !ok {
 		t.Fatalf("stdout missing context section:\n%s", out.String())
 	}
+	if _, ok := decoded["cleanup"]; !ok {
+		t.Fatalf("stdout missing cleanup section:\n%s", out.String())
+	}
 }
 
 func TestConfigShowRedactsSecrets(t *testing.T) {

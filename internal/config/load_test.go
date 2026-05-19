@@ -25,6 +25,14 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 	if cfg.Context.TriggerRatio != 0.8 || cfg.Context.KeepRecentTurns != 3 || cfg.TUI.Theme == "" {
 		t.Fatalf("defaults not applied: %#v", cfg)
 	}
+	if !cfg.Cleanup.CleanupEnabled() ||
+		cfg.Cleanup.Interval.String() != "24h0m0s" ||
+		cfg.Cleanup.Sessions.MaxAge.String() != "720h0m0s" ||
+		cfg.Cleanup.Sessions.MinRecentPerWorkspace != 20 ||
+		cfg.Cleanup.Logs.MaxSizeMB != 10 ||
+		cfg.Cleanup.Logs.MaxBackups != 5 {
+		t.Fatalf("cleanup defaults not applied: %#v", cfg.Cleanup)
+	}
 }
 
 func TestLoadFromDirsMergesGlobalAndLocal(t *testing.T) {
@@ -146,6 +154,43 @@ providers:
 	}
 }
 
+func TestLoadFromDirsParsesCleanupConfig(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `cleanup:
+  enabled: false
+  interval: 12h
+  sessions:
+    max_age: 240h
+    min_recent_per_workspace: 7
+  logs:
+    max_size_mb: 25
+    max_backups: 9
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Cleanup.CleanupEnabled() {
+		t.Fatalf("cleanup enabled = true, want false")
+	}
+	if cfg.Cleanup.Interval.String() != "12h0m0s" {
+		t.Fatalf("cleanup interval = %s", cfg.Cleanup.Interval)
+	}
+	if cfg.Cleanup.Sessions.MaxAge.String() != "240h0m0s" {
+		t.Fatalf("cleanup max age = %s", cfg.Cleanup.Sessions.MaxAge)
+	}
+	if cfg.Cleanup.Sessions.MinRecentPerWorkspace != 7 {
+		t.Fatalf("cleanup min recent = %d", cfg.Cleanup.Sessions.MinRecentPerWorkspace)
+	}
+	if cfg.Cleanup.Logs.MaxSizeMB != 25 || cfg.Cleanup.Logs.MaxBackups != 9 {
+		t.Fatalf("cleanup logs = %#v", cfg.Cleanup.Logs)
+	}
+}
+
 func TestLoadFromDirsParsesProfilesWithoutSelectingThem(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")
@@ -181,6 +226,8 @@ func TestLoadFromDirsAppliesSelectedProfile(t *testing.T) {
 			"    default_model: fake/dev\n"+
 			"    default_provider: fake\n"+
 			"    execution_mode: plan\n"+
+			"    cleanup:\n"+
+			"      interval: 6h\n"+
 			"    providers:\n"+
 			"      fake:\n"+
 			"        type: fake\n"+
@@ -201,6 +248,9 @@ func TestLoadFromDirsAppliesSelectedProfile(t *testing.T) {
 	}
 	if cfg.ExecutionMode != ModePlan {
 		t.Fatalf("ExecutionMode = %q", cfg.ExecutionMode)
+	}
+	if cfg.Cleanup.Interval.String() != "6h0m0s" {
+		t.Fatalf("profile cleanup interval = %s", cfg.Cleanup.Interval)
 	}
 	if got := cfg.Providers["fake"].Script[0].Text; got != "dev" {
 		t.Fatalf("profile provider replacement failed: %q", got)

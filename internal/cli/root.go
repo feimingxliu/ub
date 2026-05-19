@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/feimingxliu/ub/internal/execution"
 	logx "github.com/feimingxliu/ub/internal/log"
 	lspruntime "github.com/feimingxliu/ub/internal/lsp"
+	"github.com/feimingxliu/ub/internal/maintenance"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -62,7 +64,8 @@ func runWithFactory(args []string, stdout, stderr io.Writer, cmdFactory func() *
 		}
 	}()
 
-	logger, cleanup, err := logx.SetupFromEnv(stderr)
+	startupCfg := configForProcessStartup(args)
+	logger, cleanup, err := logx.SetupFromEnvWithRotation(stderr, logRotationOptions(startupCfg))
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
@@ -141,6 +144,53 @@ type runtimeOptions struct {
 	dev     bool
 	mode    string
 	resume  string
+}
+
+func configForProcessStartup(args []string) *config.Config {
+	cfg, _, err := config.LoadWithOptions(preloadRootOptions(args))
+	if err != nil {
+		return config.Defaults()
+	}
+	return cfg
+}
+
+func preloadRootOptions(args []string) config.LoadOptions {
+	var opts config.LoadOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--profile" && i+1 < len(args):
+			opts.Profile = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--profile="):
+			opts.Profile = strings.TrimPrefix(arg, "--profile=")
+		case arg == "--dev":
+			opts.Dev = true
+		case strings.HasPrefix(arg, "--dev="):
+			if v, err := strconv.ParseBool(strings.TrimPrefix(arg, "--dev=")); err == nil {
+				opts.Dev = v
+			}
+		}
+	}
+	return opts
+}
+
+func logRotationOptions(cfg *config.Config) logx.RotationOptions {
+	if cfg == nil {
+		cfg = config.Defaults()
+	}
+	if !cfg.Cleanup.CleanupEnabled() {
+		return logx.RotationOptions{}
+	}
+	maxSizeBytes := int64(cfg.Cleanup.Logs.MaxSizeMB) * 1024 * 1024
+	return logx.RotationOptions{
+		MaxSizeBytes: maxSizeBytes,
+		MaxBackups:   cfg.Cleanup.Logs.MaxBackups,
+	}
+}
+
+func runStartupMaintenance(cmd *cobra.Command, cfg *config.Config) {
+	maintenance.RunStartup(cmd.Context(), cfg)
 }
 
 func newRunCmd() *cobra.Command {
@@ -317,6 +367,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
+	runStartupMaintenance(cmd, cfg)
 	providerName, model, err := selectChatProvider(cfg, providerFlag, modelFlag)
 	if err != nil {
 		return err
@@ -488,6 +539,9 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 	cfg, _, err := loadConfigForCommand(cmd)
 	if err != nil {
 		return err
+	}
+	if strings.TrimSpace(opts.SessionID) == "" {
+		runStartupMaintenance(cmd, cfg)
 	}
 	providerName, model, err := selectChatProvider(cfg, providerFlag, modelFlag)
 	if err != nil {

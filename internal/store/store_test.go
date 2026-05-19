@@ -212,6 +212,107 @@ func TestDeleteWorkspaceSessionsCascadesEvents(t *testing.T) {
 	}
 }
 
+func TestPruneSessionsDeletesOldOutsideRecentRetention(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
+	defer st.Close()
+
+	now := time.UnixMilli(1_800_000_000_000).UTC()
+	for i := 0; i < 5; i++ {
+		updated := now.Add(-time.Duration(50-i) * 24 * time.Hour)
+		id := "a" + string(rune('0'+i))
+		if err := st.CreateSession(ctx, Session{
+			ID:        id,
+			Workspace: "/repo/a",
+			Title:     id,
+			CreatedAt: updated,
+			UpdatedAt: updated,
+		}); err != nil {
+			t.Fatalf("CreateSession(%s): %v", id, err)
+		}
+		if _, err := st.db.ExecContext(ctx, `INSERT INTO events
+			(id, session_id, turn, time, type, payload)
+			VALUES (?, ?, 1, ?, 'user_message', ?)`,
+			"event-"+id, id, updated.UnixMilli(), []byte(`{"text":"hi"}`)); err != nil {
+			t.Fatalf("insert event for %s: %v", id, err)
+		}
+	}
+
+	result, err := st.PruneSessions(ctx, PruneOptions{
+		MaxAge:                30 * 24 * time.Hour,
+		MinRecentPerWorkspace: 2,
+		Now:                   now,
+	})
+	if err != nil {
+		t.Fatalf("PruneSessions: %v", err)
+	}
+	if result.Deleted != 3 {
+		t.Fatalf("deleted = %d, want 3", result.Deleted)
+	}
+	for _, id := range []string{"a0", "a1", "a2"} {
+		if _, err := st.GetSession(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("GetSession(%s) err = %v, want ErrNotFound", id, err)
+		}
+	}
+	for _, id := range []string{"a3", "a4"} {
+		if _, err := st.GetSession(ctx, id); err != nil {
+			t.Fatalf("GetSession(%s) should remain: %v", id, err)
+		}
+	}
+	var remainingEvents int
+	if err := st.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events").Scan(&remainingEvents); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if remainingEvents != 2 {
+		t.Fatalf("remaining events = %d, want 2", remainingEvents)
+	}
+}
+
+func TestPruneSessionsRetainsRecentPerWorkspaceIndependently(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
+	defer st.Close()
+
+	now := time.UnixMilli(1_800_000_000_000).UTC()
+	for _, workspace := range []string{"/repo/a", "/repo/b"} {
+		for i := 0; i < 3; i++ {
+			updated := now.Add(-time.Duration(90-i) * 24 * time.Hour)
+			id := strings.TrimPrefix(workspace, "/repo/") + string(rune('0'+i))
+			if err := st.CreateSession(ctx, Session{
+				ID:        id,
+				Workspace: workspace,
+				Title:     id,
+				CreatedAt: updated,
+				UpdatedAt: updated,
+			}); err != nil {
+				t.Fatalf("CreateSession(%s): %v", id, err)
+			}
+		}
+	}
+
+	result, err := st.PruneSessions(ctx, PruneOptions{
+		MaxAge:                30 * 24 * time.Hour,
+		MinRecentPerWorkspace: 2,
+		Now:                   now,
+	})
+	if err != nil {
+		t.Fatalf("PruneSessions: %v", err)
+	}
+	if result.Deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", result.Deleted)
+	}
+	for _, id := range []string{"a0", "b0"} {
+		if _, err := st.GetSession(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("GetSession(%s) err = %v, want ErrNotFound", id, err)
+		}
+	}
+	for _, id := range []string{"a1", "a2", "b1", "b2"} {
+		if _, err := st.GetSession(ctx, id); err != nil {
+			t.Fatalf("GetSession(%s) should remain: %v", id, err)
+		}
+	}
+}
+
 func openTestStore(t *testing.T, path string) *Store {
 	t.Helper()
 	st, err := Open(path)

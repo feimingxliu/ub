@@ -301,7 +301,7 @@ type Event struct {
 
 **存储**：SQLite 表 `events(id, session_id, turn, time, type, payload BLOB)`，按 `(session_id, turn, time)` 建索引。写入策略：单条 `INSERT` 即 commit；DB 启用 `PRAGMA journal_mode=WAL` + `PRAGMA synchronous=NORMAL`。
 
-**清理**：V1 只做会话级手动清理。`sessions rm` / `sessions clear` 删除 `sessions` 记录时依赖 `ON DELETE CASCADE` 清理对应 `events`；没有自动 TTL、大小上限或后台 vacuum。
+**清理**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不单独按条数/大小裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
 
 **耐久性目标**（与 requirements F-SESS-4 对齐）：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 的事件；操作系统断电可能丢最后若干条尚未刷盘的事件。**不**为此牺牲性能逐条 fsync——agent 一轮会写数十条事件，每条 fsync 在 SSD 上也要几毫秒，TUI 流畅度会肉眼可见地下降。
 
@@ -329,7 +329,7 @@ CREATE INDEX idx_sessions_ws_updated ON sessions(workspace, updated_at DESC);
 
 CREATE TABLE events (
     id          TEXT PRIMARY KEY,
-    session_id  TEXT NOT NULL REFERENCES sessions(id),
+    session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     turn        INTEGER NOT NULL,
     time        INTEGER NOT NULL,
     type        TEXT NOT NULL,
@@ -423,9 +423,21 @@ tui:
 context:
   trigger_ratio: 0.8
   keep_recent_turns: 3
+
+cleanup:
+  enabled: true
+  interval: 24h
+  sessions:
+    max_age: 720h
+    min_recent_per_workspace: 20
+  logs:
+    max_size_mb: 10
+    max_backups: 5
 ```
 
 加载顺序：内置默认 → 全局配置 → 工作目录 `.ub/config.yaml` → 环境变量覆盖。
+
+`cleanup.enabled` 区分 unset 与显式 `false`，因此用户可以在全局或 profile 中关闭默认开启的清理。日志轮转在打开 log 文件前执行：超过阈值时 `ub.log` 变为 `ub.log.1`，已有历史依次后移，超过 `max_backups` 的旧文件删除；不压缩日志，`max_size_mb <= 0` 或 `max_backups < 0` 视为关闭轮转。`UB_LOG_FILE` 与 TUI 默认日志路径走同一套轮转逻辑。
 
 ## 9. 执行模式与权限模型
 

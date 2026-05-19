@@ -150,6 +150,57 @@ func (s *Store) DeleteWorkspaceSessions(ctx context.Context, workspace string) (
 	return n, nil
 }
 
+// PruneOptions controls age-based session pruning.
+type PruneOptions struct {
+	MaxAge                time.Duration
+	MinRecentPerWorkspace int
+	Now                   time.Time
+}
+
+// PruneResult reports what PruneSessions removed.
+type PruneResult struct {
+	Deleted int64
+}
+
+// PruneSessions deletes sessions older than MaxAge unless they are still among
+// the newest MinRecentPerWorkspace sessions for their workspace. Events are
+// removed by the schema's ON DELETE CASCADE relationship.
+func (s *Store) PruneSessions(ctx context.Context, opts PruneOptions) (PruneResult, error) {
+	if opts.MaxAge <= 0 {
+		return PruneResult{}, nil
+	}
+	if opts.MinRecentPerWorkspace < 0 {
+		opts.MinRecentPerWorkspace = 0
+	}
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	cutoff := timeToMillis(now.Add(-opts.MaxAge))
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions
+		WHERE updated_at < ?
+		  AND (
+		    SELECT COUNT(*)
+		      FROM sessions AS newer
+		     WHERE newer.workspace = sessions.workspace
+		       AND (
+		         newer.updated_at > sessions.updated_at
+		         OR (newer.updated_at = sessions.updated_at AND newer.id > sessions.id)
+		       )
+		  ) >= ?`,
+		cutoff,
+		opts.MinRecentPerWorkspace,
+	)
+	if err != nil {
+		return PruneResult{}, fmt.Errorf("prune sessions: %w", err)
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return PruneResult{}, fmt.Errorf("prune sessions rows affected: %w", err)
+	}
+	return PruneResult{Deleted: deleted}, nil
+}
+
 type sessionScanner interface {
 	Scan(dest ...any) error
 }

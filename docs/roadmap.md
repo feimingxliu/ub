@@ -647,10 +647,11 @@
 - **In Scope**：
   - README（中英双语段落）
   - `docs/install.md`
+  - 启动期 best-effort 清理：session TTL + per-workspace 最近保留、日志轮转默认值与配置 schema
   - GoReleaser 配置（多平台二进制）
   - GitHub Actions 上 release workflow
 - **Out of Scope**：homebrew tap、npm 包
-- **验证**：CI 通过 → push tag → release 产物可下载
+- **验证**：`go test ./...` 通过；构造旧 session / 大日志文件后启动 `ub`，确认 session/events 清理和日志轮转；CI 通过 → push tag → release 产物可下载
 
 ---
 

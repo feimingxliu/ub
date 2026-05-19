@@ -14,9 +14,11 @@
 // files - see docs/roadmap.md for what's scheduled where.
 package config
 
-import "time"
+import (
+	"time"
 
-import "github.com/feimingxliu/ub/internal/reasoning"
+	"github.com/feimingxliu/ub/internal/reasoning"
+)
 
 // Config is the merged effective configuration.
 //
@@ -41,6 +43,7 @@ type Config struct {
 	MCPServers      map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
 	LSPServers      map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
+	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
 
 	Unknown map[string]any `yaml:",inline" json:"-"`
 }
@@ -61,6 +64,7 @@ type ProfileConfig struct {
 	MCPServers      map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
 	LSPServers      map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
+	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
 }
 
 // ApprovalAgentConfig selects the secondary model used by auto mode.
@@ -139,4 +143,34 @@ type LSPServerConfig struct {
 type ContextConfig struct {
 	TriggerRatio    float64 `yaml:"trigger_ratio,omitempty"    json:"trigger_ratio,omitempty"`
 	KeepRecentTurns int     `yaml:"keep_recent_turns,omitempty" json:"keep_recent_turns,omitempty"`
+}
+
+// CleanupConfig controls best-effort startup cleanup for persisted sessions and
+// runtime logs. Enabled is a pointer so a later layer can explicitly override
+// the default true value with false.
+type CleanupConfig struct {
+	Enabled  *bool                 `yaml:"enabled,omitempty"  json:"enabled,omitempty"`
+	Interval time.Duration         `yaml:"interval,omitempty" json:"interval,omitempty"`
+	Sessions CleanupSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
+	Logs     CleanupLogsConfig     `yaml:"logs,omitempty"     json:"logs,omitempty"`
+}
+
+// CleanupSessionsConfig controls session-store pruning.
+type CleanupSessionsConfig struct {
+	MaxAge                time.Duration `yaml:"max_age,omitempty"                  json:"max_age,omitempty"`
+	MinRecentPerWorkspace int           `yaml:"min_recent_per_workspace,omitempty" json:"min_recent_per_workspace,omitempty"`
+}
+
+// CleanupLogsConfig controls log rotation.
+type CleanupLogsConfig struct {
+	MaxSizeMB  int `yaml:"max_size_mb,omitempty" json:"max_size_mb,omitempty"`
+	MaxBackups int `yaml:"max_backups,omitempty" json:"max_backups,omitempty"`
+}
+
+// CleanupEnabled reports whether startup cleanup is enabled after config merge.
+func (c CleanupConfig) CleanupEnabled() bool {
+	if c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }

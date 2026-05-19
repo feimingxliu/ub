@@ -178,6 +178,7 @@ func (p ProfileConfig) toConfig() *Config {
 		MCPServers:      p.MCPServers,
 		LSPServers:      p.LSPServers,
 		Context:         p.Context,
+		Cleanup:         p.Cleanup,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,81 @@ func init() {
 	provider.Register("capture", func(name string, cfg config.ProviderConfig) (provider.Provider, error) {
 		return captureProvider{name: name}, nil
 	})
+}
+
+func TestRunStartupCleanupPrunesOldSessions(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_model: fake/test-model
+providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: done
+      - type: done
+cleanup:
+  interval: 1h
+  sessions:
+    max_age: 24h
+    min_recent_per_workspace: 1
+`)
+	t.Chdir(temp)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, sess := range []store.Session{
+		{ID: "old-pruned", Workspace: temp, Title: "old", CreatedAt: now.Add(-72 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour)},
+		{ID: "old-kept", Workspace: temp, Title: "kept", CreatedAt: now.Add(-48 * time.Hour), UpdatedAt: now.Add(-48 * time.Hour)},
+	} {
+		if err := st.CreateSession(context.Background(), sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
+		}
+		if _, err := st.DB().ExecContext(context.Background(), `INSERT INTO events
+			(id, session_id, turn, time, type, payload)
+			VALUES (?, ?, 1, ?, 'user_message', ?)`,
+			"event-"+sess.ID, sess.ID, sess.UpdatedAt.UnixMilli(), []byte(`{"text":"hi"}`)); err != nil {
+			t.Fatalf("insert event for %s: %v", sess.ID, err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	code := Run([]string{"run", "--provider", "fake", "-p", "hi"}, out, errOut)
+	if code != 0 {
+		t.Fatalf("Run(run -p) code = %d, stderr:\n%s", code, errOut.String())
+	}
+	if got := out.String(); got != "done" {
+		t.Fatalf("stdout = %q, want done", got)
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("Open after run: %v", err)
+	}
+	defer st.Close()
+	if _, err := st.GetSession(context.Background(), "old-pruned"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("old-pruned err = %v, want ErrNotFound", err)
+	}
+	if _, err := st.GetSession(context.Background(), "old-kept"); err != nil {
+		t.Fatalf("old-kept should remain: %v", err)
+	}
+	var oldEvents int
+	if err := st.DB().QueryRowContext(context.Background(), "SELECT COUNT(*) FROM events WHERE session_id = ?", "old-pruned").Scan(&oldEvents); err != nil {
+		t.Fatalf("count old events: %v", err)
+	}
+	if oldEvents != 0 {
+		t.Fatalf("old-pruned events = %d, want 0", oldEvents)
+	}
 }
 
 type captureProvider struct {
@@ -837,6 +913,7 @@ func writeChatConfig(t *testing.T, temp, content string) {
 	}
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
 }
 
 func readOnlySessionEvents(t *testing.T, workspace string) []rollout.Event {

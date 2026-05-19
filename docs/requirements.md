@@ -116,6 +116,7 @@
 - F-SESS-3：Rollout 事件类型：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、`Summary`、`ModelSwitch`、`ModeSwitch`、`PermissionDecision`、`Error`
 - F-SESS-4：Rollout 以 JSONL 写入 SQLite 的 BLOB 列；SQLite 开启 WAL + `synchronous=NORMAL`。**耐久性保证**：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 事件；操作系统断电可能丢最后若干条未刷盘事件——这是可接受的，不为此牺牲性能去逐条 fsync
 - F-SESS-5：CLI 子命令 `ub rollout show <id>` 可漂亮打印一轮事件流
+- F-SESS-6：启动时 MAY 执行 best-effort 自动清理：默认删除 30 天未更新且不属于对应 workspace 最近 20 个的 session；events MUST 只随 session 删除级联清理，不做单 session 内局部裁剪
 
 ### 4.7 上下文管理
 
@@ -130,7 +131,7 @@
 ### 4.8 配置
 
 - F-CFG-1：默认配置位于 `~/.config/ub/config.yaml`；工作目录可有 `.ub/config.yaml` 覆盖
-- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`profiles`；`providers.<name>.models.<model>` 可声明 reasoning 能力和 `max_context_tokens`
+- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`context`、`cleanup`、`profiles`；`providers.<name>.models.<model>` 可声明 reasoning 能力和 `max_context_tokens`
 - F-CFG-3：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
 - F-CFG-4：配置 schema 用 JSON Schema 描述，IDE 可补全
 - F-CFG-5：配置支持全局 `reasoning.effort`、`approval_agent.reasoning.effort` 和 `providers.<name>.models.<id>` 能力覆盖；effort 值为 `none|minimal|low|medium|high|xhigh`
@@ -182,7 +183,7 @@
 | 性能 | 启动 < 200ms；流式渲染无明显卡顿；后台 LLM 调用不阻塞 TUI |
 | 跨平台 | Linux、macOS 主力支持；Windows 至少可跑（不保证完美） |
 | 可测试 | 核心 agent loop / tool / provider 单元测试覆盖；vcr 录制集成测试 |
-| 可观测 | `slog` 结构化日志；`UB_LOG_LEVEL`、`UB_LOG_FILE` 环境变量；TUI 默认写入用户 state 目录日志文件；可选 pprof |
+| 可观测 | `slog` 结构化日志；`UB_LOG_LEVEL`、`UB_LOG_FILE` 环境变量；TUI 默认写入用户 state 目录日志文件；默认按 10MB x 5 做日志轮转；可选 pprof |
 | 安全 | `exec` 工具默认需审批；`plan` 模式拒绝写工具；API key 不出现在日志和 rollout 中 |
 | 兼容性 | 单二进制分发；无运行时依赖（除 LSP/MCP server 用户自备） |
 

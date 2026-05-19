@@ -13,9 +13,10 @@ import "github.com/feimingxliu/ub/internal/reasoning"
 //     key. We deliberately do NOT recurse into ProviderConfig etc.,
 //     because partial overrides (api_key from one layer, base_url from
 //     another) make debugging harder than re-stating the whole entry.
-//   - Struct fields containing scalars only (TUIConfig, ContextConfig)
-//     are merged field-by-field via dedicated helpers - within those
-//     structs we DO use "non-zero wins" since they have no nested maps.
+//   - Struct fields containing scalars only (TUIConfig, ContextConfig,
+//     CleanupConfig) are merged field-by-field via dedicated helpers - within
+//     those structs we DO use "non-zero wins" except where a field needs a
+//     distinct unset value (cleanup.enabled).
 //   - Slice fields are replaced wholesale (not appended). None of the
 //     current Config fields are top-level slices, but this rule applies
 //     to slices inside nested structs (e.g., LSPServerConfig.Args) -
@@ -60,6 +61,7 @@ func mergeInto(dst, src *Config) {
 	mergeTUI(&dst.TUI, src.TUI)
 	mergePermissions(&dst.Permissions, src.Permissions)
 	mergeContext(&dst.Context, src.Context)
+	mergeCleanup(&dst.Cleanup, src.Cleanup)
 	mergeUnknown(&dst.Unknown, src.Unknown)
 }
 
@@ -162,6 +164,28 @@ func mergeContext(dst *ContextConfig, src ContextConfig) {
 	}
 	if src.KeepRecentTurns != 0 {
 		dst.KeepRecentTurns = src.KeepRecentTurns
+	}
+}
+
+func mergeCleanup(dst *CleanupConfig, src CleanupConfig) {
+	if src.Enabled != nil {
+		enabled := *src.Enabled
+		dst.Enabled = &enabled
+	}
+	if src.Interval != 0 {
+		dst.Interval = src.Interval
+	}
+	if src.Sessions.MaxAge != 0 {
+		dst.Sessions.MaxAge = src.Sessions.MaxAge
+	}
+	if src.Sessions.MinRecentPerWorkspace != 0 {
+		dst.Sessions.MinRecentPerWorkspace = src.Sessions.MinRecentPerWorkspace
+	}
+	if src.Logs.MaxSizeMB != 0 {
+		dst.Logs.MaxSizeMB = src.Logs.MaxSizeMB
+	}
+	if src.Logs.MaxBackups != 0 {
+		dst.Logs.MaxBackups = src.Logs.MaxBackups
 	}
 }
 

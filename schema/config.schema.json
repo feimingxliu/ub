@@ -17,6 +17,48 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "CleanupConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interval": {
+          "type": "integer"
+        },
+        "sessions": {
+          "$ref": "#/$defs/CleanupSessionsConfig"
+        },
+        "logs": {
+          "$ref": "#/$defs/CleanupLogsConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "CleanupLogsConfig": {
+      "properties": {
+        "max_size_mb": {
+          "type": "integer"
+        },
+        "max_backups": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "CleanupSessionsConfig": {
+      "properties": {
+        "max_age": {
+          "type": "integer"
+        },
+        "min_recent_per_workspace": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ContextConfig": {
       "properties": {
         "trigger_ratio": {
@@ -171,6 +213,9 @@
         },
         "context": {
           "$ref": "#/$defs/ContextConfig"
+        },
+        "cleanup": {
+          "$ref": "#/$defs/CleanupConfig"
         }
       },
       "additionalProperties": false,
@@ -313,6 +358,9 @@
     },
     "context": {
       "$ref": "#/$defs/ContextConfig"
+    },
+    "cleanup": {
+      "$ref": "#/$defs/CleanupConfig"
     }
   },
   "additionalProperties": false,

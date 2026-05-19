@@ -24,7 +24,7 @@ import (
 )
 
 func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
-	logger, cleanupLog, logPath, err := logx.SetupTUIFromEnv(cmd.ErrOrStderr())
+	logger, cleanupLog, logPath, err := logx.SetupTUIFromEnvWithRotation(cmd.ErrOrStderr(), logRotationOptions(cfg))
 	if err != nil {
 		return err
 	}
@@ -35,6 +35,9 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 	}()
 	logger.Info("tui start", "log_file", logPath)
 	defer logger.Info("tui stop")
+	if strings.TrimSpace(resume) == "" {
+		runStartupMaintenance(cmd, cfg)
+	}
 
 	permBridge := tui.NewPermissionBridge()
 	runner, err := newTUIAgentRunner(cmd, cfg, permBridge)
