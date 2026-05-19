@@ -60,6 +60,63 @@ func TestRead_OffsetAndLimit(t *testing.T) {
 	}
 }
 
+func TestRead_OffsetAndLimitAcceptNumericStrings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "b.txt", "1\n2\n3\n4\n5\n")
+	r := newReadTool(root)
+	res, err := r.Execute(context.Background(), json.RawMessage(`{"path":"b.txt","offset":"3","limit":"2"}`))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want := "3\t3\n4\t4"
+	if res.Content != want {
+		t.Fatalf("content mismatch:\n got %q\nwant %q", res.Content, want)
+	}
+}
+
+func TestRead_SchemaKeepsOffsetAndLimitInteger(t *testing.T) {
+	raw, err := json.Marshal(newReadTool(t.TempDir()).Schema())
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	props := schemaProperties(t, schema, raw)
+	for _, name := range []string{"offset", "limit"} {
+		prop := props[name].(map[string]any)
+		if prop["type"] != "integer" {
+			t.Fatalf("%s schema type = %#v, want integer\nschema=%s", name, prop["type"], raw)
+		}
+	}
+}
+
+func schemaProperties(t *testing.T, schema map[string]any, raw []byte) map[string]any {
+	t.Helper()
+	if props, ok := schema["properties"].(map[string]any); ok {
+		return props
+	}
+	ref, _ := schema["$ref"].(string)
+	const prefix = "#/$defs/"
+	if !strings.HasPrefix(ref, prefix) {
+		t.Fatalf("schema missing properties and usable ref: %s", raw)
+	}
+	defs, ok := schema["$defs"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema missing $defs: %s", raw)
+	}
+	def, ok := defs[strings.TrimPrefix(ref, prefix)].(map[string]any)
+	if !ok {
+		t.Fatalf("schema ref %q missing definition: %s", ref, raw)
+	}
+	props, ok := def["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema definition missing properties: %s", raw)
+	}
+	return props
+}
+
 func TestRead_LargeFileTruncated(t *testing.T) {
 	root := t.TempDir()
 	var b strings.Builder

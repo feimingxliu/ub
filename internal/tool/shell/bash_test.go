@@ -101,6 +101,63 @@ func TestBash_Timeout(t *testing.T) {
 	}
 }
 
+func TestBash_TimeoutAcceptsNumericString(t *testing.T) {
+	skipOnWindows(t)
+	b := newBashTool(t.TempDir())
+	raw := json.RawMessage(`{"command":"echo ok","timeout_ms":"120000"}`)
+	res, err := b.Execute(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("expected success, got:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "--- stdout ---\nok") {
+		t.Fatalf("stdout mismatch:\n%s", res.Content)
+	}
+}
+
+func TestBash_SchemaKeepsTimeoutInteger(t *testing.T) {
+	raw, err := json.Marshal(newBashTool(t.TempDir()).Schema())
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	props := schemaProperties(t, schema, raw)
+	timeout := props["timeout_ms"].(map[string]any)
+	if timeout["type"] != "integer" {
+		t.Fatalf("timeout_ms schema type = %#v, want integer\nschema=%s", timeout["type"], raw)
+	}
+}
+
+func schemaProperties(t *testing.T, schema map[string]any, raw []byte) map[string]any {
+	t.Helper()
+	if props, ok := schema["properties"].(map[string]any); ok {
+		return props
+	}
+	ref, _ := schema["$ref"].(string)
+	const prefix = "#/$defs/"
+	if !strings.HasPrefix(ref, prefix) {
+		t.Fatalf("schema missing properties and usable ref: %s", raw)
+	}
+	defs, ok := schema["$defs"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema missing $defs: %s", raw)
+	}
+	def, ok := defs[strings.TrimPrefix(ref, prefix)].(map[string]any)
+	if !ok {
+		t.Fatalf("schema ref %q missing definition: %s", ref, raw)
+	}
+	props, ok := def["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema definition missing properties: %s", raw)
+	}
+	return props
+}
+
 func TestBash_StdoutTruncation(t *testing.T) {
 	skipOnWindows(t)
 	b := newBashTool(t.TempDir())

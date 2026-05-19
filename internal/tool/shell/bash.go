@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,9 +21,33 @@ import (
 )
 
 type bashArgs struct {
-	Command   string `json:"command"             jsonschema:"required,description=Shell command, executed via /bin/sh -c."`
-	Cwd       string `json:"cwd,omitempty"       jsonschema:"description=Working directory, relative to workspace root. Defaults to '.'."`
-	TimeoutMs int    `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds. Defaults to 120000. Must be non-negative."`
+	Command   string `json:"command"              jsonschema:"required,description=Shell command, executed via /bin/sh -c."`
+	Cwd       string `json:"cwd,omitempty"        jsonschema:"description=Working directory, relative to workspace root. Defaults to '.'."`
+	TimeoutMs intArg `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds. Defaults to 120000. Must be non-negative."`
+}
+
+type intArg int
+
+func (a *intArg) UnmarshalJSON(raw []byte) error {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		*a = intArg(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return fmt.Errorf("expected integer or integer string")
+	}
+	if strings.TrimSpace(s) == "" {
+		*a = 0
+		return nil
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return fmt.Errorf("expected integer or integer string")
+	}
+	*a = intArg(parsed)
+	return nil
 }
 
 type bashTool struct {
@@ -55,7 +80,7 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	if a.Command == "" {
 		return tool.Result{}, fmt.Errorf("bash: command is required")
 	}
-	if a.TimeoutMs < 0 {
+	if int(a.TimeoutMs) < 0 {
 		return tool.Result{}, fmt.Errorf("bash: timeout_ms must be non-negative")
 	}
 
@@ -69,8 +94,8 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	}
 
 	timeout := defaultTimeout
-	if a.TimeoutMs > 0 {
-		timeout = time.Duration(a.TimeoutMs) * time.Millisecond
+	if int(a.TimeoutMs) > 0 {
+		timeout = time.Duration(int(a.TimeoutMs)) * time.Millisecond
 	}
 
 	devNull, err := os.Open(os.DevNull)
