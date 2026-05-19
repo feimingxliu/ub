@@ -348,7 +348,7 @@ func reasoningDelta(delta sdk.ChatCompletionChunkChoiceDelta) string {
 		if !ok {
 			continue
 		}
-		if value = strings.TrimSpace(value); value != "" {
+		if strings.TrimSpace(value) != "" {
 			return value
 		}
 	}

@@ -177,7 +177,7 @@ func TestStreamCancelAndClose(t *testing.T) {
 func TestChatStreamsReasoningContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"checking"},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":" checking"},"finish_reason":null}]}`)
 		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}`)
 		writeOpenAISSE(t, w, `[DONE]`)
 	}))
@@ -201,7 +201,7 @@ func TestChatStreamsReasoningContent(t *testing.T) {
 	defer stream.Close()
 
 	event, err := stream.Next(context.Background())
-	if err != nil || event.Type != provider.EventReasoningDelta || event.Reasoning != "checking" {
+	if err != nil || event.Type != provider.EventReasoningDelta || event.Reasoning != " checking" {
 		t.Fatalf("reasoning event = %#v, err=%v", event, err)
 	}
 	event, err = stream.Next(context.Background())

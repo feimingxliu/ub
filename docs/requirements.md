@@ -159,7 +159,7 @@
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
 - F-TUI-5：命令：`/model`、`/approval-model`、`/effort`、`/mode`、`/compact`、`/clear`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/compact` 主动压缩当前 session 上下文；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级
 - F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
-- F-TUI-7：TUI MUST 在聊天区以紧凑活动行展示 thinking、工具排队/运行/完成/失败、审批结果和错误摘要；同一个 tool call 的状态更新 MUST 合并到同一行，避免 queued/running/done 刷屏；活动行参与宽度换行与聊天区滚动，且不得展示完整工具 JSON 或 secret 值
+- F-TUI-7：TUI MUST 在聊天区以紧凑活动行展示 thinking、工具排队/运行/完成/失败、审批结果和错误摘要；同一轮连续 thinking delta MUST 合并为可展开的活动内容，并在折叠摘要中展示可读片段；同一个 tool call 的状态更新 MUST 合并到同一行，避免 queued/running/done 刷屏；活动行参与宽度换行与聊天区滚动，且不得展示完整工具 JSON 或 secret 值
 - F-TUI-8：Agent turn 运行中输入普通消息并按 Enter 时，TUI MUST 将该消息加入本地队列而不是启动并发 Agent turn；当前 turn 正常结束后 MUST 按 FIFO 自动发送下一条队列消息。运行中上下方向键 SHOULD 优先浏览并编辑已排队消息；slash 命令输入不得作为队列消息发送
 
 ### 4.12 开发模式与环境诊断

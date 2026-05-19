@@ -11,14 +11,15 @@ import (
 
 const maxActivitySummaryRunes = 180
 
-func (a *Agent) emitThinkingActivity(text string) {
-	if strings.TrimSpace(text) == "" {
+func (a *Agent) emitThinkingActivity(summary, detail string) {
+	if strings.TrimSpace(summary) == "" && strings.TrimSpace(detail) == "" {
 		return
 	}
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityThinking,
-		Summary:      truncateActivitySummary(text),
+		Summary:      truncateActivitySummary(summary),
+		Content:      detail,
 	})
 }
 
@@ -145,12 +146,19 @@ func summarizeToolResult(result tool.Result) string {
 	return truncateActivitySummary(redactText("content", firstLine(content)))
 }
 
-func reasoningText(text, fallback string) string {
+func reasoningSummary(text, fallback string) string {
 	text = strings.TrimSpace(text)
 	if text != "" {
 		return truncateActivitySummary(redactText("reasoning", text))
 	}
 	return truncateActivitySummary(redactText("reasoning", fallback))
+}
+
+func reasoningDetail(text, fallback string) string {
+	if strings.TrimSpace(text) == "" {
+		text = fallback
+	}
+	return redactText("reasoning", text)
 }
 
 func safeStringField(body map[string]any, key string) (string, bool) {

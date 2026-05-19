@@ -19,6 +19,8 @@ const toolRole = "tool"
 const systemRole = "system"
 const errorRole = "error"
 
+const maxThinkingSummaryRunes = 180
+
 type messageKind string
 
 const (
@@ -258,6 +260,7 @@ func (l *messageList) appendOrUpdateBlock(block message) {
 		item := &l.items[i]
 		if item.role == block.role && item.key == block.key {
 			collapsed := item.collapsed
+			block = mergeActivityMessage(*item, block)
 			*item = block
 			item.collapsed = collapsed
 			l.clampFocus()
@@ -708,6 +711,7 @@ func upsertActivityEntry(entries []message, entry message) []message {
 		for i := range entries {
 			if entries[i].key == entry.key {
 				collapsed := entries[i].collapsed
+				entry = mergeActivityMessage(entries[i], entry)
 				entries[i] = entry
 				entries[i].collapsed = collapsed
 				return entries
@@ -715,6 +719,72 @@ func upsertActivityEntry(entries []message, entry message) []message {
 		}
 	}
 	return append(entries, entry)
+}
+
+func mergeActivityMessage(existing, incoming message) message {
+	if existing.kind == thinkingMessage && incoming.kind == thinkingMessage {
+		return mergeThinkingMessage(existing, incoming)
+	}
+	return incoming
+}
+
+func mergeThinkingMessage(existing, incoming message) message {
+	detail := appendThinkingDetail(thinkingDetail(existing), thinkingDetail(incoming))
+	if strings.TrimSpace(detail) == "" {
+		return incoming
+	}
+	summary := thinkingSummary(detail)
+	incoming.detail = detail
+	incoming.title = "thinking: " + summary
+	incoming.text = incoming.title
+	return incoming
+}
+
+func thinkingDetail(item message) string {
+	if strings.TrimSpace(item.detail) != "" {
+		return item.detail
+	}
+	title := defaultString(item.title, item.text)
+	if isPlaceholderActivityTitle(title) {
+		return ""
+	}
+	return stripThinkingPrefix(title)
+}
+
+func appendThinkingDetail(existing, incoming string) string {
+	if strings.TrimSpace(incoming) == "" {
+		return existing
+	}
+	if strings.TrimSpace(existing) == "" {
+		return incoming
+	}
+	if incoming == existing || strings.HasPrefix(incoming, existing) {
+		return incoming
+	}
+	if strings.HasSuffix(existing, incoming) {
+		return existing
+	}
+	return existing + incoming
+}
+
+func thinkingSummary(detail string) string {
+	summary := strings.Join(strings.Fields(detail), " ")
+	if summary == "" {
+		return ""
+	}
+	runes := []rune(summary)
+	if len(runes) <= maxThinkingSummaryRunes {
+		return summary
+	}
+	return string(runes[:maxThinkingSummaryRunes-3]) + "..."
+}
+
+func stripThinkingPrefix(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(strings.ToLower(text), "thinking:") {
+		return strings.TrimSpace(text[len("thinking:"):])
+	}
+	return text
 }
 
 func removePlaceholderThinkingEntry(entries []message) []message {
@@ -789,6 +859,9 @@ func activityGroupTitle(entries []message) string {
 	}
 
 	var parts []string
+	if thinking != "" {
+		parts = append(parts, thinking)
+	}
 	if toolCount > 0 {
 		statuses := activityCountParts([]activityCount{
 			{label: "failed", value: failed},
@@ -808,8 +881,6 @@ func activityGroupTitle(entries []message) string {
 			toolPart += " · last: " + strings.Join(recent, ", ")
 		}
 		parts = append(parts, toolPart)
-	} else if thinking != "" {
-		parts = append(parts, thinking)
 	}
 	if permissionCount > 0 {
 		parts = append(parts, fmt.Sprintf("permissions: %d", permissionCount))
@@ -986,6 +1057,7 @@ func activityMessage(event Event) message {
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "thinking":
 		summary := defaultString(event.Summary, event.Text)
+		detail := defaultString(event.Content, defaultString(event.Text, summary))
 		return message{
 			role:      activityRole,
 			text:      activityEventText(event),
@@ -993,7 +1065,7 @@ func activityMessage(event Event) message {
 			kind:      thinkingMessage,
 			title:     "thinking: " + summary,
 			status:    "running",
-			detail:    defaultString(event.Content, event.Text),
+			detail:    detail,
 			collapsed: true,
 		}
 	case "tool":

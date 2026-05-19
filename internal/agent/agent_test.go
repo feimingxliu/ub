@@ -316,6 +316,9 @@ func TestAgentReasoningActivityDoesNotEnterAssistantText(t *testing.T) {
 	if !hasActivity(events, ActivityThinking, "checking context") {
 		t.Fatalf("events = %#v, want thinking activity", events)
 	}
+	if !hasActivityContent(events, ActivityThinking, "checking context") {
+		t.Fatalf("events = %#v, want thinking content", events)
+	}
 }
 
 func TestAgentPlanModeRejectsEditWithoutModifyingFile(t *testing.T) {
@@ -998,6 +1001,15 @@ func hasEventType(events []rollout.Event, typ rollout.Type) bool {
 func hasActivity(events []Event, kind ActivityKind, text string) bool {
 	for _, event := range events {
 		if event.Type == EventActivity && event.ActivityKind == kind && strings.Contains(event.Summary, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasActivityContent(events []Event, kind ActivityKind, text string) bool {
+	for _, event := range events {
+		if event.Type == EventActivity && event.ActivityKind == kind && strings.Contains(event.Content, text) {
 			return true
 		}
 	}

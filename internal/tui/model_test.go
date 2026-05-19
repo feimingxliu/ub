@@ -447,6 +447,36 @@ func TestToolActivityUpdatesInPlace(t *testing.T) {
 	}
 }
 
+func TestThinkingActivityDeltasAccumulateInGroup(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
+	model.running = true
+	model.runID = 4
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "checking repository", Content: "checking repository "},
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "context", Content: "context "},
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "before reading files", Content: "before reading files"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 4, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("thinking event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	got := model.MessageTexts()
+	if len(got) != 1 || !strings.Contains(got[0], "checking repository context before reading files") {
+		t.Fatalf("messages = %#v, want accumulated thinking summary", got)
+	}
+	model.messages.items[0].collapsed = false
+	if view := model.View(); !strings.Contains(view, "checking repository context before reading files") {
+		t.Fatalf("expanded view missing accumulated thinking detail:\n%s", view)
+	}
+}
+
 func TestActivityGroupSummaryShowsLatestActiveTools(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true

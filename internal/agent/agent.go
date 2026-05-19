@@ -263,7 +263,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			text.WriteString(event.Text)
 			a.emit(Event{Type: EventDeltaText, Text: event.Text})
 		case provider.EventReasoningDelta:
-			a.emitThinkingActivity(reasoningText(event.Reasoning, event.Text))
+			a.emitThinkingActivity(reasoningSummary(event.Reasoning, event.Text), reasoningDetail(event.Reasoning, event.Text))
 		case provider.EventToolCall:
 			call := toolCall{
 				ID:    strings.TrimSpace(event.ToolUseID),
