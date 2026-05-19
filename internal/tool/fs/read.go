@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -20,33 +19,9 @@ import (
 const readMaxLines = 2000
 
 type readArgs struct {
-	Path   string `json:"path"   jsonschema:"required,description=Path relative to workspace root (absolute paths must still be inside root)."`
-	Offset intArg `json:"offset,omitempty" jsonschema:"description=1-based line number to start at. Defaults to 1."`
-	Limit  intArg `json:"limit,omitempty"  jsonschema:"description=Maximum number of lines to return. Defaults to all lines (capped at 2000)."`
-}
-
-type intArg int
-
-func (a *intArg) UnmarshalJSON(raw []byte) error {
-	var n int
-	if err := json.Unmarshal(raw, &n); err == nil {
-		*a = intArg(n)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return fmt.Errorf("expected integer or integer string")
-	}
-	if strings.TrimSpace(s) == "" {
-		*a = 0
-		return nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return fmt.Errorf("expected integer or integer string")
-	}
-	*a = intArg(parsed)
-	return nil
+	Path   string      `json:"path"   jsonschema:"required,description=Path relative to workspace root (absolute paths must still be inside root)."`
+	Offset tool.IntArg `json:"offset,omitempty" jsonschema:"description=1-based line number to start at. Defaults to 1."`
+	Limit  tool.IntArg `json:"limit,omitempty"  jsonschema:"description=Maximum number of lines to return. Defaults to all lines (capped at 2000)."`
 }
 
 type readTool struct {

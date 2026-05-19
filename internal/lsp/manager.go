@@ -2,7 +2,9 @@ package lsp
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +25,13 @@ type server struct {
 	client    *Client
 	fileTypes []string
 }
+
+const (
+	maxSymbolSearchBytes      = 2 * 1024 * 1024
+	maxSymbolSearchCandidates = 100
+)
+
+var errStopSymbolSearch = errors.New("stop symbol search")
 
 // StartConfigured starts all configured LSP servers. Individual failures are
 // returned as warnings so callers can keep non-LSP tools available.
@@ -158,6 +167,37 @@ func (m *Manager) References(ctx context.Context, path string, line, col int) ([
 	return out, nil
 }
 
+// ReferencesBySymbol searches for a symbol in workspace files and queries LSP
+// references at the first matching identifier positions.
+func (m *Manager) ReferencesBySymbol(ctx context.Context, symbol, searchPath string) ([]Location, error) {
+	if m == nil {
+		return nil, fmt.Errorf("lsp: no language server configured")
+	}
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return nil, fmt.Errorf("lsp: symbol is required")
+	}
+	candidates, err := m.symbolCandidates(ctx, symbol, searchPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	var errs []error
+	for _, candidate := range candidates {
+		locations, err := m.References(ctx, candidate.path, candidate.line, candidate.col)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if len(locations) > 0 {
+			return locations, nil
+		}
+	}
+	return nil, errors.Join(errs...)
+}
+
 // Close closes all managed LSP clients.
 func (m *Manager) Close() error {
 	if m == nil {
@@ -170,6 +210,217 @@ func (m *Manager) Close() error {
 		}
 	}
 	return err
+}
+
+type symbolCandidate struct {
+	path string
+	line int
+	col  int
+}
+
+func (m *Manager) symbolCandidates(ctx context.Context, symbol, searchPath string) ([]symbolCandidate, error) {
+	base, explicitFile, err := m.resolveSymbolSearchPath(searchPath)
+	if err != nil {
+		return nil, err
+	}
+	candidates := make([]symbolCandidate, 0, 8)
+	add := func(path string, strict bool) error {
+		if len(candidates) >= maxSymbolSearchCandidates {
+			return errStopSymbolSearch
+		}
+		matches, err := m.fileSymbolCandidates(path, symbol)
+		if err != nil {
+			if strict {
+				return err
+			}
+			return nil
+		}
+		candidates = append(candidates, matches...)
+		if len(candidates) >= maxSymbolSearchCandidates {
+			candidates = candidates[:maxSymbolSearchCandidates]
+			return errStopSymbolSearch
+		}
+		return nil
+	}
+	if explicitFile {
+		if err := add(base, true); err != nil && !errors.Is(err, errStopSymbolSearch) {
+			return nil, err
+		}
+		return candidates, nil
+	}
+	err = filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if d.IsDir() {
+			if shouldSkipSymbolSearchDir(path, base, d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		return add(path, false)
+	})
+	if errors.Is(err, errStopSymbolSearch) {
+		return candidates, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return candidates, nil
+}
+
+func (m *Manager) resolveSymbolSearchPath(searchPath string) (string, bool, error) {
+	base := strings.TrimSpace(searchPath)
+	if base == "" {
+		base = m.root
+	} else if !filepath.IsAbs(base) {
+		base = filepath.Join(m.root, base)
+	}
+	base, err := filepath.Abs(base)
+	if err != nil {
+		return "", false, err
+	}
+	if err := ensureInsideRoot(m.root, base); err != nil {
+		return "", false, err
+	}
+	info, err := os.Stat(base)
+	if err != nil {
+		return "", false, fmt.Errorf("lsp: symbol search path %s: %w", base, err)
+	}
+	return base, !info.IsDir(), nil
+}
+
+func (m *Manager) fileSymbolCandidates(path, symbol string) ([]symbolCandidate, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if m.serverFor(abs) == nil {
+		return nil, nil
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxSymbolSearchBytes {
+		return nil, nil
+	}
+	content, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, err
+	}
+	return findSymbolCandidates(abs, string(content), symbol), nil
+}
+
+func findSymbolCandidates(path, content, symbol string) []symbolCandidate {
+	var candidates []symbolCandidate
+	lines := strings.Split(content, "\n")
+	queries := []struct {
+		text      string
+		colOffset int
+	}{
+		{text: symbol, colOffset: symbolColumnOffset(symbol)},
+	}
+	base := symbolBase(symbol)
+	if base != symbol {
+		queries = append(queries, struct {
+			text      string
+			colOffset int
+		}{text: base})
+	}
+	for _, query := range queries {
+		if query.text == "" {
+			continue
+		}
+		for lineIdx, line := range lines {
+			start := 0
+			for {
+				pos := strings.Index(line[start:], query.text)
+				if pos < 0 {
+					break
+				}
+				pos += start
+				if symbolMatchBoundary(line, pos, pos+len(query.text)) {
+					candidates = append(candidates, symbolCandidate{
+						path: path,
+						line: lineIdx + 1,
+						col:  pos + query.colOffset + 1,
+					})
+					if len(candidates) >= maxSymbolSearchCandidates {
+						return candidates
+					}
+				}
+				start = pos + len(query.text)
+			}
+		}
+		if len(candidates) > 0 {
+			return candidates
+		}
+	}
+	return candidates
+}
+
+func symbolColumnOffset(symbol string) int {
+	return len(symbol) - len(symbolBase(symbol))
+}
+
+func symbolBase(symbol string) string {
+	offset := 0
+	if idx := strings.LastIndex(symbol, "::"); idx >= 0 && idx+2 > offset {
+		offset = idx + 2
+	}
+	if idx := strings.LastIndex(symbol, "."); idx >= 0 && idx+1 > offset {
+		offset = idx + 1
+	}
+	if idx := strings.LastIndex(symbol, "#"); idx >= 0 && idx+1 > offset {
+		offset = idx + 1
+	}
+	return symbol[offset:]
+}
+
+func symbolMatchBoundary(line string, start, end int) bool {
+	if start > 0 && isIdentifierByte(line[start-1]) {
+		return false
+	}
+	if end < len(line) && isIdentifierByte(line[end]) {
+		return false
+	}
+	return true
+}
+
+func isIdentifierByte(b byte) bool {
+	return b == '_' ||
+		('0' <= b && b <= '9') ||
+		('a' <= b && b <= 'z') ||
+		('A' <= b && b <= 'Z')
+}
+
+func shouldSkipSymbolSearchDir(path, root, name string) bool {
+	if path == root {
+		return false
+	}
+	switch name {
+	case ".git", ".hg", ".svn":
+		return true
+	default:
+		return false
+	}
+}
+
+func ensureInsideRoot(root, path string) error {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("lsp: path %s is outside workspace root %s", path, root)
+	}
+	return nil
 }
 
 func waitDiagnostics(ctx context.Context, c *Client, uri string, timeout time.Duration) ([]Diagnostic, bool) {

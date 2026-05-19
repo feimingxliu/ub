@@ -1,6 +1,8 @@
 package job
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +71,33 @@ func TestOutputTool_MissingID(t *testing.T) {
 	out := newOutputTool(mgr)
 	if _, err := execTool(t, out, outputArgs{}); err == nil {
 		t.Fatalf("expected required-id error")
+	}
+}
+
+func TestOutputTool_TailAcceptsNumericString(t *testing.T) {
+	mgr := NewManager(t.TempDir())
+	j := &job{
+		id:       "job-1",
+		state:    stateExited,
+		exitCode: 0,
+		stdout:   newRing(streamCap),
+		stderr:   newRing(streamCap),
+		done:     make(chan struct{}),
+	}
+	close(j.done)
+	_, _ = j.stdout.Write([]byte("abcdef"))
+	mgr.jobs[j.id] = j
+
+	out := newOutputTool(mgr)
+	res, err := out.Execute(context.Background(), json.RawMessage(`{"job_id":"job-1","tail":"3"}`))
+	if err != nil {
+		t.Fatalf("output: %v", err)
+	}
+	if !strings.Contains(res.Content, "--- stdout ---\ndef") {
+		t.Fatalf("tail did not apply:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, "--- stdout ---\nabcdef") {
+		t.Fatalf("tail returned full stdout:\n%s", res.Content)
 	}
 }
 

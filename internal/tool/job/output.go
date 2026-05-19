@@ -12,8 +12,8 @@ import (
 )
 
 type outputArgs struct {
-	JobID string `json:"job_id"        jsonschema:"required,description=Job identifier returned by job_run."`
-	Tail  int    `json:"tail,omitempty" jsonschema:"description=Maximum bytes to return per stream. 0 or omitted returns the full 32KB ring buffer."`
+	JobID string      `json:"job_id"        jsonschema:"required,description=Job identifier returned by job_run."`
+	Tail  tool.IntArg `json:"tail,omitempty" jsonschema:"description=Maximum bytes to return per stream. 0 or omitted returns the full 32KB ring buffer."`
 }
 
 type outputTool struct {
@@ -53,8 +53,8 @@ func (t *outputTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 	exitCode := j.exitCode
 	stdoutTotal := j.stdout.Total()
 	stderrTotal := j.stderr.Total()
-	stdoutSnap := j.stdout.Snapshot(a.Tail)
-	stderrSnap := j.stderr.Snapshot(a.Tail)
+	stdoutSnap := j.stdout.Snapshot(int(a.Tail))
+	stderrSnap := j.stderr.Snapshot(int(a.Tail))
 	j.mu.Unlock()
 
 	var b strings.Builder

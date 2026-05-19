@@ -19,6 +19,7 @@ import (
 type Manager interface {
 	Diagnostics(ctx context.Context, file string) ([]lspruntime.FileDiagnostics, error)
 	References(ctx context.Context, file string, line, col int) ([]lspruntime.Location, error)
+	ReferencesBySymbol(ctx context.Context, symbol, path string) ([]lspruntime.Location, error)
 }
 
 // Register adds diagnostics and references tools when manager is available.
@@ -81,9 +82,11 @@ func (t *diagnosticsTool) Execute(ctx context.Context, raw json.RawMessage) (too
 }
 
 type referencesArgs struct {
-	File string `json:"file" jsonschema:"required,description=Workspace file path."`
-	Line int    `json:"line" jsonschema:"required,description=1-based line number."`
-	Col  int    `json:"col"  jsonschema:"required,description=1-based column number."`
+	Symbol string      `json:"symbol,omitempty" jsonschema:"description=Symbol name to find references for. Prefer this over line/col when available."`
+	Path   string      `json:"path,omitempty"   jsonschema:"description=Optional file or directory to search for symbol before querying LSP. Defaults to the workspace root."`
+	File   string      `json:"file,omitempty"   jsonschema:"description=Workspace file path. Required with line and col for position-based lookup; also accepted as symbol search scope."`
+	Line   tool.IntArg `json:"line,omitempty"   jsonschema:"description=1-based line number for position-based lookup."`
+	Col    tool.IntArg `json:"col,omitempty"    jsonschema:"description=1-based column number for position-based lookup."`
 }
 
 type referencesTool struct {
@@ -97,7 +100,7 @@ func newReferencesTool(manager Manager) *referencesTool {
 
 func (t *referencesTool) Name() string { return "references" }
 func (t *referencesTool) Description() string {
-	return "Find LSP references for the symbol at a 1-based file position."
+	return "Find LSP references for a symbol name, or for the symbol at a 1-based file position."
 }
 func (t *referencesTool) Schema() *jsonschema.Schema {
 	return t.schema
@@ -109,7 +112,16 @@ func (t *referencesTool) Execute(ctx context.Context, raw json.RawMessage) (tool
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return tool.Result{}, fmt.Errorf("references: invalid args: %w", err)
 	}
-	locations, err := t.manager.References(ctx, args.File, args.Line, args.Col)
+	var locations []lspruntime.Location
+	var err error
+	if strings.TrimSpace(args.Symbol) != "" {
+		locations, err = t.manager.ReferencesBySymbol(ctx, args.Symbol, args.symbolSearchPath())
+	} else {
+		if strings.TrimSpace(args.File) == "" || int(args.Line) <= 0 || int(args.Col) <= 0 {
+			return tool.Result{}, fmt.Errorf("references: provide symbol, or file with positive 1-based line and col")
+		}
+		locations, err = t.manager.References(ctx, args.File, int(args.Line), int(args.Col))
+	}
 	if err != nil {
 		return tool.Result{}, err
 	}
@@ -118,6 +130,13 @@ func (t *referencesTool) Execute(ctx context.Context, raw json.RawMessage) (tool
 		text = "no references"
 	}
 	return tool.Result{Content: text}, nil
+}
+
+func (a referencesArgs) symbolSearchPath() string {
+	if strings.TrimSpace(a.Path) != "" {
+		return a.Path
+	}
+	return a.File
 }
 
 func formatDiagnostics(files []lspruntime.FileDiagnostics) string {

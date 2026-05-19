@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,33 +20,9 @@ import (
 )
 
 type bashArgs struct {
-	Command   string `json:"command"              jsonschema:"required,description=Shell command, executed via /bin/sh -c."`
-	Cwd       string `json:"cwd,omitempty"        jsonschema:"description=Working directory, relative to workspace root. Defaults to '.'."`
-	TimeoutMs intArg `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds. Defaults to 120000. Must be non-negative."`
-}
-
-type intArg int
-
-func (a *intArg) UnmarshalJSON(raw []byte) error {
-	var n int
-	if err := json.Unmarshal(raw, &n); err == nil {
-		*a = intArg(n)
-		return nil
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return fmt.Errorf("expected integer or integer string")
-	}
-	if strings.TrimSpace(s) == "" {
-		*a = 0
-		return nil
-	}
-	parsed, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return fmt.Errorf("expected integer or integer string")
-	}
-	*a = intArg(parsed)
-	return nil
+	Command   string      `json:"command"              jsonschema:"required,description=Shell command, executed via /bin/sh -c."`
+	Cwd       string      `json:"cwd,omitempty"        jsonschema:"description=Working directory, relative to workspace root. Defaults to '.'."`
+	TimeoutMs tool.IntArg `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds. Defaults to 120000. Must be non-negative."`
 }
 
 type bashTool struct {

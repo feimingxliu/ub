@@ -607,7 +607,7 @@
 - **依赖**：I-31
 - **In Scope**：
   - `diagnostics(file?)` 工具
-  - `references(file, line, col)` 工具
+  - `references(symbol, path?)` 工具，兼容 `references(file, line, col)` 位置查询
   - 都先 didChange 同步本地修改再查询
 - **Out of Scope**：rename、code action
 - **验证**：故意写错语法的 .go 文件 → diagnostics 拿到错误；vcr 集成测试让模型用 references 跳转

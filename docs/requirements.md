@@ -148,7 +148,7 @@
 
 - F-LSP-1：可配置多个 LSP server（按文件类型）
 - F-LSP-2：模型可通过 `diagnostics` 工具拿到当前文件错误 / 警告
-- F-LSP-3：模型可通过 `references` 工具拿到符号引用位置
+- F-LSP-3：模型可通过 `references` 工具按符号名（优先）或文件位置拿到符号引用位置
 - F-LSP-4：文件被 edit/write 工具修改后，主动 `didChange` 通知 LSP，等下一次 diagnostics 刷新
 
 ### 4.11 TUI

@@ -208,6 +208,8 @@ type Result struct {
 - `edit` / `write` / `multiedit`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘
 - `bash`：用 `os/exec` 拉子进程，stdout/stderr 流式回传；超时默认 120s；不实现 Preview（命令是黑盒）
 - `job_run`：返回 `job_id`，进程交给后台 goroutine 管理；`job_output` 读流；`job_kill` SIGTERM/SIGKILL
+- tool 参数解析对模型常见 JSON 标量抖动做窄容错：整数参数接受整数或整数字符串，布尔参数接受布尔值或 `"true"` / `"false"`，但 JSON Schema 仍对外声明真实 integer/boolean 类型
+- `references` 优先支持 `symbol` + 可选 `path` 的符号名查询，由本地搜索定位候选位置后再调用 LSP；兼容 `file` + `line` + `col` 的位置查询
 
 ## 5. Provider 抽象
 

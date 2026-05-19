@@ -136,6 +136,38 @@ func TestManagerDiagnosticsAndReferences(t *testing.T) {
 	if len(refs) != 1 || refs[0].Range.Start.Line != 0 {
 		t.Fatalf("references = %#v, want one location", refs)
 	}
+	symbolRefs, err := m.ReferencesBySymbol(ctx, "main", "main.go")
+	if err != nil {
+		t.Fatalf("ReferencesBySymbol: %v", err)
+	}
+	if len(symbolRefs) != 1 || symbolRefs[0].Range.Start.Line != 0 {
+		t.Fatalf("symbol references = %#v, want one location", symbolRefs)
+	}
+}
+
+func TestFindSymbolCandidates(t *testing.T) {
+	content := "package main\n\nfunc Use() { tool.Result{} }\nfunc ResultSet() {}\n"
+	candidates := findSymbolCandidates("main.go", content, "tool.Result")
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %#v, want one", candidates)
+	}
+	if candidates[0].line != 3 || candidates[0].col != 19 {
+		t.Fatalf("candidate = line %d col %d, want 3:19", candidates[0].line, candidates[0].col)
+	}
+}
+
+func TestShouldSkipSymbolSearchDirOnlySkipsVCSMetadata(t *testing.T) {
+	root := "/repo"
+	for _, name := range []string{".git", ".hg", ".svn"} {
+		if !shouldSkipSymbolSearchDir(root+"/"+name, root, name) {
+			t.Fatalf("expected %s to be skipped", name)
+		}
+	}
+	for _, name := range []string{".references", "node_modules", "vendor"} {
+		if shouldSkipSymbolSearchDir(root+"/"+name, root, name) {
+			t.Fatalf("did not expect %s to be skipped by LSP symbol search", name)
+		}
+	}
 }
 
 func TestLSPFixture(t *testing.T) {

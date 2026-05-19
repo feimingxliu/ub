@@ -13,13 +13,27 @@ import (
 type fakeManager struct {
 	diagnostics []lspruntime.FileDiagnostics
 	locations   []lspruntime.Location
+	refFile     string
+	refLine     int
+	refCol      int
+	symbol      string
+	symbolPath  string
 }
 
 func (m *fakeManager) Diagnostics(context.Context, string) ([]lspruntime.FileDiagnostics, error) {
 	return m.diagnostics, nil
 }
 
-func (m *fakeManager) References(context.Context, string, int, int) ([]lspruntime.Location, error) {
+func (m *fakeManager) References(_ context.Context, file string, line, col int) ([]lspruntime.Location, error) {
+	m.refFile = file
+	m.refLine = line
+	m.refCol = col
+	return m.locations, nil
+}
+
+func (m *fakeManager) ReferencesBySymbol(_ context.Context, symbol, path string) ([]lspruntime.Location, error) {
+	m.symbol = symbol
+	m.symbolPath = path
 	return m.locations, nil
 }
 
@@ -73,6 +87,42 @@ func TestReferencesToolFormatsLocationsAndNoReferences(t *testing.T) {
 	}
 	if res.Content != "no references" {
 		t.Fatalf("content = %q, want no references", res.Content)
+	}
+}
+
+func TestReferencesToolAcceptsNumericStringPosition(t *testing.T) {
+	m := &fakeManager{locations: []lspruntime.Location{{
+		URI:   "file:///tmp/work/main.go",
+		Range: lspruntime.Range{Start: lspruntime.Position{Line: 0, Character: 0}},
+	}}}
+	tl := newReferencesTool(m)
+	res, err := tl.Execute(context.Background(), json.RawMessage(`{"file":"main.go","line":"38","col":"11"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Content == "no references" {
+		t.Fatalf("expected references, got %q", res.Content)
+	}
+	if m.refFile != "main.go" || m.refLine != 38 || m.refCol != 11 {
+		t.Fatalf("references args = %q %d %d, want main.go 38 11", m.refFile, m.refLine, m.refCol)
+	}
+}
+
+func TestReferencesToolPrefersSymbolLookup(t *testing.T) {
+	m := &fakeManager{locations: []lspruntime.Location{{
+		URI:   "file:///tmp/work/main.go",
+		Range: lspruntime.Range{Start: lspruntime.Position{Line: 0, Character: 0}},
+	}}}
+	tl := newReferencesTool(m)
+	_, err := tl.Execute(context.Background(), json.RawMessage(`{"symbol":"References","file":"internal/lsp/manager.go"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if m.symbol != "References" || m.symbolPath != "internal/lsp/manager.go" {
+		t.Fatalf("symbol lookup = %q in %q, want References in internal/lsp/manager.go", m.symbol, m.symbolPath)
+	}
+	if m.refFile != "" || m.refLine != 0 || m.refCol != 0 {
+		t.Fatalf("position lookup should not run, got %q %d %d", m.refFile, m.refLine, m.refCol)
 	}
 }
 

@@ -1,6 +1,8 @@
 package fs
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +59,36 @@ func TestEdit_MultiMatchReplaceAll(t *testing.T) {
 	}
 	if len(res.Files) != 1 || res.Files[0].Kind != tool.KindModify {
 		t.Fatalf("Result.Files: %+v", res.Files)
+	}
+}
+
+func TestEdit_ReplaceAllAcceptsBooleanString(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "c.go", "x\nx\n")
+	e := newEditTool(root)
+	_, err := e.Execute(context.Background(), json.RawMessage(`{"path":"c.go","old":"x","new":"y","replace_all":"true"}`))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(root, "c.go"))
+	if string(b) != "y\ny\n" {
+		t.Fatalf("content mismatch: %q", b)
+	}
+}
+
+func TestEdit_SchemaKeepsReplaceAllBoolean(t *testing.T) {
+	raw, err := json.Marshal(newEditTool(t.TempDir()).Schema())
+	if err != nil {
+		t.Fatalf("marshal schema: %v", err)
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	props := schemaProperties(t, schema, raw)
+	replaceAll := props["replace_all"].(map[string]any)
+	if replaceAll["type"] != "boolean" {
+		t.Fatalf("replace_all schema type = %#v, want boolean\nschema=%s", replaceAll["type"], raw)
 	}
 }
 

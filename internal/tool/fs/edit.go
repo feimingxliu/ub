@@ -19,10 +19,10 @@ import (
 var readFileFn = os.ReadFile
 
 type editArgs struct {
-	Path       string `json:"path"        jsonschema:"required,description=Path relative to workspace root."`
-	Old        string `json:"old"         jsonschema:"required,description=Exact substring to replace."`
-	New        string `json:"new"         jsonschema:"required,description=Replacement text."`
-	ReplaceAll bool   `json:"replace_all,omitempty" jsonschema:"description=Replace all matches when true. Defaults to false."`
+	Path       string       `json:"path"        jsonschema:"required,description=Path relative to workspace root."`
+	Old        string       `json:"old"         jsonschema:"required,description=Exact substring to replace."`
+	New        string       `json:"new"         jsonschema:"required,description=Replacement text."`
+	ReplaceAll tool.BoolArg `json:"replace_all,omitempty" jsonschema:"description=Replace all matches when true. Defaults to false."`
 }
 
 type editTool struct {
@@ -74,11 +74,11 @@ func applyEdit(content string, a editArgs) (string, int, error) {
 	switch {
 	case count == 0:
 		return "", 0, fmt.Errorf("edit: old string not found")
-	case count > 1 && !a.ReplaceAll:
+	case count > 1 && !bool(a.ReplaceAll):
 		return "", 0, fmt.Errorf("edit: %d matches, set replace_all=true to replace all", count)
 	}
 	n := 1
-	if a.ReplaceAll {
+	if bool(a.ReplaceAll) {
 		n = -1
 	}
 	return strings.Replace(content, a.Old, a.New, n), count, nil
