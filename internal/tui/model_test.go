@@ -192,6 +192,165 @@ func TestModelIgnoresSecondEnterWhileRunning(t *testing.T) {
 	}
 }
 
+func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{
+		{Type: EventDeltaText, Text: "queued response"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "first")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("first enter returned nil command")
+	}
+	model = assertModel(t, updated)
+	firstRunID := model.runID
+
+	model = sendText(t, model, "second")
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("queued enter returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got, want := model.QueuedPrompts(), []string{"second"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("queued prompts = %#v, want %#v", got, want)
+	}
+	if got := model.InputValue(); got != "" {
+		t.Fatalf("input = %q, want empty after queueing", got)
+	}
+	if !strings.Contains(model.View(), "queued: 1") || !strings.Contains(model.View(), "next: second") {
+		t.Fatalf("view missing queued prompt:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(streamEventMsg{runID: firstRunID, ok: true, event: Event{Type: EventDone}})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("done should wait for stream close")
+	}
+	updated, cmd = model.Update(streamEventMsg{runID: firstRunID, ok: false})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("stream close should start queued prompt")
+	}
+	if got := model.QueuedPrompts(); len(got) != 0 {
+		t.Fatalf("queued prompts after start = %#v, want empty", got)
+	}
+	if got := model.MessageTexts(); len(got) < 2 || got[0] != "first" || got[1] != "second" {
+		t.Fatalf("messages after dequeuing = %#v, want first then second", got)
+	}
+
+	model = drainBatch(t, model, cmd)
+	if runner.calls != 1 || runner.prompts[0] != "second" {
+		t.Fatalf("runner calls/prompts = %d/%#v, want queued second", runner.calls, runner.prompts)
+	}
+	if got := model.MessageTexts(); len(got) != 3 || got[2] != "queued response" {
+		t.Fatalf("messages after queued run = %#v", got)
+	}
+}
+
+func TestModelEditsQueuedPromptsWithArrowKeys(t *testing.T) {
+	model := NewModel(Options{Runner: &scriptedRunner{}})
+	model.running = true
+	model = sendText(t, model, "first queued")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "second queued")
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if cmd != nil {
+		t.Fatalf("up returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "second queued" {
+		t.Fatalf("up input = %q, want second queued", got)
+	}
+	model.input.SetValue("second edited")
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "first queued" {
+		t.Fatalf("second up input = %q, want first queued", got)
+	}
+	if got, want := model.QueuedPrompts(), []string{"first queued", "second edited"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("queued after editing second = %#v, want %#v", got, want)
+	}
+	model.input.SetValue("first edited")
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "second edited" {
+		t.Fatalf("down input = %q, want second edited", got)
+	}
+	if got, want := model.QueuedPrompts(), []string{"first edited", "second edited"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("queued after editing first = %#v, want %#v", got, want)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "" {
+		t.Fatalf("second down input = %q, want empty draft", got)
+	}
+	if got, want := model.QueuedPrompts(), []string{"first edited", "second edited"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("queued prompts = %#v, want %#v", got, want)
+	}
+}
+
+func TestModelSavesQueuedEditOnEnterWhileRunning(t *testing.T) {
+	model := NewModel(Options{Runner: &scriptedRunner{}})
+	model.running = true
+	model = sendText(t, model, "queued")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = assertModel(t, updated)
+	model.input.SetValue("queued edited")
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("edit enter returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "" {
+		t.Fatalf("input = %q, want empty after saving edit", got)
+	}
+	if got, want := model.QueuedPrompts(), []string{"queued edited"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("queued prompts = %#v, want %#v", got, want)
+	}
+	if !strings.Contains(model.View(), "next: queued edited") {
+		t.Fatalf("view missing edited queued prompt:\n%s", model.View())
+	}
+}
+
+func TestModelRemovesQueuedPromptImmediatelyWhenEditBecomesEmpty(t *testing.T) {
+	model := NewModel(Options{Runner: &scriptedRunner{}})
+	model.running = true
+	model = sendText(t, model, "queued")
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "queued" {
+		t.Fatalf("input = %q, want queued", got)
+	}
+
+	for range "queued" {
+		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		model = assertModel(t, updated)
+	}
+	if got := model.InputValue(); got != "" {
+		t.Fatalf("input = %q, want restored empty draft", got)
+	}
+	if got := model.QueuedPrompts(); len(got) != 0 {
+		t.Fatalf("queued prompts = %#v, want empty after deleting edit", got)
+	}
+	if strings.Contains(model.View(), "queued:") || strings.Contains(model.View(), "next: queued") {
+		t.Fatalf("view still shows deleted queued prompt:\n%s", model.View())
+	}
+}
+
 func TestModelRendersToolEvents(t *testing.T) {
 	runner := &scriptedRunner{events: []Event{
 		{Type: EventToolCallStart, ToolName: "read"},

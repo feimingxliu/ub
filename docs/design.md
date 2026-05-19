@@ -140,6 +140,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
 - **执行模式**：`mode` 从 session / CLI / profile 注入，影响 write/exec tool 的放行路径；模式切换写 `ModeSwitch` 事件
 - **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；工具 activity 只展示白名单摘要、截断长文本并遮蔽 secret。
+- **TUI 消息队列**：同一 session 内 Agent turn 仍保持串行。运行中用户输入普通消息并回车时，TUI 只写入本地 FIFO 队列，不并发调用 Agent；当前 stream 正常关闭后自动取队首启动下一轮。排队消息在真正启动前不写入 rollout，避免被中断或编辑后的草稿污染历史；运行中上下方向键优先进入队列编辑，再退回普通历史输入浏览。
 
 ## 4. Tool 系统
 

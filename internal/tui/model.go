@@ -80,6 +80,9 @@ type Model struct {
 	history        []string
 	histIdx        int
 	draft          string
+	queuedPrompts  []string
+	queueIdx       int
+	queueDraft     string
 	scroll         int
 	runID          int
 	timeout        time.Duration
@@ -145,6 +148,7 @@ func NewModel(opts Options) Model {
 		approvalModels: normalizeModels(approvalModels, approvalModel),
 		history:        promptHistoryFromMessages(opts.Messages),
 		histIdx:        -1,
+		queueIdx:       -1,
 		timeout:        opts.EventTimeout,
 		status: statusBar{
 			model:         modelName,
@@ -339,6 +343,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.moveSlashSelection(-1) {
 				return m, nil
 			}
+			if m.navigateQueuedPrompts(-1) {
+				return m, nil
+			}
 			if m.navigatePromptHistory(-1) {
 				return m, nil
 			}
@@ -347,6 +354,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.moveSlashSelection(1) {
+				return m, nil
+			}
+			if m.navigateQueuedPrompts(1) {
 				return m, nil
 			}
 			if m.navigatePromptHistory(1) {
@@ -369,6 +379,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		case "enter":
 			if m.running {
+				if m.queueInput() {
+					return m, nil
+				}
 				return m, nil
 			}
 			if updated, cmd, ok := m.acceptSlashValueSuggestion(); ok {
@@ -383,24 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.resetPromptHistoryNavigation()
 					return m.executeSlash(text)
 				}
-				m.scrollToBottom()
-				m.messages.append(userRole, text)
-				m.recordPromptHistory(text)
-				m.input.SetValue("")
-				if m.runner == nil {
-					return m, nil
-				}
-				m.running = true
-				m.status.state = statusThinking
-				m.status.turn++
-				ctx, cancel := context.WithCancel(m.ctx)
-				m.cancel = cancel
-				events := make(chan Event, 64)
-				m.events = events
-				m.runID++
-				runID := m.runID
-				m.messages.startActivityGroup(activityGroupKey(runID), "Thinking...")
-				return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
+				return m.startPrompt(text, true)
 			}
 			return m, nil
 		}
@@ -408,6 +404,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.saveQueuedPromptEdit()
 	return m, cmd
 }
 
@@ -420,7 +417,8 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.status.state = statusIdle
 		m.cancel = nil
 		m.pending = nil
-		return m, nil
+		m.events = nil
+		return m.startNextQueuedPrompt()
 	}
 	cmd := waitForEventFromUpdate(msg.event, &m)
 	return m, cmd
@@ -468,6 +466,10 @@ func (m Model) footerView(width int) string {
 		b.WriteString(suggestions)
 		b.WriteByte('\n')
 	}
+	if queued := m.queuedPromptView(width); queued != "" {
+		b.WriteString(queued)
+		b.WriteByte('\n')
+	}
 	b.WriteString(m.status.view(width, m.styles))
 	if m.pending != nil {
 		b.WriteString("\n\n")
@@ -498,9 +500,41 @@ func (m Model) Running() bool {
 	return m.running
 }
 
+// QueuedPrompts returns queued user prompts for tests.
+func (m Model) QueuedPrompts() []string {
+	return append([]string(nil), m.queuedPrompts...)
+}
+
 // Turn returns the current TUI turn number.
 func (m Model) Turn() int {
 	return m.status.turn
+}
+
+func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return m, nil
+	}
+	m.scrollToBottom()
+	m.messages.append(userRole, text)
+	m.recordPromptHistory(text)
+	if clearInput {
+		m.input.SetValue("")
+	}
+	if m.runner == nil {
+		return m, nil
+	}
+	m.running = true
+	m.status.state = statusThinking
+	m.status.turn++
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancel = cancel
+	events := make(chan Event, 64)
+	m.events = events
+	m.runID++
+	runID := m.runID
+	m.messages.startActivityGroup(activityGroupKey(runID), "Thinking...")
+	return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
 }
 
 func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
@@ -1360,6 +1394,125 @@ func (m *Model) recordPromptHistory(text string) {
 		m.history = append(m.history, text)
 	}
 	m.resetPromptHistoryNavigation()
+}
+
+func (m *Model) queueInput() bool {
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
+		if m.queueIdx >= 0 {
+			m.saveQueuedPromptEdit()
+			return true
+		}
+		return false
+	}
+	if strings.HasPrefix(text, "/") {
+		return false
+	}
+	if m.queueIdx >= 0 && m.queueIdx < len(m.queuedPrompts) {
+		m.queuedPrompts[m.queueIdx] = text
+		m.resetQueuedPromptNavigation()
+	} else {
+		m.queuedPrompts = append(m.queuedPrompts, text)
+	}
+	m.input.SetValue("")
+	m.input.CursorEnd()
+	m.resetPromptHistoryNavigation()
+	return true
+}
+
+func (m *Model) saveQueuedPromptEdit() bool {
+	if m.queueIdx < 0 || m.queueIdx >= len(m.queuedPrompts) {
+		return false
+	}
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
+		m.queuedPrompts = append(m.queuedPrompts[:m.queueIdx], m.queuedPrompts[m.queueIdx+1:]...)
+		m.input.SetValue(m.queueDraft)
+		m.input.CursorEnd()
+		m.resetQueuedPromptNavigation()
+		return true
+	}
+	m.queuedPrompts[m.queueIdx] = text
+	return false
+}
+
+func (m *Model) navigateQueuedPrompts(delta int) bool {
+	if !m.running || len(m.queuedPrompts) == 0 || delta == 0 {
+		return false
+	}
+	if m.queueIdx >= 0 {
+		if m.saveQueuedPromptEdit() {
+			return true
+		}
+	} else if delta < 0 {
+		m.queueDraft = m.input.Value()
+	} else {
+		return false
+	}
+
+	switch {
+	case delta < 0:
+		if m.queueIdx < 0 || m.queueIdx >= len(m.queuedPrompts) {
+			m.queueIdx = len(m.queuedPrompts) - 1
+		} else if m.queueIdx > 0 {
+			m.queueIdx--
+		}
+	case delta > 0:
+		if m.queueIdx < len(m.queuedPrompts)-1 {
+			m.queueIdx++
+		} else {
+			m.input.SetValue(m.queueDraft)
+			m.input.CursorEnd()
+			m.resetQueuedPromptNavigation()
+			return true
+		}
+	}
+	m.input.SetValue(m.queuedPrompts[m.queueIdx])
+	m.input.CursorEnd()
+	return true
+}
+
+func (m *Model) resetQueuedPromptNavigation() {
+	m.queueIdx = -1
+	m.queueDraft = ""
+}
+
+func (m Model) startNextQueuedPrompt() (tea.Model, tea.Cmd) {
+	if len(m.queuedPrompts) == 0 {
+		return m, nil
+	}
+	restoreInput := m.input.Value()
+	if m.queueIdx >= 0 {
+		restoreInput = m.queueDraft
+		m.saveQueuedPromptEdit()
+	}
+	if len(m.queuedPrompts) == 0 {
+		m.input.SetValue(restoreInput)
+		m.input.CursorEnd()
+		m.resetQueuedPromptNavigation()
+		return m, nil
+	}
+	next := m.queuedPrompts[0]
+	m.queuedPrompts = append([]string(nil), m.queuedPrompts[1:]...)
+	m.input.SetValue(restoreInput)
+	m.input.CursorEnd()
+	m.resetQueuedPromptNavigation()
+	return m.startPrompt(next, false)
+}
+
+func (m Model) queuedPromptView(width int) string {
+	if len(m.queuedPrompts) == 0 {
+		return ""
+	}
+	prefix := fmt.Sprintf("queued: %d", len(m.queuedPrompts))
+	index := 0
+	label := "next"
+	if m.queueIdx >= 0 && m.queueIdx < len(m.queuedPrompts) {
+		index = m.queueIdx
+		label = fmt.Sprintf("editing %d/%d", m.queueIdx+1, len(m.queuedPrompts))
+	}
+	line := fmt.Sprintf("%s · %s: %s", prefix, label, m.queuedPrompts[index])
+	return m.styles.Render(m.styles.Picker.Item, truncateText(line, width))
 }
 
 func (m *Model) scrollMessages(delta int) {
