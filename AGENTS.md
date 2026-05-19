@@ -2,19 +2,21 @@
 
 ## Project Structure & Module Organization
 
-This repository is documentation-first. Product requirements live in `docs/requirements.md`, architecture in `docs/design.md`, and implementation slices in `docs/roadmap.md`; treat them as one linked spec. The planned Go layout is `cmd/ub/` for the CLI entrypoint, `internal/` for application code, `schema/` for generated JSON Schema, and `docs/` for documentation. Keep research material under ignored `.references/`.
+This repository is a Go CLI/TUI application with docs kept as the product spec. Product requirements live in `docs/requirements.md`, architecture in `docs/design.md`, and implementation slices in `docs/roadmap.md`; treat them as one linked spec. The Go module is rooted here: `cmd/ub/` is the CLI entrypoint, `cmd/gen-schema/` regenerates configuration schema, `internal/` contains application code, `schema/` contains generated JSON Schema, and `docs/` contains the maintained specs. Keep research material under ignored `.references/`.
 
 ## Build, Test, and Development Commands
 
-There is no `go.mod`, `Makefile`, or runnable binary yet. After I-01 in `docs/roadmap.md`, use:
+Use the checked-in `Makefile` targets as thin wrappers around Go commands:
 
-- `go build ./...` to compile packages.
-- `go test ./...` to run tests.
-- `go vet ./...` to catch common Go issues.
-- `gofumpt -w .` to format Go once introduced.
-- `./ub --version` and `./ub run --help` for CLI smoke checks.
+- `make build` or `go build -o ub ./cmd/ub` to build the CLI.
+- `make test` or `go test ./...` to run the full suite.
+- `make vet` or `go vet ./...` to catch common Go issues.
+- `make lint` to run vet plus formatting checks.
+- `make fmt` to format Go using `gofumpt` when installed, otherwise `gofmt`.
+- `make schema` after changing `internal/config` types; commit `schema/config.schema.json`.
+- `./ub --version`, `./ub run --help`, and `./ub config show` for CLI smoke checks.
 
-If a `Makefile` or `justfile` is added, keep `build`, `test`, and `lint` as thin wrappers. Do not claim validation until the scaffold exists and the command has run.
+In restricted environments where the default Go cache is not writable, set `GOCACHE=/tmp/ub-go-build`. Some tests use local `httptest` sockets; if sandboxing blocks loopback binds, rerun the same `go test` command with the required local-socket permission. Do not claim validation until the command has actually run.
 
 ## Coding Style & Naming Conventions
 
@@ -26,7 +28,7 @@ Place unit tests beside code as `*_test.go`. Prefer table-driven tests for confi
 
 ## Commit & Pull Request Guidelines
 
-The initial history uses Conventional Commits, for example `chore: init repo`, but roadmap work should follow `docs/roadmap.md`: one commit per iteration with subject `[I-NN] <summary>`, such as `[I-01] add cobra root command`. Pull requests should state the roadmap item, summarize changes, list validation commands, and include screenshots or terminal output for TUI-visible changes.
+Use Conventional Commits by default, for example `feat: add startup cleanup maintenance` or `fix: inject runtime workspace context`. Use `[I-NN] <summary>` only when the user explicitly asks for a specific roadmap iteration or the change is clearly implementing one named `docs/roadmap.md` item. Pull requests should state the roadmap item when applicable, summarize changes, list validation commands, and include screenshots or terminal output for TUI-visible changes.
 
 ## Documentation Sync
 
