@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
@@ -100,7 +102,8 @@ func NewModel(opts Options) Model {
 	input.TextStyle = styles.Input.Text
 	input.PlaceholderStyle = styles.Input.Placeholder
 	input.Cursor.Style = styles.Input.Cursor
-	input.Width = defaultViewWidth - 2
+	input.Cursor.SetMode(cursor.CursorStatic)
+	input.Width = inputWidthForTerminal(defaultViewWidth, input.Prompt)
 	input.Focus()
 	ctx := opts.Context
 	if ctx == nil {
@@ -165,7 +168,7 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, waitForPermission(m.permReqs))
+	return waitForPermission(m.permReqs)
 }
 
 // Update implements tea.Model.
@@ -316,7 +319,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.status.width = msg.Width
-		m.input.Width = max(20, msg.Width-2)
+		m.input.Width = inputWidthForTerminal(msg.Width, m.input.Prompt)
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -476,6 +479,11 @@ func (m Model) footerView(width int) string {
 		b.WriteString(m.modal.View())
 	}
 	return b.String()
+}
+
+func inputWidthForTerminal(width int, prompt string) int {
+	available := contentWidth(width) - runewidth.StringWidth(prompt) - 1
+	return max(1, available)
 }
 
 func (m *Model) toggleMessageAt(x, y int) bool {

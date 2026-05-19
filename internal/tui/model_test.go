@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
@@ -17,6 +18,27 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
+
+func TestInputCursorIsStaticToAvoidIMERedrawJitter(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	if mode := model.input.Cursor.Mode(); mode != cursor.CursorStatic {
+		t.Fatalf("cursor mode = %s, want static", mode)
+	}
+	if cmd := model.Init(); cmd != nil {
+		t.Fatalf("Init returned a command without permission channel; cursor blink should not be scheduled")
+	}
+}
+
+func TestInputViewFitsTerminalWidth(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 24, Height: 12})
+	model = assertModel(t, updated)
+	model.input.SetValue("正在输入中文")
+	line := strings.Split(model.input.View(), "\n")[0]
+	if got := lipgloss.Width(line); got > 24 {
+		t.Fatalf("input line width = %d, want <= 24\n%s", got, line)
+	}
+}
 
 func TestModelEchoesInputOnEnter(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test", ExecutionMode: "plan", Cwd: "/work"})
