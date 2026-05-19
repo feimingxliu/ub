@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/feimingxliu/ub/internal/config"
@@ -23,5 +24,12 @@ func TestToolRuntimeKeepsLocalToolsWhenMCPServerFails(t *testing.T) {
 	}
 	if _, ok := runtime.Registry.Get("read"); !ok {
 		t.Fatalf("local read tool missing after MCP failure")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if runtime.Workspace != cwd {
+		t.Fatalf("workspace = %q, want %q", runtime.Workspace, cwd)
 	}
 }

@@ -33,7 +33,7 @@
 **核心数据流**：
 1. TUI 把用户输入封成 `UserMessage` 事件发给 App
 2. App 把事件写 Rollout，转交 Agent
-3. Agent 构造 prompt（system + history + summary + user），调 Provider
+3. Agent 构造 prompt（runtime environment + system/summary + history + user），调 Provider
 4. Provider 流式返回 `AssistantDelta` 与 `ToolCallRequest`
 5. 工具调用经 Permission 过滤后由 Tool Registry 派发执行
 6. `ToolResult` 进入 Rollout，回到 Agent 决定是否继续 loop
@@ -277,6 +277,7 @@ type ModelConfig struct {
 
 **上下文压缩与状态栏**：
 - Agent 每次发起 provider 请求前估算请求消息 token，并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏以紧凑 `ctx` 段展示最近一次用量
+- Agent 每次 provider 请求都会临时注入当前运行环境（workspace cwd、shell、OS）和路径规则，避免模型猜测 `/home/user` 等默认路径；该 runtime context 不写入 rollout，也不进入恢复后的历史消息
 - max context 优先读取 `providers.<name>.models.<model>.max_context_tokens`，未配置时回退 provider `Caps().MaxContextTokens`
 - 自动 summary 按 `context.trigger_ratio` 触发；TUI 的 `/compact` 可主动触发同一 summary 逻辑，保留最近 `context.keep_recent_turns` 个 user turn
 - 读取 rollout 历史时遇到 `Summary` 事件即从该 summary message 重新开始构造上下文，避免恢复 session 后重新带上已压缩旧消息

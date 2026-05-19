@@ -1,0 +1,66 @@
+package agent
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/feimingxliu/ub/internal/message"
+)
+
+// RuntimeContext describes the local execution environment for one agent run.
+// It is sent to providers on every request but is not persisted in rollout
+// history.
+type RuntimeContext struct {
+	Workspace string
+	Shell     string
+	OS        string
+}
+
+func (c RuntimeContext) normalized() RuntimeContext {
+	return RuntimeContext{
+		Workspace: strings.TrimSpace(c.Workspace),
+		Shell:     strings.TrimSpace(c.Shell),
+		OS:        strings.TrimSpace(c.OS),
+	}
+}
+
+func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message {
+	out := cloneMessages(messages)
+	runtimeMsg, ok := a.runtime.message()
+	if !ok {
+		return out
+	}
+	return append([]message.Message{runtimeMsg}, out...)
+}
+
+func (c RuntimeContext) message() (message.Message, bool) {
+	if c.Workspace == "" {
+		return message.Message{}, false
+	}
+	var b strings.Builder
+	b.WriteString("<environment_context>\n")
+	b.WriteString(fmt.Sprintf("  <cwd>%s</cwd>\n", xmlEscape(c.Workspace)))
+	if c.Shell != "" {
+		b.WriteString(fmt.Sprintf("  <shell>%s</shell>\n", xmlEscape(c.Shell)))
+	}
+	if c.OS != "" {
+		b.WriteString(fmt.Sprintf("  <os>%s</os>\n", xmlEscape(c.OS)))
+	}
+	b.WriteString("</environment_context>\n")
+	b.WriteString("Path rules:\n")
+	b.WriteString("- File and search tool paths are relative to the current workspace unless an absolute path is explicitly inside it.\n")
+	b.WriteString("- Shell commands run from the current workspace by default; use the cwd parameter for subdirectories instead of `cd ... && ...`.\n")
+	b.WriteString("- Do not invent alternate project paths such as /home/user. Use pwd or ls if the workspace appears inconsistent.")
+	return message.Text(message.RoleSystem, b.String()), true
+}
+
+func xmlEscape(s string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		`"`, "&quot;",
+		"'", "&apos;",
+	)
+	return replacer.Replace(s)
+}

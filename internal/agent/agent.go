@@ -43,6 +43,7 @@ type Options struct {
 	SummaryProvider  provider.Provider
 	SummaryModel     string
 	Context          config.ContextConfig
+	Runtime          RuntimeContext
 }
 
 // Agent runs a single headless agent loop.
@@ -61,6 +62,7 @@ type Agent struct {
 	summaryProvider  provider.Provider
 	summaryModel     string
 	contextCfg       config.ContextConfig
+	runtime          RuntimeContext
 }
 
 // Request is one Agent run input.
@@ -120,6 +122,7 @@ func New(opts Options) (*Agent, error) {
 		summaryProvider:  opts.SummaryProvider,
 		summaryModel:     strings.TrimSpace(opts.SummaryModel),
 		contextCfg:       opts.Context,
+		runtime:          opts.Runtime.normalized(),
 	}, nil
 }
 
@@ -150,7 +153,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 		messages = prepared.messages
 		stream, err := a.provider.Chat(ctx, provider.Request{
 			Model:     a.model,
-			Messages:  cloneMessages(prepared.messages),
+			Messages:  cloneMessages(prepared.requestMessages),
 			Tools:     tools,
 			Reasoning: cloneReasoning(a.reasoning),
 		})
@@ -200,11 +203,12 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 
 	requestMessages := cloneMessages(messages)
 	requestMessages = append(requestMessages, message.Text(message.RoleSystem, maxTurnsFinalInstruction))
-	estimated := contextmgr.Estimate(requestMessages, a.model)
+	providerMessages := a.withRuntimeContext(requestMessages)
+	estimated := contextmgr.Estimate(providerMessages, a.model)
 	a.emitContextUsage(estimated, false)
 	stream, err := a.provider.Chat(ctx, provider.Request{
 		Model:     a.model,
-		Messages:  cloneMessages(requestMessages),
+		Messages:  cloneMessages(providerMessages),
 		Reasoning: cloneReasoning(a.reasoning),
 	})
 	if err != nil {

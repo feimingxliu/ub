@@ -76,6 +76,51 @@ func TestAgentPassesReasoningConfig(t *testing.T) {
 	}
 }
 
+func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
+	reg := tool.New()
+	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Model:    "fake/model",
+		Mode:     execution.ModeWork,
+		Runtime: RuntimeContext{
+			Workspace: "/tmp/workspace",
+			Shell:     "/bin/sh",
+			OS:        "linux",
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{Prompt: "hi", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(p.requests))
+	}
+	got := p.requests[0].Messages
+	if len(got) == 0 || got[0].Role != message.RoleSystem {
+		t.Fatalf("first request message = %#v, want runtime system context", got)
+	}
+	runtimeText := got[0].Text()
+	for _, want := range []string{
+		"<cwd>/tmp/workspace</cwd>",
+		"<shell>/bin/sh</shell>",
+		"<os>linux</os>",
+		"Do not invent alternate project paths such as /home/user",
+		"use the cwd parameter",
+	} {
+		if !strings.Contains(runtimeText, want) {
+			t.Fatalf("runtime context missing %q:\n%s", want, runtimeText)
+		}
+	}
+	if containsText(res.Messages, "<environment_context>") {
+		t.Fatalf("runtime context leaked into result history: %#v", res.Messages)
+	}
+}
+
 func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {

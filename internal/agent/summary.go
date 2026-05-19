@@ -26,6 +26,7 @@ var summaryPromptTemplate string
 
 type preparedMessages struct {
 	messages        []message.Message
+	requestMessages []message.Message
 	estimatedTokens int
 }
 
@@ -49,10 +50,11 @@ type CompactResult struct {
 
 func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message) (preparedMessages, error) {
 	requestMessages := cloneMessages(messages)
-	estimated := contextmgr.Estimate(requestMessages, a.model)
+	providerMessages := a.withRuntimeContext(requestMessages)
+	estimated := contextmgr.Estimate(providerMessages, a.model)
 	if !a.shouldSummarize(estimated) {
 		a.emitContextUsage(estimated, false)
-		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
+		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
 	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated)
 	if err != nil {
@@ -60,7 +62,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 	}
 	if !ok {
 		a.emitContextUsage(estimated, false)
-		return preparedMessages{messages: requestMessages, estimatedTokens: estimated}, nil
+		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
 	a.emit(Event{
 		Type:         EventActivity,
@@ -71,6 +73,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 	a.emitContextUsage(compacted.estimatedTokens, true)
 	return preparedMessages{
 		messages:        compacted.messages,
+		requestMessages: a.withRuntimeContext(compacted.messages),
 		estimatedTokens: compacted.estimatedTokens,
 	}, nil
 }
@@ -149,7 +152,7 @@ func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int,
 		summary:           summary,
 		compactedMessages: len(prefix),
 		keptMessages:      len(suffix),
-		estimatedTokens:   contextmgr.Estimate(compacted, a.model),
+		estimatedTokens:   contextmgr.Estimate(a.withRuntimeContext(compacted), a.model),
 	}, true, nil
 }
 

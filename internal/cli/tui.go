@@ -250,6 +250,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		SummaryProvider:  r.summaryProvider,
 		SummaryModel:     r.summaryModel,
 		Context:          r.contextCfg,
+		Runtime:          agentRuntimeContext(r.tools.Workspace),
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},

@@ -125,6 +125,7 @@
 - F-CTX-4：Summary 事件本身写入 rollout，下次恢复 session 可从 summary 起步
 - F-CTX-5：TUI 可通过 `/compact` 主动触发一次 summary/压缩；手动触发复用同一 summary 策略，但不依赖自动阈值
 - F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量；当前模型配置或 provider 声明最大上下文时同时上报 context 百分比，模型级 `max_context_tokens` 优先
+- F-CTX-7：Agent 发起 provider 请求时 MUST 携带当前 runtime context（workspace cwd、shell、OS 与路径规则），但该上下文 MUST NOT 写入 rollout 历史，避免恢复 session 后累积过期路径
 
 ### 4.8 配置
 

@@ -373,6 +373,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		SummaryProvider:  summarySetup.Provider,
 		SummaryModel:     summarySetup.Model,
 		Context:          cfg.Context,
+		Runtime:          agentRuntimeContext(tools.Workspace),
 	})
 	if err != nil {
 		return err
@@ -394,9 +395,10 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 }
 
 type toolRuntime struct {
-	Registry *tool.Registry
-	Warnings []error
-	close    func() error
+	Registry  *tool.Registry
+	Workspace string
+	Warnings  []error
+	close     func() error
 }
 
 func (r *toolRuntime) Close() error {
@@ -439,8 +441,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		}
 	}
 	runtime := &toolRuntime{
-		Registry: reg,
-		Warnings: warnings,
+		Registry:  reg,
+		Workspace: cwd,
+		Warnings:  warnings,
 		close: func() error {
 			var err error
 			for i := len(closers) - 1; i >= 0; i-- {
