@@ -13,8 +13,8 @@ import (
 func TestSelectProviderModelUsesAnthropicModels(t *testing.T) {
 	var apiKey, version string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/models" {
-			t.Fatalf("path = %q, want /models", r.URL.Path)
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %q, want /v1/models", r.URL.Path)
 		}
 		apiKey = r.Header.Get("x-api-key")
 		version = r.Header.Get("anthropic-version")

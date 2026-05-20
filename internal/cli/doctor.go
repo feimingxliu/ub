@@ -10,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/provider/anthropic"
+	"github.com/feimingxliu/ub/internal/provider/openai"
 	"github.com/spf13/cobra"
 )
 
@@ -126,17 +129,13 @@ func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) 
 			result.Status = "NO_API_KEY"
 			return result
 		}
-		baseURL := strings.TrimSpace(cfg.BaseURL)
-		if baseURL == "" {
-			baseURL = "https://api.openai.com/v1"
-		}
-		fillOpenAIModels(ctx, &result, baseURL, cfg)
+		fillOpenAIModels(ctx, &result, cfg)
 	case "openai-compat":
 		if strings.TrimSpace(cfg.BaseURL) == "" {
 			result.Status = "NO_BASE_URL"
 			return result
 		}
-		fillOpenAIModels(ctx, &result, cfg.BaseURL, cfg)
+		fillOpenAIModels(ctx, &result, cfg)
 	case "ollama":
 		baseURL := strings.TrimSpace(cfg.BaseURL)
 		if baseURL == "" {
@@ -148,75 +147,56 @@ func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) 
 			result.Status = "NO_API_KEY"
 			return result
 		}
-		baseURL := strings.TrimSpace(cfg.BaseURL)
-		if baseURL == "" {
-			baseURL = "https://api.anthropic.com/v1"
-		} else {
-			baseURL = strings.TrimRight(baseURL, "/")
-		}
-		fillAnthropicModels(ctx, &result, baseURL, cfg)
+		fillAnthropicModels(ctx, &result, cfg)
 	default:
 		result.Status = "unknown_provider_type"
 	}
 	return result
 }
 
-func fillOpenAIModels(ctx context.Context, result *providerCheck, baseURL string, cfg config.ProviderConfig) {
-	req, err := newDoctorRequest(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", cfg)
-	if err != nil {
-		result.Status = "error"
-		result.Message = err.Error()
-		return
+func fillOpenAIModels(ctx context.Context, result *providerCheck, cfg config.ProviderConfig) {
+	client := openai.BuildClient(cfg)
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
 	}
-	if cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	pager := client.Models.ListAutoPaging(ctx)
+	for pager.Next() {
+		if id := strings.TrimSpace(pager.Current().ID); id != "" {
+			result.Models = append(result.Models, id)
+		}
 	}
-	var body struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := doDoctorJSON(req, &body, cfg.Timeout); err != nil {
+	if err := pager.Err(); err != nil {
 		result.Status = "error"
 		result.Message = err.Error()
 		return
 	}
 	result.Status = "reachable"
-	for _, item := range body.Data {
-		if item.ID != "" {
-			result.Models = append(result.Models, item.ID)
-		}
-	}
 	sort.Strings(result.Models)
 }
 
-func fillAnthropicModels(ctx context.Context, result *providerCheck, baseURL string, cfg config.ProviderConfig) {
-	req, err := newDoctorRequest(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/models", cfg)
-	if err != nil {
-		result.Status = "error"
-		result.Message = err.Error()
-		return
+func fillAnthropicModels(ctx context.Context, result *providerCheck, cfg config.ProviderConfig) {
+	client := anthropic.BuildClient(cfg)
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
 	}
-	req.Header.Set("x-api-key", cfg.APIKey)
-	if req.Header.Get("anthropic-version") == "" {
-		req.Header.Set("anthropic-version", "2023-06-01")
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	pager := client.Models.ListAutoPaging(ctx, sdk.ModelListParams{})
+	for pager.Next() {
+		if id := strings.TrimSpace(pager.Current().ID); id != "" {
+			result.Models = append(result.Models, id)
+		}
 	}
-	var body struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := doDoctorJSON(req, &body, cfg.Timeout); err != nil {
+	if err := pager.Err(); err != nil {
 		result.Status = "error"
 		result.Message = err.Error()
 		return
 	}
 	result.Status = "reachable"
-	for _, item := range body.Data {
-		if item.ID != "" {
-			result.Models = append(result.Models, item.ID)
-		}
-	}
 	sort.Strings(result.Models)
 }
 
@@ -258,8 +238,8 @@ func newDoctorRequest(ctx context.Context, method, url string, cfg config.Provid
 }
 
 func doDoctorJSON(req *http.Request, out any, timeout time.Duration) error {
-	if timeout <= 0 || timeout > 5*time.Second {
-		timeout = 2 * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Second
 	}
 	client := &http.Client{Timeout: timeout}
 	res, err := client.Do(req)

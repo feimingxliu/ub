@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -58,6 +59,33 @@ func TestToMessageParamsSetsThinkingBudget(t *testing.T) {
 	}
 	if params.MaxTokens <= 4096 {
 		t.Fatalf("MaxTokens = %d, want greater than thinking budget", params.MaxTokens)
+	}
+}
+
+func TestBuildClientSendsBothAuthHeaders(t *testing.T) {
+	var apiKey, auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiKey = r.Header.Get("X-Api-Key")
+		auth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[],"has_more":false}`))
+	}))
+	defer server.Close()
+
+	client := BuildClient(config.ProviderConfig{
+		Type:    "anthropic",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	_, err := client.Models.List(context.Background(), sdk.ModelListParams{})
+	if err != nil {
+		t.Fatalf("Models.List: %v", err)
+	}
+	if apiKey != "sk-test" {
+		t.Fatalf("X-Api-Key = %q, want sk-test", apiKey)
+	}
+	if auth != "Bearer sk-test" {
+		t.Fatalf("Authorization = %q, want Bearer sk-test", auth)
 	}
 }
 

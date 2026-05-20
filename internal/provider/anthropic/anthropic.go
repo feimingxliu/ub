@@ -37,20 +37,33 @@ func NewFromConfig(name string, cfg config.ProviderConfig) (provider.Provider, e
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, fmt.Errorf("anthropic provider %q missing api_key", name)
 	}
+	return &Provider{
+		name:   name,
+		client: BuildClient(cfg),
+	}, nil
+}
+
+// BuildClient assembles an Anthropic SDK client from a provider config. It is
+// shared by NewFromConfig and the doctor model-listing code so both paths
+// resolve base URL, timeout, and credentials identically.
+//
+// The API key is forwarded as both `X-Api-Key` (Anthropic standard) and
+// `Authorization: Bearer ...` so deployments fronted by gateways that only
+// recognise one of the two still authenticate without per-config header
+// gymnastics.
+func BuildClient(cfg config.ProviderConfig) sdk.Client {
 	opts := []option.RequestOption{
 		option.WithAPIKey(cfg.APIKey),
+		option.WithAuthToken(cfg.APIKey),
 		option.WithHTTPClient(&http.Client{Timeout: effectiveTimeout(cfg.Timeout)}),
 	}
-	if cfg.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	if base := config.NormalizeAnthropicBaseURL(cfg.BaseURL); base != "" {
+		opts = append(opts, option.WithBaseURL(base))
 	}
 	for key, value := range cfg.Headers {
 		opts = append(opts, option.WithHeader(key, value))
 	}
-	return &Provider{
-		name:   name,
-		client: sdk.NewClient(opts...),
-	}, nil
+	return sdk.NewClient(opts...)
 }
 
 // Name returns the configured provider name.

@@ -61,27 +61,35 @@ func newFromConfig(name string, cfg config.ProviderConfig, opts constructorOptio
 			cfg.APIKey = "unused"
 		}
 	}
-	if strings.TrimSpace(cfg.BaseURL) == "" {
-		if opts.requireBaseURL {
-			return nil, fmt.Errorf("openai-compatible provider %q missing base_url", name)
-		}
-	} else {
-		cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	if strings.TrimSpace(cfg.BaseURL) == "" && opts.requireBaseURL {
+		return nil, fmt.Errorf("openai-compatible provider %q missing base_url", name)
+	}
+	return &Provider{
+		name:   name,
+		client: BuildClient(cfg),
+	}, nil
+}
+
+// BuildClient assembles an OpenAI SDK client from a provider config. It is
+// shared by NewFromConfig/NewCompatibleFromConfig and the doctor
+// model-listing code so both paths resolve base URL, timeout, and credentials
+// identically.
+func BuildClient(cfg config.ProviderConfig) sdk.Client {
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	if apiKey == "" {
+		apiKey = "unused"
 	}
 	requestOpts := []option.RequestOption{
-		option.WithAPIKey(cfg.APIKey),
+		option.WithAPIKey(apiKey),
 		option.WithHTTPClient(&http.Client{Timeout: effectiveTimeout(cfg.Timeout)}),
 	}
-	if cfg.BaseURL != "" {
-		requestOpts = append(requestOpts, option.WithBaseURL(cfg.BaseURL))
+	if base := strings.TrimSpace(cfg.BaseURL); base != "" {
+		requestOpts = append(requestOpts, option.WithBaseURL(base))
 	}
 	for key, value := range cfg.Headers {
 		requestOpts = append(requestOpts, option.WithHeader(key, value))
 	}
-	return &Provider{
-		name:   name,
-		client: sdk.NewClient(requestOpts...),
-	}, nil
+	return sdk.NewClient(requestOpts...)
 }
 
 // Name returns the configured provider name.
