@@ -87,7 +87,7 @@ func TestViewCursorTracksInputLine(t *testing.T) {
 	if inputLine < 0 {
 		t.Fatalf("input line missing:\n%s", view.Content)
 	}
-	if !view.AltScreen || view.MouseMode != tea.MouseModeNone {
+	if !view.AltScreen || view.MouseMode != tea.MouseModeCellMotion {
 		t.Fatalf("view flags = alt:%v mouse:%v", view.AltScreen, view.MouseMode)
 	}
 	if view.Cursor == nil {
@@ -1190,7 +1190,7 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 	}
 }
 
-func TestCtrlOTogglesLatestActivityDetailWithoutMouseTracking(t *testing.T) {
+func TestCtrlOTogglesLatestActivityDetail(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	model = assertModel(t, updated)
@@ -1205,8 +1205,8 @@ func TestCtrlOTogglesLatestActivityDetailWithoutMouseTracking(t *testing.T) {
 	})
 
 	view := model.View()
-	if view.MouseMode != tea.MouseModeNone {
-		t.Fatalf("mouse mode = %v, want none for terminal text selection", view.MouseMode)
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("mouse mode = %v, want CellMotion for wheel scrolling and click toggling", view.MouseMode)
 	}
 	if strings.Contains(viewString(model), "└ Wrote main.go") || strings.Contains(viewString(model), "+new") {
 		t.Fatalf("tool detail should default collapsed:\n%s", viewString(model))
@@ -1234,7 +1234,7 @@ func TestCtrlOTogglesLatestActivityDetailWithoutMouseTracking(t *testing.T) {
 	}
 }
 
-func TestKeyboardFocusTogglesMultipleActivityTargetsWithoutMouseTracking(t *testing.T) {
+func TestKeyboardFocusTogglesMultipleActivityTargets(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	model = assertModel(t, updated)
@@ -1257,8 +1257,8 @@ func TestKeyboardFocusTogglesMultipleActivityTargetsWithoutMouseTracking(t *test
 		Content:      "--- main.go\n+++ main.go\n@@\n-old\n+new",
 	})
 
-	if model.View().MouseMode != tea.MouseModeNone {
-		t.Fatalf("mouse tracking should stay disabled for terminal selection")
+	if model.View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("mouse tracking should be enabled for wheel scrolling and click toggling")
 	}
 
 	updated, cmd := model.Update(keyPress('o', tea.ModCtrl))
@@ -2666,11 +2666,12 @@ func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 	if !ok {
 		t.Fatalf("cmd returned %T, want tea.BatchMsg", cmd())
 	}
-	if len(batch) != 2 {
-		t.Fatalf("batch len = %d, want 2", len(batch))
+	if len(batch) != 3 {
+		t.Fatalf("batch len = %d, want 3", len(batch))
 	}
 	_ = batch[0]()
 	msg := batch[1]()
+	// batch[2] is the spinner tick (tea.Tick) — skip; calling it would block 80ms
 	for steps := 0; steps < 32; steps++ {
 		updated, next := model.Update(msg)
 		model = assertModel(t, updated)

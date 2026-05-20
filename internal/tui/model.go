@@ -62,39 +62,42 @@ func Run(ctx context.Context, opts Options) error {
 
 // Model is the root Bubble Tea model for the chat shell.
 type Model struct {
-	input          textinput.Model
-	messages       messageList
-	status         statusBar
-	styles         tuitheme.Styles
-	runner         Runner
-	permReqs       <-chan PermissionRequest
-	pending        *PermissionRequest
-	modal          permissiondialog.Model
-	ctx            context.Context
-	cancel         context.CancelFunc
-	running        bool
-	events         <-chan Event
-	providers      []string
-	models         []string
-	efforts        []string
-	approvalModel  string
-	approvalModels []string
-	picker         *modelPicker
-	pickerTarget   string
-	sessions       *sessionPicker
-	files          *filePicker
-	slashIdx       int
-	history        []string
-	histIdx        int
-	draft          string
-	queuedPrompts  []string
-	queueIdx       int
-	queueDraft     string
-	scroll         int
-	runID          int
-	timeout        time.Duration
-	width          int
-	height         int
+	input           textinput.Model
+	messages        messageList
+	status          statusBar
+	styles          tuitheme.Styles
+	runner          Runner
+	permReqs        <-chan PermissionRequest
+	pending         *PermissionRequest
+	modal           permissiondialog.Model
+	ctx             context.Context
+	cancel          context.CancelFunc
+	running         bool
+	events          <-chan Event
+	providers       []string
+	models          []string
+	efforts         []string
+	approvalModel   string
+	approvalModels  []string
+	picker          *modelPicker
+	pickerTarget    string
+	sessions        *sessionPicker
+	files           *filePicker
+	slashIdx        int
+	history         []string
+	histIdx         int
+	draft           string
+	queuedPrompts   []string
+	queueIdx        int
+	queueDraft      string
+	scroll          int
+	runID           int
+	timeout         time.Duration
+	width           int
+	height          int
+	spinnerFrame    int
+	runStartedAt    time.Time
+	activitySummary string
 }
 
 // NewModel creates the root TUI model.
@@ -198,6 +201,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStreamEvent(msg)
 	case permissionRequestMsg:
 		return m.handlePermissionRequest(msg)
+	case spinnerTickMsg:
+		return m.handleSpinnerTick(msg)
 	}
 
 	if m.pending != nil {
@@ -516,6 +521,14 @@ func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea
 	return m, nil
 }
 
+func (m Model) handleSpinnerTick(_ spinnerTickMsg) (tea.Model, tea.Cmd) {
+	if !m.running {
+		return m, nil
+	}
+	m.spinnerFrame = (m.spinnerFrame + 1) % len(spinnerFrames)
+	return m, spinnerTickCmd()
+}
+
 // View implements tea.Model.
 func (m Model) View() tea.View {
 	frame := m.renderFrame()
@@ -523,7 +536,7 @@ func (m Model) View() tea.View {
 		Content:   frame.content,
 		Cursor:    frame.cursor,
 		AltScreen: true,
-		MouseMode: tea.MouseModeNone,
+		MouseMode: tea.MouseModeCellMotion,
 	}
 }
 
@@ -611,6 +624,7 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 	m.running = true
 	m.status.state = statusThinking
 	m.status.turn++
+	m.beginRunIndicator()
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancel = cancel
 	events := make(chan Event, 64)
@@ -618,7 +632,7 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 	m.runID++
 	runID := m.runID
 	m.messages.startActivityGroup(thinkingActivityGroupKey(runID), "Thinking...")
-	return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
+	return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout), spinnerTickCmd())
 }
 
 func (m Model) startShell(input string, clearInput bool) (tea.Model, tea.Cmd) {
@@ -642,13 +656,14 @@ func (m Model) startShell(input string, clearInput bool) (tea.Model, tea.Cmd) {
 	}
 	m.running = true
 	m.status.state = statusShell
+	m.beginRunIndicator()
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancel = cancel
 	events := make(chan Event, 64)
 	m.events = events
 	m.runID++
 	runID := m.runID
-	return m, tea.Batch(runShell(ctx, runner, command, events), waitForEventWithTimeout(events, runID, m.timeout))
+	return m, tea.Batch(runShell(ctx, runner, command, events), waitForEventWithTimeout(events, runID, m.timeout), spinnerTickCmd())
 }
 
 func isShellInput(value string) bool {
@@ -800,6 +815,9 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 			m.messages.appendOrUpdateActivity(event)
 		}
 		m.status.state = statusForActivity(event)
+		if summary := strings.TrimSpace(event.Summary); summary != "" {
+			m.activitySummary = summary
+		}
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventShellOutput:
 		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
@@ -1089,6 +1107,7 @@ func (m Model) startCompact() (tea.Model, tea.Cmd) {
 	}
 	m.running = true
 	m.status.state = statusThinking
+	m.beginRunIndicator()
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancel = cancel
 	events := make(chan Event, 64)
@@ -1096,7 +1115,7 @@ func (m Model) startCompact() (tea.Model, tea.Cmd) {
 	m.runID++
 	runID := m.runID
 	m.messages.startActivityGroup(thinkingActivityGroupKey(runID), "Compacting...")
-	return m, tea.Batch(runCompact(ctx, runner, events), waitForEventWithTimeout(events, runID, m.timeout))
+	return m, tea.Batch(runCompact(ctx, runner, events), waitForEventWithTimeout(events, runID, m.timeout), spinnerTickCmd())
 }
 
 func (m *Model) setModel(model string) error {
@@ -1339,6 +1358,8 @@ func helpKeyboardLines() []string {
 		"Esc - cancel an active picker or file search; while running, interrupt the current turn",
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
 		"PgUp/PgDown - scroll the transcript",
+		"Mouse wheel - scroll the transcript; click an activity row to expand/collapse it",
+		"Shift+drag - select text for copy (terminal native, bypasses TUI mouse capture)",
 		"Ctrl+O - expand/collapse the latest activity detail",
 		"Ctrl+N/Ctrl+P - move activity focus; Enter/Space toggles the focused activity",
 		"Up/Down - move through suggestions, queued prompts, or prompt history",

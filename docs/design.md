@@ -694,6 +694,7 @@ Suggested dev profile (use --suggest to print full snippet):
 
 ## 14. 待办与开放问题
 
+- [ ] TUI 运行指示器（footer spinner + elapsed），细节见 [`tui-animation.md`](./tui-animation.md)
 - [ ] LSP 集成深度：V1 只做 diagnostics + references；rename / code action 留 V2
 - [ ] Token 估算用 tiktoken-go？还是各 provider 自家 SDK 返回的 usage？决策：估算用 `tiktoken-go` 估个大概，准确数靠响应里的 usage 字段后置校正
 - [ ] Windows 支持深度（bash 工具走 PowerShell？job 工具进程组语义不同）。先 Linux/macOS，Windows V2
