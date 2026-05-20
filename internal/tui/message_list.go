@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
@@ -62,8 +62,9 @@ func (m message) collapsible() bool {
 }
 
 type messageList struct {
-	items []message
-	focus int
+	items      []message
+	focus      int
+	entryFocus int
 }
 
 type renderedMessages struct {
@@ -81,8 +82,13 @@ type messageSpan struct {
 	endCol     int
 }
 
+type messageTarget struct {
+	itemIndex  int
+	entryIndex int
+}
+
 func newMessageList() messageList {
-	return messageList{focus: -1}
+	return messageList{focus: -1, entryFocus: -1}
 }
 
 func (l *messageList) append(role, text string) {
@@ -300,11 +306,13 @@ func (l *messageList) removeKey(role, key string) {
 func (l *messageList) clear() {
 	l.items = nil
 	l.focus = -1
+	l.entryFocus = -1
 }
 
 func (l *messageList) load(messages []InitialMessage) {
 	l.items = nil
 	l.focus = -1
+	l.entryFocus = -1
 	for _, msg := range messages {
 		role := normalizeRole(msg.Role)
 		if strings.TrimSpace(msg.Text) == "" {
@@ -354,6 +362,7 @@ func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.
 				return false
 			}
 			l.focus = span.itemIndex
+			l.entryFocus = span.entryIndex
 			entry.collapsed = !entry.collapsed
 			return true
 		}
@@ -361,10 +370,164 @@ func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.
 			return false
 		}
 		l.focus = span.itemIndex
+		l.entryFocus = -1
 		l.items[span.itemIndex].collapsed = !l.items[span.itemIndex].collapsed
 		return true
 	}
 	return false
+}
+
+func (l *messageList) toggleLatestCollapsible() bool {
+	for i := len(l.items) - 1; i >= 0; i-- {
+		item := &l.items[i]
+		if item.kind == activityGroupMessage {
+			if !item.collapsed {
+				for j := len(item.entries) - 1; j >= 0; j-- {
+					entry := &item.entries[j]
+					if entry.collapsible() && activityEntryHasDetail(*entry) {
+						l.focus = i
+						l.entryFocus = j
+						entry.collapsed = !entry.collapsed
+						return true
+					}
+				}
+			}
+			if item.collapsible() {
+				l.focus = i
+				l.entryFocus = -1
+				item.collapsed = !item.collapsed
+				return true
+			}
+			continue
+		}
+		if item.collapsible() {
+			l.focus = i
+			l.entryFocus = -1
+			item.collapsed = !item.collapsed
+			return true
+		}
+	}
+	return false
+}
+
+func (l *messageList) focusNextCollapsible() bool {
+	return l.focusCollapsible(1)
+}
+
+func (l *messageList) focusPreviousCollapsible() bool {
+	return l.focusCollapsible(-1)
+}
+
+func (l *messageList) focusCollapsible(delta int) bool {
+	targets := l.collapsibleTargets()
+	if len(targets) == 0 {
+		l.focus = -1
+		l.entryFocus = -1
+		return false
+	}
+	current := -1
+	for i, target := range targets {
+		if target.itemIndex == l.focus && target.entryIndex == l.entryFocus {
+			current = i
+			break
+		}
+	}
+	next := 0
+	if current < 0 {
+		if delta < 0 {
+			next = len(targets) - 1
+		}
+	} else {
+		next = (current + delta) % len(targets)
+		if next < 0 {
+			next += len(targets)
+		}
+	}
+	l.focus = targets[next].itemIndex
+	l.entryFocus = targets[next].entryIndex
+	return true
+}
+
+func (l *messageList) toggleFocusedCollapsible() bool {
+	target, ok := l.focusTarget()
+	if !ok {
+		return false
+	}
+	if target.entryIndex >= 0 {
+		entry := &l.items[target.itemIndex].entries[target.entryIndex]
+		entry.collapsed = !entry.collapsed
+		return true
+	}
+	l.items[target.itemIndex].collapsed = !l.items[target.itemIndex].collapsed
+	if l.items[target.itemIndex].collapsed {
+		l.entryFocus = -1
+	}
+	return true
+}
+
+func (l messageList) hasFocusedCollapsible() bool {
+	_, ok := l.focusTarget()
+	return ok
+}
+
+func (l messageList) focusTarget() (messageTarget, bool) {
+	if l.focus < 0 || l.focus >= len(l.items) {
+		return messageTarget{}, false
+	}
+	item := l.items[l.focus]
+	if l.entryFocus >= 0 {
+		if item.kind != activityGroupMessage || item.collapsed || l.entryFocus >= len(item.entries) {
+			return messageTarget{}, false
+		}
+		entry := item.entries[l.entryFocus]
+		if !entry.collapsible() || !activityEntryHasDetail(entry) {
+			return messageTarget{}, false
+		}
+		return messageTarget{itemIndex: l.focus, entryIndex: l.entryFocus}, true
+	}
+	if !item.collapsible() {
+		return messageTarget{}, false
+	}
+	return messageTarget{itemIndex: l.focus, entryIndex: -1}, true
+}
+
+func (l messageList) collapsibleTargets() []messageTarget {
+	var targets []messageTarget
+	for itemIndex, item := range l.items {
+		if !item.collapsible() {
+			continue
+		}
+		targets = append(targets, messageTarget{itemIndex: itemIndex, entryIndex: -1})
+		if item.kind != activityGroupMessage || item.collapsed {
+			continue
+		}
+		for entryIndex, entry := range item.entries {
+			if entry.collapsible() && activityEntryHasDetail(entry) {
+				targets = append(targets, messageTarget{itemIndex: itemIndex, entryIndex: entryIndex})
+			}
+		}
+	}
+	return targets
+}
+
+func (l messageList) focusedLine(width int, styles tuitheme.Styles) (int, int, bool) {
+	target, ok := l.focusTarget()
+	if !ok {
+		return 0, 0, false
+	}
+	rendered := l.render(width, styles)
+	for _, span := range rendered.spans {
+		if span.itemIndex != target.itemIndex {
+			continue
+		}
+		if target.entryIndex >= 0 && span.entry && span.entryIndex == target.entryIndex {
+			return span.start, len(rendered.lines), true
+		}
+		if target.entryIndex < 0 && !span.entry {
+			return span.start, len(rendered.lines), true
+		}
+	}
+	return 0, len(rendered.lines), false
 }
 
 func (l messageList) view(width, height, scroll int, styles tuitheme.Styles) string {
@@ -407,13 +570,17 @@ func (l messageList) render(width int, styles tuitheme.Styles) renderedMessages 
 		item := l.items[i]
 		start := len(out)
 		if item.kind == activityGroupMessage {
-			lines, itemSpans := renderActivityGroupBlockWithSpans(item, i == l.focus, width, styles, i, start)
+			entryFocus := -1
+			if i == l.focus {
+				entryFocus = l.entryFocus
+			}
+			lines, itemSpans := renderActivityGroupBlockWithSpans(item, i == l.focus && l.entryFocus < 0, entryFocus, width, styles, i, start)
 			out = append(out, lines...)
 			spans = append(spans, itemSpans...)
 			i++
 			continue
 		}
-		out = append(out, l.renderItem(item, i == l.focus, width, styles)...)
+		out = append(out, l.renderItem(item, i == l.focus && l.entryFocus < 0, width, styles)...)
 		spans = append(spans, messageSpan{itemIndex: i, start: start, end: len(out), endCol: contentWidth(width)})
 		i++
 	}
@@ -463,7 +630,7 @@ func (l messageList) renderCompactActivityRun(startIndex, startLine, width int, 
 			lineWidth += gapWidth
 			startCol = lineWidth
 		}
-		line += renderActivityChip(item, i == l.focus, styles, plain)
+		line += renderActivityChip(item, i == l.focus && l.entryFocus < 0, styles, plain)
 		lineWidth += chipWidth
 		spans = append(spans, messageSpan{
 			itemIndex: i,
@@ -556,11 +723,11 @@ func renderActivityBlock(item message, focused bool, width int, styles tuitheme.
 }
 
 func renderActivityGroupBlock(item message, focused bool, width int, styles tuitheme.Styles) []string {
-	lines, _ := renderActivityGroupBlockWithSpans(item, focused, width, styles, -1, 0)
+	lines, _ := renderActivityGroupBlockWithSpans(item, focused, -1, width, styles, -1, 0)
 	return lines
 }
 
-func renderActivityGroupBlockWithSpans(item message, focused bool, width int, styles tuitheme.Styles, itemIndex, startLine int) ([]string, []messageSpan) {
+func renderActivityGroupBlockWithSpans(item message, focused bool, focusedEntry, width int, styles tuitheme.Styles, itemIndex, startLine int) ([]string, []messageSpan) {
 	marker := "▸ "
 	if !item.collapsed {
 		marker = "▾ "
@@ -592,7 +759,11 @@ func renderActivityGroupBlockWithSpans(item message, focused bool, width int, st
 	for entryIndex, entry := range item.entries {
 		entryLine := activityEntryLine(entry, contentWidth(width)-2, twoStageDetails)
 		lineIndex := startLine + len(out)
-		out = append(out, styles.Render(activityDetailStyle(entry, styles), "└ "+entryLine))
+		style := activityDetailStyle(entry, styles)
+		if entryIndex == focusedEntry {
+			style = styles.Focus
+		}
+		out = append(out, styles.Render(style, "└ "+entryLine))
 		if twoStageDetails && activityEntryHasDetail(entry) {
 			spans = append(spans, messageSpan{
 				itemIndex:  itemIndex,
@@ -1181,10 +1352,11 @@ func activityGroupStatus(entries []message) string {
 }
 
 func (l *messageList) clampFocus() {
-	if l.focus >= 0 && l.focus < len(l.items) && l.items[l.focus].collapsible() {
+	if _, ok := l.focusTarget(); ok {
 		return
 	}
 	l.focus = -1
+	l.entryFocus = -1
 }
 
 func visibleStart(totalLines, height, scroll int) int {

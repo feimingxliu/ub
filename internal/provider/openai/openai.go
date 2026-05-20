@@ -15,11 +15,11 @@ import (
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/reasoning"
-	sdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/param"
-	"github.com/openai/openai-go/packages/ssestream"
-	"github.com/openai/openai-go/shared"
+	sdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // Provider adapts OpenAI Chat Completions to provider.Provider.
@@ -140,11 +140,11 @@ func toChatCompletionParams(req provider.Request) (sdk.ChatCompletionNewParams, 
 	return params, nil
 }
 
-func toToolParams(defs []provider.ToolDefinition) ([]sdk.ChatCompletionToolParam, error) {
+func toToolParams(defs []provider.ToolDefinition) ([]sdk.ChatCompletionToolUnionParam, error) {
 	if len(defs) == 0 {
 		return nil, nil
 	}
-	tools := make([]sdk.ChatCompletionToolParam, 0, len(defs))
+	tools := make([]sdk.ChatCompletionToolUnionParam, 0, len(defs))
 	for _, def := range defs {
 		if strings.TrimSpace(def.Name) == "" {
 			return nil, errors.New("openai tool name is required")
@@ -158,13 +158,13 @@ func toToolParams(defs []provider.ToolDefinition) ([]sdk.ChatCompletionToolParam
 		if schema == nil {
 			schema = map[string]any{"type": "object"}
 		}
-		tools = append(tools, sdk.ChatCompletionToolParam{
-			Function: shared.FunctionDefinitionParam{
+		tools = append(tools, sdk.ChatCompletionFunctionTool(
+			shared.FunctionDefinitionParam{
 				Name:        def.Name,
 				Description: param.NewOpt(def.Description),
 				Parameters:  shared.FunctionParameters(schema),
 			},
-		})
+		))
 	}
 	return tools, nil
 }
@@ -205,19 +205,21 @@ func toMessageParams(msg message.Message) ([]sdk.ChatCompletionMessageParamUnion
 	}
 }
 
-func assistantContent(msg message.Message) (string, []sdk.ChatCompletionMessageToolCallParam, error) {
+func assistantContent(msg message.Message) (string, []sdk.ChatCompletionMessageToolCallUnionParam, error) {
 	var parts []string
-	var toolCalls []sdk.ChatCompletionMessageToolCallParam
+	var toolCalls []sdk.ChatCompletionMessageToolCallUnionParam
 	for _, block := range msg.Content {
 		switch block.Type {
 		case message.BlockText:
 			parts = append(parts, block.Text)
 		case message.BlockToolUse:
-			toolCalls = append(toolCalls, sdk.ChatCompletionMessageToolCallParam{
-				ID: block.ToolUseID,
-				Function: sdk.ChatCompletionMessageToolCallFunctionParam{
-					Name:      block.ToolName,
-					Arguments: string(block.Input),
+			toolCalls = append(toolCalls, sdk.ChatCompletionMessageToolCallUnionParam{
+				OfFunction: &sdk.ChatCompletionMessageFunctionToolCallParam{
+					ID: block.ToolUseID,
+					Function: sdk.ChatCompletionMessageFunctionToolCallFunctionParam{
+						Name:      block.ToolName,
+						Arguments: string(block.Input),
+					},
 				},
 			})
 		default:

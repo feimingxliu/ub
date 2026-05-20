@@ -1,7 +1,7 @@
 // Package tuitheme contains the small built-in visual theme used by the TUI.
 package tuitheme
 
-import "github.com/charmbracelet/lipgloss"
+import "charm.land/lipgloss/v2"
 
 // Styles groups semantic styles for the terminal UI. It is intentionally small:
 // callers should ask for role/status/tool meaning instead of hard-coding colors.

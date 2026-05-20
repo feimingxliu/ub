@@ -10,7 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	lipglossv2 "charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/feimingxliu/ub/internal/execution"
@@ -374,6 +374,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "pgdown":
 			m.scrollMessages(-m.pageScrollLines())
 			return m, nil
+		case "ctrl+o":
+			if m.messages.toggleLatestCollapsible() {
+				m.scrollFocusedMessageIntoView()
+				return m, nil
+			}
+		case "ctrl+n":
+			if m.messages.focusNextCollapsible() {
+				m.scrollFocusedMessageIntoView()
+				return m, nil
+			}
+		case "ctrl+p":
+			if m.messages.focusPreviousCollapsible() {
+				m.scrollFocusedMessageIntoView()
+				return m, nil
+			}
 		case "up":
 			if m.moveFileSelection(-1) {
 				return m, nil
@@ -425,6 +440,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
 		case "enter":
+			if strings.TrimSpace(m.input.Value()) == "" && m.messages.hasFocusedCollapsible() {
+				if m.messages.toggleFocusedCollapsible() {
+					m.scrollFocusedMessageIntoView()
+					return m, nil
+				}
+			}
 			if m.running {
 				if m.queueInput() {
 					return m, nil
@@ -453,6 +474,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.startPrompt(text, true)
 			}
 			return m, nil
+		case "space":
+			if strings.TrimSpace(m.input.Value()) == "" && m.messages.hasFocusedCollapsible() {
+				if m.messages.toggleFocusedCollapsible() {
+					m.scrollFocusedMessageIntoView()
+					return m, nil
+				}
+			}
 		}
 	}
 
@@ -495,7 +523,7 @@ func (m Model) View() tea.View {
 		Content:   frame.content,
 		Cursor:    frame.cursor,
 		AltScreen: true,
-		MouseMode: tea.MouseModeCellMotion,
+		MouseMode: tea.MouseModeNone,
 	}
 }
 
@@ -518,16 +546,16 @@ func inputWidthForTerminal(width int, prompt string) int {
 
 func inputTextStyles() textinput.Styles {
 	styles := textinput.DefaultDarkStyles()
-	prompt := lipglossv2.NewStyle().Foreground(lipglossv2.Color("43")).Bold(true)
-	text := lipglossv2.NewStyle().Foreground(lipglossv2.Color("252"))
-	placeholder := lipglossv2.NewStyle().Foreground(lipglossv2.Color("244")).Italic(true)
+	prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("43")).Bold(true)
+	text := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	placeholder := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 	styles.Focused.Prompt = prompt
 	styles.Focused.Text = text
 	styles.Focused.Placeholder = placeholder
 	styles.Blurred.Prompt = prompt
 	styles.Blurred.Text = text
 	styles.Blurred.Placeholder = placeholder
-	styles.Cursor.Color = lipglossv2.Color("43")
+	styles.Cursor.Color = lipgloss.Color("43")
 	styles.Cursor.Shape = tea.CursorBlock
 	styles.Cursor.Blink = false
 	return styles
@@ -1293,12 +1321,6 @@ func slashHelp() string {
 		b.WriteString("  ")
 		b.WriteString(line)
 	}
-	b.WriteString("\n\nmouse:")
-	for _, line := range helpMouseLines() {
-		b.WriteByte('\n')
-		b.WriteString("  ")
-		b.WriteString(line)
-	}
 	return b.String()
 }
 
@@ -1317,6 +1339,8 @@ func helpKeyboardLines() []string {
 		"Esc - cancel an active picker or file search; while running, interrupt the current turn",
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
 		"PgUp/PgDown - scroll the transcript",
+		"Ctrl+O - expand/collapse the latest activity detail",
+		"Ctrl+N/Ctrl+P - move activity focus; Enter/Space toggles the focused activity",
 		"Up/Down - move through suggestions, queued prompts, or prompt history",
 		"Tab - complete slash commands/values or insert the selected @ file",
 	}
@@ -1329,13 +1353,6 @@ func helpPickerLines() []string {
 		"permission modal: Up/Down or k/j/Tab moves decision, Enter confirms, Esc denies and interrupts",
 		"permission modal: 1-5 choose the visible decisions directly",
 		"permission diff preview: d toggles preview, Left/Right switches files when expanded",
-	}
-}
-
-func helpMouseLines() []string {
-	return []string{
-		"wheel - scroll the transcript",
-		"left click - expand/collapse thinking, tool, permission, and tool-detail rows",
 	}
 }
 
@@ -1886,6 +1903,39 @@ func (m *Model) scrollMessages(delta int) {
 
 func (m *Model) scrollToBottom() {
 	m.scroll = 0
+}
+
+func (m *Model) scrollFocusedMessageIntoView() {
+	width := contentWidth(m.width)
+	footer := m.footerView(width)
+	height := m.messageViewHeight(footer)
+	if height <= 0 {
+		return
+	}
+	line, total, ok := m.messages.focusedLine(width, m.styles)
+	if !ok {
+		return
+	}
+	if total <= height {
+		m.scroll = 0
+		return
+	}
+	maxScroll := total - height
+	start := visibleStart(total, height, m.clampedScroll())
+	switch {
+	case line < start:
+		m.scroll = maxScroll - line
+	case line >= start+height:
+		m.scroll = maxScroll - (line - height + 1)
+	default:
+		return
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
 }
 
 func (m Model) clampedScroll() int {

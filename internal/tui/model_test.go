@@ -3,21 +3,30 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/colorprofile"
 	xansi "github.com/charmbracelet/x/ansi"
-	"github.com/muesli/termenv"
 
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
+
+func TestMain(m *testing.M) {
+	oldProfile := lipgloss.Writer.Profile
+	lipgloss.Writer.Profile = colorprofile.NoTTY
+	code := m.Run()
+	lipgloss.Writer.Profile = oldProfile
+	os.Exit(code)
+}
 
 func TestInputUsesRealCursorForIMERendering(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test"})
@@ -78,7 +87,7 @@ func TestViewCursorTracksInputLine(t *testing.T) {
 	if inputLine < 0 {
 		t.Fatalf("input line missing:\n%s", view.Content)
 	}
-	if !view.AltScreen || view.MouseMode != tea.MouseModeCellMotion {
+	if !view.AltScreen || view.MouseMode != tea.MouseModeNone {
 		t.Fatalf("view flags = alt:%v mouse:%v", view.AltScreen, view.MouseMode)
 	}
 	if view.Cursor == nil {
@@ -712,16 +721,18 @@ func TestPlainMessageRenderHasNoANSI(t *testing.T) {
 }
 
 func TestStyledMessageRenderContainsANSIAndSymbols(t *testing.T) {
-	oldProfile := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	defer lipgloss.SetColorProfile(oldProfile)
+	oldProfile := lipgloss.Writer.Profile
+	lipgloss.Writer.Profile = colorprofile.ANSI256
+	defer func() {
+		lipgloss.Writer.Profile = oldProfile
+	}()
 
 	model := NewModel(Options{Model: "fake/test"})
 	model = sendText(t, model, "hello")
 	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
-	view := viewString(model)
+	view := model.View().Content
 	if !strings.Contains(view, "\x1b[") || !strings.Contains(view, "› ") || !strings.Contains(view, "hello") {
 		t.Fatalf("styled render missing ANSI or role symbol:\n%q", view)
 	}
@@ -1156,6 +1167,8 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"Esc - cancel an active picker",
 		"Shift+Tab - cycle execution mode",
 		"PgUp/PgDown - scroll the transcript",
+		"Ctrl+O - expand/collapse",
+		"Ctrl+N/Ctrl+P - move activity focus",
 		"Up/Down - move through suggestions",
 		"Tab - complete slash commands",
 		"pickers and permission:",
@@ -1165,12 +1178,124 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"1-5 choose",
 		"d toggles preview",
 		"Left/Right switches files",
-		"mouse:",
-		"left click - expand/collapse",
 	} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("slashHelp missing %q:\n%s", want, help)
 		}
+	}
+	for _, unwanted := range []string{"mouse:", "left click - expand/collapse"} {
+		if strings.Contains(help, unwanted) {
+			t.Fatalf("slashHelp should not advertise mouse tracking %q:\n%s", unwanted, help)
+		}
+	}
+}
+
+func TestCtrlOTogglesLatestActivityDetailWithoutMouseTracking(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivityInGroup("activity:tool:1", toolGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_write",
+		ToolName:     "write",
+		Status:       "done",
+		Summary:      "path=main.go",
+		Content:      "--- main.go\n+++ main.go\n@@\n-old\n+new",
+	})
+
+	view := model.View()
+	if view.MouseMode != tea.MouseModeNone {
+		t.Fatalf("mouse mode = %v, want none for terminal text selection", view.MouseMode)
+	}
+	if strings.Contains(viewString(model), "└ Wrote main.go") || strings.Contains(viewString(model), "+new") {
+		t.Fatalf("tool detail should default collapsed:\n%s", viewString(model))
+	}
+
+	updated, cmd := model.Update(keyPress('o', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("ctrl+o returned unexpected command")
+	}
+	if !strings.Contains(viewString(model), "└ ▸ ✓ Wrote path=main.go") {
+		t.Fatalf("ctrl+o did not expand latest activity group:\n%s", viewString(model))
+	}
+	if strings.Contains(viewString(model), "+new") {
+		t.Fatalf("ctrl+o should expand the group before file detail:\n%s", viewString(model))
+	}
+
+	updated, cmd = model.Update(keyPress('o', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("second ctrl+o returned unexpected command")
+	}
+	if !strings.Contains(viewString(model), "+new") {
+		t.Fatalf("second ctrl+o did not expand latest activity detail:\n%s", viewString(model))
+	}
+}
+
+func TestKeyboardFocusTogglesMultipleActivityTargetsWithoutMouseTracking(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivityInGroup("activity:tool:2", toolGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_read",
+		ToolName:     "read",
+		Status:       "done",
+		Summary:      "path=main.go",
+		Content:      "read detail",
+	})
+	model.messages.appendOrUpdateActivityInGroup("activity:tool:2", toolGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_write",
+		ToolName:     "write",
+		Status:       "done",
+		Summary:      "path=main.go",
+		Content:      "--- main.go\n+++ main.go\n@@\n-old\n+new",
+	})
+
+	if model.View().MouseMode != tea.MouseModeNone {
+		t.Fatalf("mouse tracking should stay disabled for terminal selection")
+	}
+
+	updated, cmd := model.Update(keyPress('o', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("ctrl+o returned unexpected command")
+	}
+	if !strings.Contains(viewString(model), "└ ▸ ✓ Read path=main.go") || strings.Contains(viewString(model), "read detail") {
+		t.Fatalf("ctrl+o should expand only the tool group first:\n%s", viewString(model))
+	}
+
+	updated, cmd = model.Update(keyPress('n', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("ctrl+n returned unexpected command")
+	}
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("enter returned unexpected command")
+	}
+	if !strings.Contains(viewString(model), "read detail") || strings.Contains(viewString(model), "+new") {
+		t.Fatalf("enter should toggle the first focused activity entry only:\n%s", viewString(model))
+	}
+
+	updated, cmd = model.Update(keyPress('n', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("second ctrl+n returned unexpected command")
+	}
+	updated, cmd = model.Update(keyPress(tea.KeySpace))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("space returned unexpected command")
+	}
+	if !strings.Contains(viewString(model), "read detail") || !strings.Contains(viewString(model), "+new") {
+		t.Fatalf("space should toggle the second focused activity entry:\n%s", viewString(model))
 	}
 }
 
@@ -2189,7 +2314,7 @@ func TestViewWrapsLongMessagesToWidth(t *testing.T) {
 	if strings.Contains(view, "› abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("long line was not wrapped:\n%s", view)
 	}
-	if !strings.Contains(view, "› abcdefghijklmnopqrstuv") || !strings.Contains(view, "  wxyz") {
+	if !strings.Contains(view, "› abcdefghijklmnopqr") || !strings.Contains(view, "  stuvwxyz") {
 		t.Fatalf("wrapped message missing expected fragments:\n%s", view)
 	}
 }
@@ -2568,7 +2693,7 @@ func sendText(t *testing.T, model Model, text string) Model {
 }
 
 func viewString(model Model) string {
-	return model.View().Content
+	return xansi.Strip(model.View().Content)
 }
 
 func assertCursorOnInputLine(t *testing.T, model Model, marker string) {

@@ -525,7 +525,7 @@
   - `internal/tui/diffview`：unified diff 渲染，按语言用 `chroma` 高亮
   - 多文件 diff：FileDiff 列表 → 顶部 file tab，左右 / 上下切换
   - 嵌入 I-24 modal：按 `d` 展开后渲染富 diff
-  - write/edit Execute 返回 `FileChange.UnifiedDiff`，TUI 工具活动默认只显示摘要；鼠标展开工具组后只显示文件变更摘要，再点击对应 write/edit 工具项后显示着色的执行后文件变更详情
+  - write/edit Execute 返回 `FileChange.UnifiedDiff`，TUI 工具活动默认只显示摘要；`Ctrl+O` 展开最近工具组后只显示文件变更摘要，再按一次 `Ctrl+O` 显示最近 write/edit 工具项的着色执行后文件变更详情；也可用 `Ctrl+N` / `Ctrl+P` 移动活动焦点并用 `Enter` / `Space` 操作任意活动块或工具项；TUI 默认不启用鼠标追踪，保留终端原生拖拽选择复制
 - **Out of Scope**：split view 双栏对照、行间编辑
 - **验证**：手测让模型改两个文件，diff 渲染正常；单测 chroma 高亮对常见语言 (go / py / ts) 不 panic
 

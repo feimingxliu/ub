@@ -139,7 +139,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **loop detection**：Crush 有 `loop_detection.go`（同一 tool call 重复 N 次抑制），V2 引入
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
 - **执行模式**：`mode` 从 session / CLI / profile 注入，影响 write/exec tool 的放行路径；模式切换写 `ModeSwitch` 事件
-- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit 工具项需要再次点击才展开 colored unified diff；工具 activity 只展示白名单摘要、截断长文本并遮蔽 secret。
+- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit 工具项可通过活动焦点展开 colored unified diff；工具 activity 只展示白名单摘要、截断长文本并遮蔽 secret。
 - **TUI 消息队列**：同一 session 内 Agent turn 仍保持串行。运行中用户输入普通消息并回车时，TUI 只写入本地 FIFO 队列，不并发调用 Agent；当前 stream 正常关闭后自动取队首启动下一轮。排队消息在真正启动前不写入 rollout，避免被中断或编辑后的草稿污染历史；运行中上下方向键优先进入队列编辑，再退回普通历史输入浏览。
 - **TUI 启动覆盖**：直接运行 `ub` 打开 TUI 时支持 `--provider <name>` 与 `--model <id>`，走与 `ub chat` 相同的 provider/model 选择规则，只影响本次启动，不写回配置。
 - **TUI provider 切换**：`/provider [provider] [model]` 在当前 TUI session 内切换后续主对话 provider；无参数时展示 provider picker，显式切换后刷新 model/effort 候选与状态栏，不写回配置。
@@ -215,7 +215,7 @@ type FileChange struct {
 ```
 
 **关键 tool 实现要点**：
-- `edit` / `write` / `multiedit`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘，并在 `FileChange.UnifiedDiff` 中返回实际变更，TUI 默认只展示摘要，鼠标展开 tool 区域后先展示工具摘要，再点击对应工具项才展示着色的文件级详情
+- `edit` / `write` / `multiedit`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘，并在 `FileChange.UnifiedDiff` 中返回实际变更，TUI 默认只展示摘要，按 `Ctrl+O` 展开最近的 tool 区域后先展示工具摘要，再按一次展开最近工具项的着色文件级详情；也可用 `Ctrl+N` / `Ctrl+P` 移动活动焦点并用 `Enter` / `Space` 操作任意活动块或工具项；TUI 默认不启用鼠标追踪，保留终端原生拖拽选择复制
 - `bash`：用 `os/exec` 拉子进程，stdout/stderr 流式回传；超时默认 120s；不实现 Preview（命令是黑盒）
 - `job_run`：返回 `job_id`，进程交给后台 goroutine 管理；`job_output` 读流；`job_kill` SIGTERM/SIGKILL
 - tool 参数解析对模型常见 JSON 标量抖动做窄容错：整数参数接受整数或整数字符串，布尔参数接受布尔值或 `"true"` / `"false"`，但 JSON Schema 仍对外声明真实 integer/boolean 类型
@@ -550,9 +550,9 @@ UI 流程：
 | 语言 | Go 1.23+ | |
 | CLI | `spf13/cobra` | 主流 |
 | TUI | `charm.land/bubbletea/v2` | |
-| TUI 组件 | `charm.land/bubbles/v2`、`charm.land/lipgloss/v2`、`github.com/charmbracelet/glamour` | |
+| TUI 组件 | `charm.land/bubbles/v2`、`charm.land/lipgloss/v2`、`charm.land/glamour/v2` | |
 | LLM Anthropic | `anthropics/anthropic-sdk-go` | 官方 |
-| LLM OpenAI | `openai/openai-go` | 官方 |
+| LLM OpenAI | `openai/openai-go/v3` | 官方 |
 | HTTP | 标准库 `net/http` + 自家 transport（含 vcr 注入） | |
 | JSON Schema | `invopop/jsonschema` | tool schema 生成 |
 | SQLite | `modernc.org/sqlite` | 纯 Go |
