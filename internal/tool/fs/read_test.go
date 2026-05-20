@@ -163,6 +163,21 @@ func TestRead_OutsideRoot(t *testing.T) {
 	}
 }
 
+func TestRead_DirectorySuggestsLsOrGlob(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newReadTool(root)
+	_, err := execTool(t, r, readArgs{Path: "docs"})
+	if err == nil {
+		t.Fatal("expected directory error")
+	}
+	if !strings.Contains(err.Error(), "is a directory") || !strings.Contains(err.Error(), "use ls or glob") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func tail(s string, n int) string {
 	if len(s) <= n {
 		return s

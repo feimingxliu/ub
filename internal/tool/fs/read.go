@@ -20,7 +20,7 @@ import (
 const defaultReadMaxLines = 400
 
 type readArgs struct {
-	Path   string      `json:"path"   jsonschema:"required,description=Path relative to workspace root. Absolute paths must be inside the workspace or ub tool-output state."`
+	Path   string      `json:"path"   jsonschema:"required,description=Regular UTF-8 file path relative to workspace root. Do not use read for directories; use ls or glob for directories. Absolute paths must be inside the workspace or ub tool-output state."`
 	Offset tool.IntArg `json:"offset,omitempty" jsonschema:"description=1-based line number to start at. Defaults to 1."`
 	Limit  tool.IntArg `json:"limit,omitempty"  jsonschema:"description=Maximum number of lines to return. Defaults to all lines (capped for model context)."`
 }
@@ -55,7 +55,7 @@ func newReadToolWithOptions(root, stateRoot string, maxLines int) *readTool {
 
 func (t *readTool) Name() string { return "read" }
 func (t *readTool) Description() string {
-	return "Read a UTF-8 text file from the workspace and return its content with line numbers."
+	return "Read one regular UTF-8 text file from the workspace and return its content with line numbers. Never use for directories; use ls or glob for directories."
 }
 func (t *readTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *readTool) Risk() tool.Risk            { return tool.RiskSafe }
@@ -71,6 +71,13 @@ func (t *readTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result,
 	abs, err := t.resolveReadPath(a.Path)
 	if err != nil {
 		return tool.Result{}, err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return tool.Result{}, fmt.Errorf("read: stat %s: %w", a.Path, err)
+	}
+	if info.IsDir() {
+		return tool.Result{}, fmt.Errorf("read: %s is a directory; use ls or glob instead", a.Path)
 	}
 
 	f, err := os.Open(abs)

@@ -49,6 +49,7 @@ func (c RuntimeContext) message() (message.Message, bool) {
 	b.WriteString("</environment_context>\n")
 	b.WriteString("Path rules:\n")
 	b.WriteString("- File and search tool paths are relative to the current workspace unless an absolute path is explicitly inside it.\n")
+	b.WriteString("- Use read only for regular files. Use ls or glob for directories, and use ls first when the path type is unknown.\n")
 	b.WriteString("- Shell commands run from the current workspace by default; use the cwd parameter for subdirectories instead of `cd ... && ...`.\n")
 	b.WriteString("- Do not invent alternate project paths such as /home/user. Use pwd or ls if the workspace appears inconsistent.")
 	return message.Text(message.RoleSystem, b.String()), true

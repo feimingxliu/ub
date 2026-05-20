@@ -110,6 +110,7 @@ func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
 		"<shell>/bin/sh</shell>",
 		"<os>linux</os>",
 		"Do not invent alternate project paths such as /home/user",
+		"Use read only for regular files",
 		"use the cwd parameter",
 	} {
 		if !strings.Contains(runtimeText, want) {
