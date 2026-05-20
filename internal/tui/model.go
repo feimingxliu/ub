@@ -38,6 +38,7 @@ type Options struct {
 	ExecutionMode  string
 	Cwd            string
 	EventTimeout   time.Duration
+	SelectSession  bool
 }
 
 // Run starts the terminal UI and blocks until it exits.
@@ -78,6 +79,7 @@ type Model struct {
 	picker         *modelPicker
 	pickerTarget   string
 	sessions       *sessionPicker
+	files          *filePicker
 	slashIdx       int
 	history        []string
 	histIdx        int
@@ -163,6 +165,12 @@ func NewModel(opts Options) Model {
 		},
 	}
 	m.messages.load(opts.Messages)
+	if opts.SelectSession {
+		updated, _ := m.openSessionPicker()
+		if selected, ok := updated.(Model); ok {
+			m = selected
+		}
+	}
 	return m
 }
 
@@ -329,6 +337,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "esc":
+			if m.files != nil {
+				m.files = nil
+				return m, nil
+			}
 			if m.running {
 				m.interruptCurrent()
 			}
@@ -340,6 +352,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollMessages(-m.pageScrollLines())
 			return m, nil
 		case "up":
+			if m.moveFileSelection(-1) {
+				return m, nil
+			}
 			if m.moveSlashValueSelection(-1) {
 				return m, nil
 			}
@@ -353,6 +368,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "down":
+			if m.moveFileSelection(1) {
+				return m, nil
+			}
 			if m.moveSlashValueSelection(1) {
 				return m, nil
 			}
@@ -371,6 +389,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.running {
 				return m, nil
 			}
+			if m.completeFileMention() {
+				return m, nil
+			}
 			if m.completeSlashValue() {
 				return m, nil
 			}
@@ -387,6 +408,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			if m.completeFileMention() {
+				return m, nil
+			}
 			if updated, cmd, ok := m.acceptSlashValueSuggestion(); ok {
 				return updated, cmd
 			}
@@ -396,8 +420,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if text := strings.TrimSpace(m.input.Value()); text != "" {
 				if strings.HasPrefix(text, "/") {
 					m.input.SetValue("")
+					m.files = nil
 					m.resetPromptHistoryNavigation()
 					return m.executeSlash(text)
+				}
+				if isShellInput(text) {
+					return m.startShell(text, true)
 				}
 				return m.startPrompt(text, true)
 			}
@@ -408,6 +436,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.saveQueuedPromptEdit()
+	m.refreshFilePicker()
 	return m, cmd
 }
 
@@ -459,10 +488,17 @@ func (m Model) footerView(width int) string {
 	var b strings.Builder
 	b.WriteString(m.input.View())
 	b.WriteByte('\n')
+	if hint := m.shellHintView(width); hint != "" {
+		b.WriteString(hint)
+		b.WriteByte('\n')
+	}
 	if picker := m.pickerView(width); picker != "" {
 		b.WriteString(picker)
 		b.WriteByte('\n')
 	} else if picker := m.sessionPickerView(width); picker != "" {
+		b.WriteString(picker)
+		b.WriteByte('\n')
+	} else if picker := m.filePickerView(width); picker != "" {
 		b.WriteString(picker)
 		b.WriteByte('\n')
 	} else if suggestions := m.slashSuggestions(width); suggestions != "" {
@@ -528,6 +564,7 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 	m.recordPromptHistory(text)
 	if clearInput {
 		m.input.SetValue("")
+		m.files = nil
 	}
 	if m.runner == nil {
 		return m, nil
@@ -543,6 +580,40 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 	runID := m.runID
 	m.messages.startActivityGroup(thinkingActivityGroupKey(runID), "Thinking...")
 	return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
+}
+
+func (m Model) startShell(input string, clearInput bool) (tea.Model, tea.Cmd) {
+	input = strings.TrimSpace(input)
+	command := strings.TrimSpace(strings.TrimPrefix(input, "!"))
+	if clearInput {
+		m.input.SetValue("")
+		m.files = nil
+	}
+	if command == "" {
+		m.messages.append(errorRole, "shell command is empty")
+		return m, nil
+	}
+	m.scrollToBottom()
+	m.messages.append(userRole, "!"+command)
+	m.recordPromptHistory("!" + command)
+	runner, ok := m.runner.(ShellRunner)
+	if !ok {
+		m.messages.append(errorRole, "shell execution is unavailable in this runner")
+		return m, nil
+	}
+	m.running = true
+	m.status.state = statusShell
+	ctx, cancel := context.WithCancel(m.ctx)
+	m.cancel = cancel
+	events := make(chan Event, 64)
+	m.events = events
+	m.runID++
+	runID := m.runID
+	return m, tea.Batch(runShell(ctx, runner, command, events), waitForEventWithTimeout(events, runID, m.timeout))
+}
+
+func isShellInput(value string) bool {
+	return strings.HasPrefix(strings.TrimSpace(value), "!")
 }
 
 func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
@@ -672,6 +743,15 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 			m.messages.appendOrUpdateActivity(event)
 		}
 		m.status.state = statusForActivity(event)
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
+	case EventShellOutput:
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
+		role := systemRole
+		if event.IsError {
+			role = errorRole
+		}
+		m.messages.append(role, event.Content)
+		m.status.state = statusShell
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallStart:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
@@ -1129,7 +1209,68 @@ func slashHelp() string {
 		b.WriteString(" - ")
 		b.WriteString(spec.Description)
 	}
+	b.WriteString("\n\ninput:")
+	for _, line := range helpInputLines() {
+		b.WriteByte('\n')
+		b.WriteString("  ")
+		b.WriteString(line)
+	}
+	b.WriteString("\n\nkeyboard:")
+	for _, line := range helpKeyboardLines() {
+		b.WriteByte('\n')
+		b.WriteString("  ")
+		b.WriteString(line)
+	}
+	b.WriteString("\n\npickers and permission:")
+	for _, line := range helpPickerLines() {
+		b.WriteByte('\n')
+		b.WriteString("  ")
+		b.WriteString(line)
+	}
+	b.WriteString("\n\nmouse:")
+	for _, line := range helpMouseLines() {
+		b.WriteByte('\n')
+		b.WriteString("  ")
+		b.WriteString(line)
+	}
 	return b.String()
+}
+
+func helpInputLines() []string {
+	return []string{
+		"!<command> - run a local shell command in the workspace",
+		"@<prefix> - search workspace files and insert a @relative/path reference",
+		"/<command> - open slash command suggestions",
+	}
+}
+
+func helpKeyboardLines() []string {
+	return []string{
+		"Enter - send prompt; while running, queue a normal prompt; with a selected candidate, accept it",
+		"Ctrl+C - quit the TUI, cancelling the current run first",
+		"Esc - cancel an active picker or file search; while running, interrupt the current turn",
+		"Shift+Tab - cycle execution mode: work -> plan -> auto",
+		"PgUp/PgDown - scroll the transcript",
+		"Up/Down - move through suggestions, queued prompts, or prompt history",
+		"Tab - complete slash commands/values or insert the selected @ file",
+	}
+}
+
+func helpPickerLines() []string {
+	return []string{
+		"model/effort/session pickers: Up/Down or k/j/Tab moves selection, Enter selects, Esc cancels",
+		"@ file picker: Up/Down moves selection, Tab/Enter inserts, Esc cancels",
+		"permission modal: Up/Down or k/j/Tab moves decision, Enter confirms, Esc denies and interrupts",
+		"permission modal: 1-5 choose the visible decisions directly",
+		"permission diff preview: d toggles preview, Left/Right switches files when expanded",
+	}
+}
+
+func helpMouseLines() []string {
+	return []string{
+		"wheel - scroll the transcript",
+		"left click - expand/collapse thinking, tool, permission, and tool-detail rows",
+	}
 }
 
 func (m Model) slashSuggestions(width int) string {
@@ -1177,6 +1318,29 @@ func (m Model) sessionPickerView(width int) string {
 		return ""
 	}
 	return m.sessions.view(width, m.styles)
+}
+
+func (m Model) filePickerView(width int) string {
+	if m.files == nil {
+		return ""
+	}
+	return m.files.view(width, m.styles)
+}
+
+func (m Model) shellHintView(width int) string {
+	value := strings.TrimSpace(m.input.Value())
+	if !isShellInput(value) {
+		return ""
+	}
+	command := strings.TrimSpace(strings.TrimPrefix(value, "!"))
+	label := "shell mode · enter runs locally"
+	if command == "" {
+		label = "shell mode · type a command, enter runs locally"
+	}
+	if cwd := strings.TrimSpace(m.status.cwd); cwd != "" {
+		label += " · cwd " + cwd
+	}
+	return m.styles.Render(m.styles.Picker.Title, truncateText(label, width))
 }
 
 func (m Model) modelSuggestions(prefix string, width int) string {
@@ -1291,6 +1455,27 @@ func (m *Model) completeSlash() bool {
 	return true
 }
 
+func (m *Model) completeFileMention() bool {
+	if m.files == nil {
+		return false
+	}
+	selected := m.files.selected()
+	if strings.TrimSpace(selected) == "" {
+		return false
+	}
+	token, ok := activeFileMention(m.input.Value(), m.input.Position())
+	if !ok {
+		m.files = nil
+		return false
+	}
+	next, cursor := insertFileMention(m.input.Value(), token, selected)
+	m.input.SetValue(next)
+	m.input.SetCursor(cursor)
+	m.files = nil
+	m.resetPromptHistoryNavigation()
+	return true
+}
+
 func (m *Model) completeSlashValue() bool {
 	values, command, _, ok := m.slashValueMatches()
 	if !ok || len(values) == 0 {
@@ -1302,6 +1487,38 @@ func (m *Model) completeSlashValue() bool {
 	m.slashIdx = 0
 	m.resetPromptHistoryNavigation()
 	return true
+}
+
+func (m *Model) moveFileSelection(delta int) bool {
+	if m.files == nil {
+		return false
+	}
+	if delta < 0 {
+		m.files.previous()
+	} else {
+		m.files.next()
+	}
+	return true
+}
+
+func (m *Model) refreshFilePicker() {
+	value := m.input.Value()
+	if strings.HasPrefix(strings.TrimSpace(value), "/") {
+		m.files = nil
+		return
+	}
+	token, ok := activeFileMention(value, m.input.Position())
+	if !ok {
+		m.files = nil
+		return
+	}
+	runner, ok := m.runner.(WorkspaceFileRunner)
+	if !ok {
+		m.files = newFilePicker(nil, token.prefix, fmt.Errorf("file selection is unavailable in this runner"))
+		return
+	}
+	files, err := runner.ListWorkspaceFiles(m.ctx, token.prefix, maxFileMentionCandidates)
+	m.files = newFilePicker(files, token.prefix, err)
 }
 
 func (m Model) acceptSlashValueSuggestion() (tea.Model, tea.Cmd, bool) {
@@ -1471,6 +1688,9 @@ func (m *Model) queueInput() bool {
 	if strings.HasPrefix(text, "/") {
 		return false
 	}
+	if isShellInput(text) {
+		return false
+	}
 	if m.queueIdx >= 0 && m.queueIdx < len(m.queuedPrompts) {
 		m.queuedPrompts[m.queueIdx] = text
 		m.resetQueuedPromptNavigation()
@@ -1478,6 +1698,7 @@ func (m *Model) queueInput() bool {
 		m.queuedPrompts = append(m.queuedPrompts, text)
 	}
 	m.input.SetValue("")
+	m.files = nil
 	m.input.CursorEnd()
 	m.resetPromptHistoryNavigation()
 	return true

@@ -2,8 +2,11 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +25,8 @@ import (
 	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/spf13/cobra"
 )
+
+const resumeSelectSentinel = "latest"
 
 func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 	logger, cleanupLog, logPath, err := logx.SetupTUIFromEnvWithRotation(cmd.ErrOrStderr(), logRotationOptions(cfg))
@@ -50,8 +55,9 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 		}
 	}()
 
-	if strings.TrimSpace(resume) != "" {
-		sessionID, err := resolveResumeSessionID(cmd, resume)
+	selectSessionOnStart := strings.TrimSpace(resume) == resumeSelectSentinel
+	if strings.TrimSpace(resume) != "" && !selectSessionOnStart {
+		sessionID, err := resolveResumeSessionID(resume)
 		if err != nil {
 			return err
 		}
@@ -80,6 +86,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 		ExecutionMode:  string(runner.mode),
 		Cwd:            cwd,
 		EventTimeout:   runner.eventTimeout,
+		SelectSession:  selectSessionOnStart,
 	})
 	if err != nil {
 		logger.Error("tui failed", "err", err)
@@ -237,6 +244,121 @@ func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) e
 		r.state.history = result.Messages
 	}
 	return finishChatSession(r.cmd, r.state, "", r.model)
+}
+
+func (r *tuiAgentRunner) RunShell(ctx context.Context, command string, events chan<- tui.Event) error {
+	if r == nil || r.tools == nil || r.tools.Registry == nil {
+		return fmt.Errorf("shell execution is unavailable")
+	}
+	bash, ok := r.tools.Registry.Get("bash")
+	if !ok {
+		return fmt.Errorf("bash tool is unavailable")
+	}
+	raw, err := json.Marshal(map[string]any{
+		"command": command,
+		"cwd":     ".",
+	})
+	if err != nil {
+		return err
+	}
+	result, execErr := bash.Execute(ctx, raw)
+	content := strings.TrimRight(result.Content, "\n")
+	isError := result.IsError
+	if execErr != nil {
+		content = execErr.Error()
+		isError = true
+	}
+	sendTUIEvent(ctx, events, tui.Event{
+		Type:    tui.EventShellOutput,
+		Content: formatShellOutput(content, isError),
+		IsError: isError,
+	})
+	sendTUIEvent(ctx, events, tui.Event{Type: tui.EventDone})
+	return nil
+}
+
+func formatShellOutput(content string, isError bool) string {
+	content = strings.TrimRight(content, "\n")
+	if content == "" {
+		return "(no output)"
+	}
+	parsed, ok := parseShellToolOutput(content)
+	if !ok {
+		return content
+	}
+	var parts []string
+	if strings.TrimSpace(parsed.stdout) != "" {
+		parts = append(parts, strings.TrimRight(parsed.stdout, "\n"))
+	}
+	if strings.TrimSpace(parsed.stderr) != "" {
+		stderr := strings.TrimRight(parsed.stderr, "\n")
+		if len(parts) > 0 {
+			parts = append(parts, "--- stderr ---\n"+stderr)
+		} else {
+			parts = append(parts, stderr)
+		}
+	}
+	if strings.TrimSpace(parsed.errorLine) != "" {
+		parts = append(parts, "error: "+parsed.errorLine)
+	}
+	if isError && parsed.exitCode != "" && parsed.exitCode != "0" {
+		parts = append(parts, "exit code: "+parsed.exitCode)
+	}
+	if len(parts) == 0 {
+		if isError && parsed.exitCode != "" && parsed.exitCode != "0" {
+			return "exit code: " + parsed.exitCode
+		}
+		return "(no output)"
+	}
+	return strings.Join(parts, "\n")
+}
+
+type shellToolOutput struct {
+	exitCode  string
+	errorLine string
+	stdout    string
+	stderr    string
+}
+
+func parseShellToolOutput(content string) (shellToolOutput, bool) {
+	stdoutMarker := "\n--- stdout ---\n"
+	stderrMarker := "\n--- stderr ---"
+	stdoutStart := strings.Index(content, stdoutMarker)
+	if stdoutStart < 0 {
+		return shellToolOutput{}, false
+	}
+	stderrStart := strings.Index(content[stdoutStart+len(stdoutMarker):], stderrMarker)
+	if stderrStart < 0 {
+		return shellToolOutput{}, false
+	}
+	stderrStart += stdoutStart + len(stdoutMarker)
+	header := content[:stdoutStart]
+	stdout := content[stdoutStart+len(stdoutMarker) : stderrStart]
+	stderr := strings.TrimPrefix(content[stderrStart+len(stderrMarker):], "\n")
+	parsed := shellToolOutput{
+		exitCode:  shellHeaderValue(header, "exit_code"),
+		errorLine: shellHeaderValue(header, "error"),
+		stdout:    stdout,
+		stderr:    stderr,
+	}
+	return parsed, true
+}
+
+func shellHeaderValue(header, key string) string {
+	prefix := key + "="
+	for _, line := range strings.Split(header, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
+func (r *tuiAgentRunner) ListWorkspaceFiles(ctx context.Context, query string, limit int) ([]string, error) {
+	if r == nil || r.tools == nil || strings.TrimSpace(r.tools.Workspace) == "" {
+		return nil, fmt.Errorf("workspace is unavailable")
+	}
+	return listWorkspaceFiles(ctx, r.tools.Workspace, query, limit)
 }
 
 func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) (*agent.Agent, error) {
@@ -538,22 +660,116 @@ func modelInList(models []string, model string) bool {
 	return false
 }
 
-func resolveResumeSessionID(cmd *cobra.Command, resume string) (string, error) {
+func resolveResumeSessionID(resume string) (string, error) {
 	resume = strings.TrimSpace(resume)
 	if resume == "" {
 		return "", fmt.Errorf("resume session id is empty")
 	}
-	if resume != "latest" {
-		return resume, nil
+	if resume == resumeSelectSentinel {
+		return "", fmt.Errorf("resume session id is empty")
 	}
-	sessions, err := listCurrentWorkspaceSessions(cmd.Context(), 1)
+	return resume, nil
+}
+
+type fileCandidate struct {
+	path  string
+	score int
+}
+
+func listWorkspaceFiles(ctx context.Context, root, query string, limit int) ([]string, error) {
+	root = filepath.Clean(root)
+	if limit <= 0 {
+		limit = 50
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	var candidates []fileCandidate
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		if path == root {
+			return nil
+		}
+		if entry.IsDir() {
+			if excludedFileMentionDir(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		score, ok := fileMentionMatchScore(rel, query)
+		if !ok {
+			return nil
+		}
+		candidates = append(candidates, fileCandidate{path: rel, score: score})
+		return nil
+	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if len(sessions) == 0 {
-		return "", fmt.Errorf("no sessions to resume in this workspace")
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score < candidates[j].score
+		}
+		if len(candidates[i].path) != len(candidates[j].path) {
+			return len(candidates[i].path) < len(candidates[j].path)
+		}
+		return candidates[i].path < candidates[j].path
+	})
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
 	}
-	return sessions[0].ID, nil
+	out := make([]string, len(candidates))
+	for i, candidate := range candidates {
+		out[i] = candidate.path
+	}
+	return out, nil
+}
+
+func excludedFileMentionDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	switch name {
+	case "node_modules", "vendor", "dist", "build":
+		return true
+	default:
+		return false
+	}
+}
+
+func fileMentionMatchScore(path, query string) (int, bool) {
+	if query == "" {
+		return 0, true
+	}
+	path = strings.ToLower(path)
+	base := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.HasPrefix(path, query):
+		return 0, true
+	case strings.HasPrefix(base, query):
+		return 1, true
+	case strings.Contains(path, query):
+		return 2, true
+	default:
+		return 0, false
+	}
 }
 
 func listCurrentWorkspaceSessions(ctx context.Context, limit int) ([]store.Session, error) {
@@ -571,6 +787,16 @@ func listCurrentWorkspaceSessions(ctx context.Context, limit int) ([]store.Sessi
 		return nil, fmt.Errorf("get cwd: %w", err)
 	}
 	return st.ListSessions(ctx, cwd, limit)
+}
+
+func firstLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return strings.TrimSpace(text)
 }
 
 func messagesForTUI(history []message.Message) []tui.InitialMessage {

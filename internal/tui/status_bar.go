@@ -29,6 +29,7 @@ const (
 	statusThinking   = "thinking"
 	statusStreaming  = "streaming"
 	statusTool       = "tool"
+	statusShell      = "shell"
 	statusFinalizing = "finalizing"
 	statusSeparator  = " │ "
 )

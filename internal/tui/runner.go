@@ -13,6 +13,16 @@ type Runner interface {
 	Run(ctx context.Context, prompt string, events chan<- Event) error
 }
 
+// ShellRunner optionally lets the TUI run a local shell command directly.
+type ShellRunner interface {
+	RunShell(ctx context.Context, command string, events chan<- Event) error
+}
+
+// WorkspaceFileRunner optionally lets the TUI list workspace files for @ mentions.
+type WorkspaceFileRunner interface {
+	ListWorkspaceFiles(ctx context.Context, query string, limit int) ([]string, error)
+}
+
 // CompactRunner optionally lets slash commands compact the current session.
 type CompactRunner interface {
 	Compact(ctx context.Context, events chan<- Event) error
@@ -81,6 +91,7 @@ const (
 	EventToolCallStart EventType = "tool_call_start"
 	EventToolCallEnd   EventType = "tool_call_end"
 	EventPermission    EventType = "permission"
+	EventShellOutput   EventType = "shell_output"
 	EventDone          EventType = "done"
 	EventError         EventType = "error"
 )
@@ -145,6 +156,16 @@ func runPrompt(ctx context.Context, runner Runner, prompt string, events chan<- 
 	return func() tea.Msg {
 		defer close(events)
 		if err := runner.Run(ctx, prompt, events); err != nil {
+			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+		}
+		return nil
+	}
+}
+
+func runShell(ctx context.Context, runner ShellRunner, command string, events chan<- Event) tea.Cmd {
+	return func() tea.Msg {
+		defer close(events)
+		if err := runner.RunShell(ctx, command, events); err != nil {
 			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
 		}
 		return nil

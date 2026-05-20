@@ -534,8 +534,9 @@
 - **依赖**：I-22 / I-14
 - **In Scope**：`/model`、`/approval-model`、`/mode`、`/clear`、`/new`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
 - **补充要求**：`/approval-model [model]` 只切换 auto 模式使用的审批模型；无参数时展示候选列表，显式指定时校验候选模型，切换后重建 approval agent 并只影响后续命令审批
-- **Out of Scope**：自定义 alias、命令补全
-- **验证**：手测每个命令；单测命令解析
+- **补充要求**：TUI 支持 `!cmd` 本地直跑 shell（输入区提示 shell 模式，输出直接显示，不渲染为 tool 调用，不走模型 / 审批 / rollout）和 `@` workspace 文件候选插入路径引用
+- **Out of Scope**：自定义 alias
+- **验证**：手测每个命令；单测命令解析、`/help` 快捷键覆盖、`!` 本地执行、`@` 文件候选插入
 
 ---
 
@@ -624,7 +625,7 @@
 - **目标**：重启后能继续上次的会话
 - **依赖**：I-09 / I-22
 - **In Scope**：
-  - `ub --resume`（拉最近一个 session）
+  - `ub --resume` 打开当前 workspace 的历史 session 选择器
   - `ub --resume=<id>` / `ub --resume <id>`
   - TUI 内 `/sessions` 选择或切换历史 session
   - TUI 启动时如果有最近 session 询问是否 resume

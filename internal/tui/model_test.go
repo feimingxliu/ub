@@ -992,6 +992,36 @@ func TestSlashHelpDoesNotCallRunner(t *testing.T) {
 	}
 }
 
+func TestSlashHelpListsShortcuts(t *testing.T) {
+	help := slashHelp()
+	for _, want := range []string{
+		"input:",
+		"!<command> - run a local shell command",
+		"@<prefix> - search workspace files",
+		"keyboard:",
+		"Enter - send prompt",
+		"Ctrl+C - quit",
+		"Esc - cancel an active picker",
+		"Shift+Tab - cycle execution mode",
+		"PgUp/PgDown - scroll the transcript",
+		"Up/Down - move through suggestions",
+		"Tab - complete slash commands",
+		"pickers and permission:",
+		"model/effort/session pickers",
+		"@ file picker",
+		"permission modal",
+		"1-5 choose",
+		"d toggles preview",
+		"Left/Right switches files",
+		"mouse:",
+		"left click - expand/collapse",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("slashHelp missing %q:\n%s", want, help)
+		}
+	}
+}
+
 func TestSlashCompactRunsCompactRunner(t *testing.T) {
 	runner := &scriptedRunner{compactEvents: []Event{
 		{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "compacted 4 earlier messages"},
@@ -1783,6 +1813,133 @@ func TestSlashSessionsPickerSwitchesSession(t *testing.T) {
 	}
 }
 
+func TestSelectSessionOnStartOpensPicker(t *testing.T) {
+	runner := &scriptedRunner{
+		sessions: []SessionInfo{
+			{ID: "s1", Title: "First", Model: "fake/one"},
+			{ID: "s2", Title: "Second", Model: "fake/two"},
+		},
+		sessionStates: map[string]SessionState{
+			"s1": {
+				ID:    "s1",
+				Model: "fake/one",
+				Turn:  2,
+				Messages: []InitialMessage{
+					{Role: userRole, Text: "restored prompt"},
+				},
+			},
+		},
+	}
+	model := NewModel(Options{Runner: runner, Model: "fake/default", SelectSession: true})
+	if !strings.Contains(model.View(), "select session") || !strings.Contains(model.View(), "s1") {
+		t.Fatalf("startup session picker missing:\n%s", model.View())
+	}
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.currentSessionID != "s1" {
+		t.Fatalf("current session = %q, want s1", runner.currentSessionID)
+	}
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"restored prompt", "session set to s1"}) {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestBangShellRunsLocallyWithoutAgentPrompt(t *testing.T) {
+	runner := &scriptedRunner{
+		shellEvents: []Event{
+			{Type: EventShellOutput, Content: "hello"},
+			{Type: EventDone},
+		},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "!echo hello")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("bang shell returned nil command")
+	}
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+	if runner.calls != 0 {
+		t.Fatalf("agent calls = %d, want 0", runner.calls)
+	}
+	if runner.shellCalls != 1 || !reflect.DeepEqual(runner.shellCommands, []string{"echo hello"}) {
+		t.Fatalf("shell calls/commands = %d/%#v, want one echo", runner.shellCalls, runner.shellCommands)
+	}
+	got := model.MessageTexts()
+	if len(got) != 2 || got[0] != "!echo hello" || !strings.Contains(got[1], "hello") {
+		t.Fatalf("messages = %#v, want local command and output", got)
+	}
+	if strings.Contains(model.View(), "tool bash") || strings.Contains(model.View(), "local_shell") {
+		t.Fatalf("shell run rendered as tool activity:\n%s", model.View())
+	}
+}
+
+func TestBangShellInputShowsShellModeHint(t *testing.T) {
+	model := NewModel(Options{Runner: &scriptedRunner{}, Cwd: "/tmp/work"})
+	model = sendText(t, model, "!")
+	view := model.View()
+	if !strings.Contains(view, "shell mode") || !strings.Contains(view, "enter runs locally") {
+		t.Fatalf("shell hint missing:\n%s", view)
+	}
+	if !strings.Contains(view, "cwd /tmp/work") {
+		t.Fatalf("shell hint missing cwd:\n%s", view)
+	}
+}
+
+func TestBangShellWhileRunningStaysInInput(t *testing.T) {
+	model := NewModel(Options{Runner: &scriptedRunner{}})
+	model.running = true
+	model = sendText(t, model, "!date")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("running bang shell returned unexpected command")
+	}
+	if got := model.InputValue(); got != "!date" {
+		t.Fatalf("input = %q, want command left in place", got)
+	}
+	if got := model.QueuedPrompts(); len(got) != 0 {
+		t.Fatalf("queued prompts = %#v, want none for bang shell", got)
+	}
+}
+
+func TestAtFilePickerInsertsMentionPath(t *testing.T) {
+	runner := &scriptedRunner{
+		workspaceFiles: []string{"internal/tui/model.go", "README.md"},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "read @mod")
+	if !strings.Contains(model.View(), "attach file") || !strings.Contains(model.View(), "internal/tui/model.go") {
+		t.Fatalf("file picker missing:\n%s", model.View())
+	}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if cmd != nil {
+		t.Fatalf("file picker tab returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "read @internal/tui/model.go " {
+		t.Fatalf("input = %q, want inserted file mention", got)
+	}
+}
+
+func TestAtFilePickerQuotesPathsWithSpaces(t *testing.T) {
+	runner := &scriptedRunner{
+		workspaceFiles: []string{"docs/my note.md"},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "read @note")
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != `read @"docs/my note.md" ` {
+		t.Fatalf("input = %q, want quoted file mention", got)
+	}
+}
+
 func TestViewWrapsLongMessagesToWidth(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 24, Height: 20})
@@ -1970,6 +2127,10 @@ type scriptedRunner struct {
 	currentSessionID string
 	newSessionState  SessionState
 	newSessionCalls  int
+	shellEvents      []Event
+	shellCalls       int
+	shellCommands    []string
+	workspaceFiles   []string
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -1987,6 +2148,35 @@ func (r *scriptedRunner) Compact(_ context.Context, events chan<- Event) error {
 		events <- event
 	}
 	return nil
+}
+
+func (r *scriptedRunner) RunShell(_ context.Context, command string, events chan<- Event) error {
+	r.shellCalls++
+	r.shellCommands = append(r.shellCommands, command)
+	if len(r.shellEvents) == 0 {
+		events <- Event{Type: EventShellOutput, Content: "(no output)"}
+		events <- Event{Type: EventDone}
+		return nil
+	}
+	for _, event := range r.shellEvents {
+		events <- event
+	}
+	return nil
+}
+
+func (r *scriptedRunner) ListWorkspaceFiles(_ context.Context, query string, limit int) ([]string, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	var out []string
+	for _, path := range r.workspaceFiles {
+		if query != "" && !strings.Contains(strings.ToLower(path), query) {
+			continue
+		}
+		out = append(out, path)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (r *scriptedRunner) SetModel(model string) error {
