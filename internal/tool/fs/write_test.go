@@ -75,6 +75,9 @@ func TestWrite_ExecuteCreatesParentDirs(t *testing.T) {
 	if len(res.Files) != 1 || res.Files[0].Path != "dir/new.txt" || res.Files[0].Kind != tool.KindCreate {
 		t.Fatalf("unexpected Result.Files: %+v", res.Files)
 	}
+	if !strings.Contains(res.Files[0].UnifiedDiff, "+x") {
+		t.Fatalf("execute result diff missing +x:\n%s", res.Files[0].UnifiedDiff)
+	}
 	b, err := os.ReadFile(filepath.Join(root, "dir", "new.txt"))
 	if err != nil {
 		t.Fatalf("read after execute: %v", err)

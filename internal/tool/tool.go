@@ -93,7 +93,8 @@ type Result struct {
 }
 
 // FileChange mirrors FileDiff at execution time. UnifiedDiff is optional
-// because some tools (e.g. write) may not regenerate a diff post-write.
+// because non-file tools, read-only tools, or external integrations may only
+// be able to report a path/kind summary.
 type FileChange struct {
 	Path        string `json:"path"`
 	Kind        string `json:"kind"`

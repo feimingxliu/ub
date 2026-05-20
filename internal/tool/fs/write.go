@@ -90,10 +90,11 @@ func (t *writeTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resu
 	}
 	rel, _ := relToRoot(t.root, abs)
 
-	_, kind, err := readForDiff(abs)
+	old, kind, err := readForDiff(abs)
 	if err != nil {
 		return tool.Result{}, err
 	}
+	diff := udiff.Unified(rel, rel, old, a.Content)
 
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return tool.Result{}, fmt.Errorf("write: mkdir %s: %w", filepath.Dir(rel), err)
@@ -105,8 +106,9 @@ func (t *writeTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resu
 	return tool.Result{
 		Content: fmt.Sprintf("wrote %s (%d bytes)%s", rel, len(a.Content), notifySuffix),
 		Files: []tool.FileChange{{
-			Path: rel,
-			Kind: kind,
+			Path:        rel,
+			Kind:        kind,
+			UnifiedDiff: diff,
 		}},
 	}, nil
 }

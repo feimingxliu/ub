@@ -389,7 +389,13 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 	if result.IsError {
 		status = "failed"
 	}
-	a.emitToolActivity(call, status, summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), result.IsError)
+	summary := summarizeToolInput(call.Name, call.Input)
+	content := summarizeToolResult(result)
+	if len(result.Files) > 0 {
+		summary = summarizeToolResult(result)
+		content = toolResultDetail(result)
+	}
+	a.emitToolActivity(call, status, summary, content, result.IsError)
 	return result
 }
 

@@ -125,6 +125,7 @@ func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	if err != nil {
 		return tool.Result{}, err
 	}
+	diff := udiff.Unified(rel, rel, string(before), after)
 	// re-check the file just before writing to detect concurrent changes
 	// between Preview and Execute.
 	current, err := readFileFn(abs)
@@ -141,8 +142,9 @@ func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	return tool.Result{
 		Content: fmt.Sprintf("edited %s (%d replacement(s))%s", rel, count, notifySuffix),
 		Files: []tool.FileChange{{
-			Path: rel,
-			Kind: tool.KindModify,
+			Path:        rel,
+			Kind:        tool.KindModify,
+			UnifiedDiff: diff,
 		}},
 	}, nil
 }

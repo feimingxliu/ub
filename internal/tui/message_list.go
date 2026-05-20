@@ -72,11 +72,13 @@ type renderedMessages struct {
 }
 
 type messageSpan struct {
-	itemIndex int
-	start     int
-	end       int
-	startCol  int
-	endCol    int
+	itemIndex  int
+	entryIndex int
+	entry      bool
+	start      int
+	end        int
+	startCol   int
+	endCol     int
 }
 
 func newMessageList() messageList {
@@ -339,7 +341,23 @@ func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.
 		if x < span.startCol || x >= span.endCol {
 			continue
 		}
-		if span.itemIndex < 0 || span.itemIndex >= len(l.items) || !l.items[span.itemIndex].collapsible() {
+		if span.itemIndex < 0 || span.itemIndex >= len(l.items) {
+			return false
+		}
+		if span.entry {
+			group := &l.items[span.itemIndex]
+			if group.kind != activityGroupMessage || span.entryIndex < 0 || span.entryIndex >= len(group.entries) {
+				return false
+			}
+			entry := &group.entries[span.entryIndex]
+			if !entry.collapsible() || !activityEntryHasDetail(*entry) {
+				return false
+			}
+			l.focus = span.itemIndex
+			entry.collapsed = !entry.collapsed
+			return true
+		}
+		if !l.items[span.itemIndex].collapsible() {
 			return false
 		}
 		l.focus = span.itemIndex
@@ -388,6 +406,13 @@ func (l messageList) render(width int, styles tuitheme.Styles) renderedMessages 
 		}
 		item := l.items[i]
 		start := len(out)
+		if item.kind == activityGroupMessage {
+			lines, itemSpans := renderActivityGroupBlockWithSpans(item, i == l.focus, width, styles, i, start)
+			out = append(out, lines...)
+			spans = append(spans, itemSpans...)
+			i++
+			continue
+		}
 		out = append(out, l.renderItem(item, i == l.focus, width, styles)...)
 		spans = append(spans, messageSpan{itemIndex: i, start: start, end: len(out), endCol: contentWidth(width)})
 		i++
@@ -520,6 +545,9 @@ func renderActivityBlock(item message, focused bool, width int, styles tuitheme.
 	if detail == "" {
 		detail = item.text
 	}
+	if item.kind == toolMessage {
+		return appendToolDetailLines(out, detail, "└ ", width, styles)
+	}
 	detailLines := wrapText(detail, max(10, contentWidth(width)-2))
 	for _, line := range detailLines {
 		out = append(out, styles.Render(activity.Detail, "└ "+line))
@@ -528,6 +556,11 @@ func renderActivityBlock(item message, focused bool, width int, styles tuitheme.
 }
 
 func renderActivityGroupBlock(item message, focused bool, width int, styles tuitheme.Styles) []string {
+	lines, _ := renderActivityGroupBlockWithSpans(item, focused, width, styles, -1, 0)
+	return lines
+}
+
+func renderActivityGroupBlockWithSpans(item message, focused bool, width int, styles tuitheme.Styles, itemIndex, startLine int) ([]string, []messageSpan) {
 	marker := "▸ "
 	if !item.collapsed {
 		marker = "▾ "
@@ -543,28 +576,143 @@ func renderActivityGroupBlock(item message, focused bool, width int, styles tuit
 		style = styles.Focus
 	}
 	out := []string{styles.Render(style, line)}
+	spans := []messageSpan{{
+		itemIndex: itemIndex,
+		start:     startLine,
+		end:       startLine + 1,
+		endCol:    contentWidth(width),
+	}}
 	if item.collapsed {
-		return out
+		return out, spans
 	}
 	if len(item.entries) == 0 {
-		return append(out, styles.Render(styles.Tool.Detail, "└ no activity"))
+		return append(out, styles.Render(styles.Tool.Detail, "└ no activity")), spans
 	}
-	for _, entry := range item.entries {
-		entryLine := activityEntryLine(entry, contentWidth(width)-2)
+	twoStageDetails := item.name == toolGroupName
+	for entryIndex, entry := range item.entries {
+		entryLine := activityEntryLine(entry, contentWidth(width)-2, twoStageDetails)
+		lineIndex := startLine + len(out)
 		out = append(out, styles.Render(activityDetailStyle(entry, styles), "└ "+entryLine))
-		if detail := expandedDetail(entry); detail != "" {
-			for _, detailLine := range wrapText(detail, max(10, contentWidth(width)-4)) {
-				out = append(out, styles.Render(styles.Tool.Detail, "  "+detailLine))
-			}
+		if twoStageDetails && activityEntryHasDetail(entry) {
+			spans = append(spans, messageSpan{
+				itemIndex:  itemIndex,
+				entryIndex: entryIndex,
+				entry:      true,
+				start:      lineIndex,
+				end:        lineIndex + 1,
+				endCol:     contentWidth(width),
+			})
+		}
+		if detail := expandedDetail(entry); detail != "" && (!twoStageDetails || !entry.collapsed) {
+			out = appendActivityEntryDetailLines(out, entry, detail, "  ", width, styles)
+		}
+	}
+	return out, spans
+}
+
+func activityEntryLine(entry message, width int, twoStageDetails bool) string {
+	marker := "  "
+	if twoStageDetails && activityEntryHasDetail(entry) {
+		marker = "▸ "
+		if !entry.collapsed {
+			marker = "▾ "
+		}
+	}
+	icon := activityStatusIcon(entry.kind, entry.status)
+	title := defaultString(entry.title, entry.text)
+	return truncateText(marker+icon+" "+title, width)
+}
+
+func activityEntryHasDetail(entry message) bool {
+	return strings.TrimSpace(entry.detail) != ""
+}
+
+func appendActivityEntryDetailLines(out []string, entry message, detail, prefix string, width int, styles tuitheme.Styles) []string {
+	if entry.kind == toolMessage {
+		return appendToolDetailLines(out, detail, prefix, width, styles)
+	}
+	style := styles.Tool.Detail
+	if entry.kind == thinkingMessage {
+		style = styles.Thinking.Detail
+	}
+	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
+	for _, line := range wrapText(detail, textWidth) {
+		out = append(out, styles.Render(style, prefix+line))
+	}
+	return out
+}
+
+func appendToolDetailLines(out []string, detail, prefix string, width int, styles tuitheme.Styles) []string {
+	if strings.TrimSpace(detail) == "" {
+		return out
+	}
+	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
+	for _, line := range strings.Split(detail, "\n") {
+		style := toolDetailLineStyle(line, styles)
+		for _, wrapped := range wrapLine(line, textWidth) {
+			out = append(out, styles.Render(style, prefix+wrapped))
 		}
 	}
 	return out
 }
 
-func activityEntryLine(entry message, width int) string {
-	icon := activityStatusIcon(entry.kind, entry.status)
-	title := defaultString(entry.title, entry.text)
-	return truncateText(icon+" "+title, width)
+func toolDetailLineStyle(line string, styles tuitheme.Styles) lipgloss.Style {
+	switch toolDetailLineKind(line) {
+	case toolDetailSummaryLine:
+		return styles.Diff.Path
+	case toolDetailHeaderLine:
+		return styles.Diff.Header
+	case toolDetailAddedLine:
+		return styles.Diff.Added
+	case toolDetailRemovedLine:
+		return styles.Diff.Removed
+	case toolDetailBlankLine:
+		return styles.Tool.Detail
+	default:
+		return styles.Diff.Context
+	}
+}
+
+type toolDetailLineKindValue int
+
+const (
+	toolDetailContextLine toolDetailLineKindValue = iota
+	toolDetailSummaryLine
+	toolDetailHeaderLine
+	toolDetailAddedLine
+	toolDetailRemovedLine
+	toolDetailBlankLine
+)
+
+func toolDetailLineKind(line string) toolDetailLineKindValue {
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case isFileChangeSummaryLine(trimmed):
+		return toolDetailSummaryLine
+	case strings.HasPrefix(trimmed, "@@"), strings.HasPrefix(trimmed, "+++"), strings.HasPrefix(trimmed, "---"):
+		return toolDetailHeaderLine
+	case strings.HasPrefix(trimmed, "+"):
+		return toolDetailAddedLine
+	case strings.HasPrefix(trimmed, "-"):
+		return toolDetailRemovedLine
+	case strings.TrimSpace(trimmed) == "":
+		return toolDetailBlankLine
+	default:
+		return toolDetailContextLine
+	}
+}
+
+func isFileChangeSummaryLine(line string) bool {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return false
+	}
+	switch fields[0] {
+	case "create", "modify", "delete", "changed":
+		return true
+	default:
+		return false
+	}
 }
 
 func activityDetailStyle(entry message, styles tuitheme.Styles) lipgloss.Style {

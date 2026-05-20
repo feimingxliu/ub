@@ -139,7 +139,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **loop detection**：Crush 有 `loop_detection.go`（同一 tool call 重复 N 次抑制），V2 引入
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
 - **执行模式**：`mode` 从 session / CLI / profile 注入，影响 write/exec tool 的放行路径；模式切换写 `ModeSwitch` 事件
-- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；工具 activity 只展示白名单摘要、截断长文本并遮蔽 secret。
+- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit 工具项需要再次点击才展开 colored unified diff；工具 activity 只展示白名单摘要、截断长文本并遮蔽 secret。
 - **TUI 消息队列**：同一 session 内 Agent turn 仍保持串行。运行中用户输入普通消息并回车时，TUI 只写入本地 FIFO 队列，不并发调用 Agent；当前 stream 正常关闭后自动取队首启动下一轮。排队消息在真正启动前不写入 rollout，避免被中断或编辑后的草稿污染历史；运行中上下方向键优先进入队列编辑，再退回普通历史输入浏览。
 
 ## 4. Tool 系统
@@ -178,6 +178,12 @@ type Result struct {
     IsError bool
     Files   []FileChange                     // 执行后的实际改动摘要（可与 Preview 不完全一致，例如并发修改）
 }
+
+type FileChange struct {
+    Path        string
+    Kind        string                       // "create" / "modify" / "delete"
+    UnifiedDiff string                       // 可选；write/edit Execute 会带上实际写盘 diff，供 TUI 展开详情
+}
 ```
 
 **风险等级**：
@@ -205,7 +211,7 @@ type Result struct {
 ```
 
 **关键 tool 实现要点**：
-- `edit` / `write` / `multiedit`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘
+- `edit` / `write` / `multiedit`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘，并在 `FileChange.UnifiedDiff` 中返回实际变更，TUI 默认只展示摘要，鼠标展开 tool 区域后先展示工具摘要，再点击对应工具项才展示着色的文件级详情
 - `bash`：用 `os/exec` 拉子进程，stdout/stderr 流式回传；超时默认 120s；不实现 Preview（命令是黑盒）
 - `job_run`：返回 `job_id`，进程交给后台 goroutine 管理；`job_output` 读流；`job_kill` SIGTERM/SIGKILL
 - tool 参数解析对模型常见 JSON 标量抖动做窄容错：整数参数接受整数或整数字符串，布尔参数接受布尔值或 `"true"` / `"false"`，但 JSON Schema 仍对外声明真实 integer/boolean 类型

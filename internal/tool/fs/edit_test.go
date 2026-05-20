@@ -60,6 +60,9 @@ func TestEdit_MultiMatchReplaceAll(t *testing.T) {
 	if len(res.Files) != 1 || res.Files[0].Kind != tool.KindModify {
 		t.Fatalf("Result.Files: %+v", res.Files)
 	}
+	if !strings.Contains(res.Files[0].UnifiedDiff, "-x") || !strings.Contains(res.Files[0].UnifiedDiff, "+y") {
+		t.Fatalf("execute result diff missing -x/+y:\n%s", res.Files[0].UnifiedDiff)
+	}
 }
 
 func TestEdit_ReplaceAllAcceptsBooleanString(t *testing.T) {

@@ -9,7 +9,10 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
-const maxActivitySummaryRunes = 180
+const (
+	maxActivitySummaryRunes = 180
+	maxActivityDetailRunes  = 4000
+)
 
 func (a *Agent) emitThinkingActivity(summary, detail string) {
 	if strings.TrimSpace(summary) == "" && strings.TrimSpace(detail) == "" {
@@ -31,7 +34,7 @@ func (a *Agent) emitToolActivity(call toolCall, status, summary, content string,
 		ToolName:     call.Name,
 		Status:       status,
 		Summary:      truncateActivitySummary(summary),
-		Content:      truncateActivitySummary(content),
+		Content:      truncateActivityDetail(content),
 		IsError:      isError,
 	})
 }
@@ -146,6 +149,37 @@ func summarizeToolResult(result tool.Result) string {
 	return truncateActivitySummary(redactText("content", firstLine(content)))
 }
 
+func toolResultDetail(result tool.Result) string {
+	if len(result.Files) == 0 {
+		return summarizeToolResult(result)
+	}
+	var b strings.Builder
+	for _, file := range result.Files {
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			path = "file"
+		}
+		kind := strings.TrimSpace(file.Kind)
+		if kind == "" {
+			kind = "changed"
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(kind)
+		b.WriteString(" ")
+		b.WriteString(path)
+		if diff := strings.TrimRight(file.UnifiedDiff, "\n"); strings.TrimSpace(diff) != "" {
+			b.WriteString("\n")
+			b.WriteString(diff)
+		}
+	}
+	if strings.TrimSpace(b.String()) == "" {
+		return summarizeToolResult(result)
+	}
+	return b.String()
+}
+
 func reasoningSummary(text, fallback string) string {
 	text = strings.TrimSpace(text)
 	if text != "" {
@@ -246,4 +280,21 @@ func truncateActivitySummary(text string) string {
 		return text
 	}
 	return string(runes[:maxActivitySummaryRunes-3]) + "..."
+}
+
+func truncateActivityDetail(text string) string {
+	text = strings.TrimRight(text, " \t\r\n")
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) <= maxActivityDetailRunes {
+		return text
+	}
+	marker := "\n... (truncated)"
+	budget := maxActivityDetailRunes - len([]rune(marker))
+	if budget < 0 {
+		budget = 0
+	}
+	return strings.TrimRight(string(runes[:budget]), " \t\r\n") + marker
 }

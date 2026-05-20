@@ -156,7 +156,7 @@
 
 - F-TUI-1：主界面：聊天区（80%）+ 状态栏（model / effort / mode / context used/max/% / cwd）
 - F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式（包括运行中和审批弹窗中）；Esc 中断当前操作而不是退出；聊天区支持 PageUp/PageDown 和鼠标滚轮滚动历史输出
-- F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作
+- F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作；write / edit 工具完成后的活动摘要默认折叠，鼠标展开工具组后 MUST 只显示文件级变更摘要，再点击对应 write / edit 工具项后 MUST 展开文件级变更详情（优先 unified diff），且 diff 元信息、增删行必须有明显着色
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
 - F-TUI-5：命令：`/model`、`/approval-model`、`/effort`、`/mode`、`/compact`、`/clear`、`/new`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/compact` 主动压缩当前 session 上下文；`/clear` 只清空当前聊天区显示；`/new` 创建并切换到新的空 session，同时清空本地消息、排队输入和 context 状态栏；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级
 - F-TUI-6：TUI 启动支持 `ub --resume` 恢复最近 session，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session

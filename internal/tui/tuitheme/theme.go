@@ -88,10 +88,14 @@ type InputStyles struct {
 }
 
 type DiffStyles struct {
-	Tabs lipgloss.Style
-	Path lipgloss.Style
-	Kind lipgloss.Style
-	Help lipgloss.Style
+	Tabs    lipgloss.Style
+	Path    lipgloss.Style
+	Kind    lipgloss.Style
+	Help    lipgloss.Style
+	Header  lipgloss.Style
+	Added   lipgloss.Style
+	Removed lipgloss.Style
+	Context lipgloss.Style
 }
 
 // Default returns the built-in theme. The palette is restrained and keeps
@@ -178,6 +182,10 @@ func Default() Styles {
 	s.Diff.Path = teal.Copy().Bold(true)
 	s.Diff.Kind = amber
 	s.Diff.Help = muted
+	s.Diff.Header = violet.Copy().Bold(true)
+	s.Diff.Added = green
+	s.Diff.Removed = red
+	s.Diff.Context = text
 	return s
 }
 

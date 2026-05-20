@@ -660,6 +660,19 @@ func TestToolActivitySummaryRedactsSecretsAndTruncates(t *testing.T) {
 	}
 }
 
+func TestToolResultDetailUsesUnifiedDiff(t *testing.T) {
+	detail := toolResultDetail(tool.Result{
+		Files: []tool.FileChange{{
+			Path:        "write.md",
+			Kind:        tool.KindCreate,
+			UnifiedDiff: "--- write.md\n+++ write.md\n@@\n+hello\n",
+		}},
+	})
+	if !strings.Contains(detail, "create write.md") || !strings.Contains(detail, "+hello") {
+		t.Fatalf("detail = %q, want file summary and diff", detail)
+	}
+}
+
 func TestAgentWritesRolloutEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {

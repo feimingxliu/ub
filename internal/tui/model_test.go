@@ -448,11 +448,22 @@ func TestModelRendersActivityEvents(t *testing.T) {
 		"checking repository context",
 		"Read path=main.go",
 		"permission approval_agent allow bash: read-only command",
-		"package main",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded view missing %q:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "package main") {
+		t.Fatalf("tool detail should stay collapsed when only the group is expanded:\n%s", view)
+	}
+	for i := range model.messages.items {
+		for j := range model.messages.items[i].entries {
+			model.messages.items[i].entries[j].collapsed = false
+		}
+	}
+	view = model.View()
+	if !strings.Contains(view, "package main") {
+		t.Fatalf("entry-expanded view missing tool detail:\n%s", view)
 	}
 	if strings.Contains(view, "assistant:") || strings.Contains(view, "user:") {
 		t.Fatalf("view should not render explicit role labels:\n%s", view)
@@ -737,6 +748,85 @@ func TestMouseTogglesActivityBlocks(t *testing.T) {
 	model = assertModel(t, updated)
 	if !strings.Contains(model.View(), "└ full reasoning summary") {
 		t.Fatalf("mouse click did not expand activity:\n%s", model.View())
+	}
+}
+
+func TestMouseExpandsToolGroupFileDiffDetails(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
+	model.running = true
+	model.runID = 8
+	model.events = make(chan Event)
+
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 8,
+		ok:    true,
+		event: Event{
+			Type:         EventActivity,
+			ActivityKind: "tool",
+			ToolUseID:    "call_write",
+			ToolName:     "write",
+			Status:       "done",
+			Summary:      "create write.md",
+			Content:      "create write.md\n--- write.md\n+++ write.md\n@@\n+hello",
+		},
+	})
+	if cmd == nil {
+		t.Fatal("activity event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	if strings.Contains(model.View(), "+hello") {
+		t.Fatalf("tool diff should default collapsed:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.MouseMsg{
+		Type:   tea.MouseLeft,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		Y:      0,
+	})
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "Wrote create write.md") {
+		t.Fatalf("mouse click did not expand tool group summary:\n%s", model.View())
+	}
+	if strings.Contains(model.View(), "+hello") {
+		t.Fatalf("tool diff should stay collapsed after group click:\n%s", model.View())
+	}
+
+	updated, cmd = model.Update(tea.MouseMsg{
+		Type:   tea.MouseLeft,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		Y:      1,
+	})
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "+hello") {
+		t.Fatalf("second mouse click did not expand tool diff:\n%s", model.View())
+	}
+}
+
+func TestToolDetailLineKindClassifiesDiffLines(t *testing.T) {
+	cases := map[string]toolDetailLineKindValue{
+		"create write.md": toolDetailSummaryLine,
+		"--- write.md":    toolDetailHeaderLine,
+		"+++ write.md":    toolDetailHeaderLine,
+		"@@ -0,0 +1 @@":   toolDetailHeaderLine,
+		"+hello":          toolDetailAddedLine,
+		"-old":            toolDetailRemovedLine,
+		" unchanged":      toolDetailContextLine,
+		"":                toolDetailBlankLine,
+	}
+	for line, want := range cases {
+		if got := toolDetailLineKind(line); got != want {
+			t.Fatalf("toolDetailLineKind(%q) = %v, want %v", line, got, want)
+		}
 	}
 }
 
