@@ -144,7 +144,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **TUI 启动覆盖**：直接运行 `ub` 打开 TUI 时支持 `--provider <name>` 与 `--model <id>`，走与 `ub chat` 相同的 provider/model 选择规则，只影响本次启动，不写回配置。
 - **TUI provider 切换**：`/provider [provider] [model]` 在当前 TUI session 内切换后续主对话 provider；无参数时展示 provider picker，显式切换后刷新 model/effort 候选与状态栏，不写回配置。
 - **TUI session 恢复**：`ub --resume` 不再静默选择最近 session，而是在启动后打开当前 workspace 的历史 session picker；`ub --resume=<id>` / `ub --resume <id>` 仍在进入 TUI 前直接恢复指定 session。
-- **TUI 本地输入增强**：首个非空字符为 `!` 的输入绕过 Agent，输入区显示 shell 模式提示，直接复用本地 `bash` 工具执行并只在当前 TUI 以本地输出展示结果，不写入 rollout/history、不走权限审批、也不渲染为模型 tool 调用；普通输入中的 `@prefix` 触发 workspace 文件候选，选择后插入 `@relative/path` 文本引用，不自动读取文件内容。
+- **TUI 本地输入增强**：首个非空字符为 `!` 的输入绕过 Agent，输入区显示 shell 模式提示，直接复用本地 `bash` 工具执行并只在当前 TUI 以本地输出展示结果，不写入 rollout/history、不走权限审批、也不渲染为模型 tool 调用；普通输入中的 `@prefix` 触发 workspace 文件候选，选择后插入 `@relative/path` 文本引用，不自动读取文件内容；输入组件关闭 virtual cursor，由每帧 `tea.View.Cursor` 暴露输入框真实光标，保证 IME 预编辑绘制在当前输入行。
 
 ## 4. Tool 系统
 
@@ -549,8 +549,8 @@ UI 流程：
 |---|---|---|
 | 语言 | Go 1.23+ | |
 | CLI | `spf13/cobra` | 主流 |
-| TUI | `charmbracelet/bubbletea` v2 | |
-| TUI 组件 | `charmbracelet/bubbles` `lipgloss` `glamour` | |
+| TUI | `charm.land/bubbletea/v2` | |
+| TUI 组件 | `charm.land/bubbles/v2`、`charm.land/lipgloss/v2`、`github.com/charmbracelet/glamour` | |
 | LLM Anthropic | `anthropics/anthropic-sdk-go` | 官方 |
 | LLM OpenAI | `openai/openai-go` | 官方 |
 | HTTP | 标准库 `net/http` + 自家 transport（含 vcr 注入） | |

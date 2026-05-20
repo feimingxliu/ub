@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	lipglossv2 "charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/feimingxliu/ub/internal/execution"
@@ -48,7 +48,7 @@ func Run(ctx context.Context, opts Options) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	programOpts := []tea.ProgramOption{tea.WithContext(ctx), tea.WithAltScreen(), tea.WithMouseCellMotion()}
+	programOpts := []tea.ProgramOption{tea.WithContext(ctx)}
 	if opts.Input != nil {
 		programOpts = append(programOpts, tea.WithInput(opts.Input))
 	}
@@ -103,13 +103,10 @@ func NewModel(opts Options) Model {
 	input := textinput.New()
 	input.Placeholder = "Type a message or /help"
 	input.Prompt = "› "
-	input.PromptStyle = styles.Input.Prompt
-	input.TextStyle = styles.Input.Text
-	input.PlaceholderStyle = styles.Input.Placeholder
-	input.Cursor.Style = styles.Input.Cursor
-	input.Cursor.SetMode(cursor.CursorStatic)
-	input.Width = inputWidthForTerminal(defaultViewWidth, input.Prompt)
-	input.Focus()
+	input.SetStyles(inputTextStyles())
+	input.SetVirtualCursor(false)
+	input.SetWidth(inputWidthForTerminal(defaultViewWidth, input.Prompt))
+	_ = input.Focus()
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -204,8 +201,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.pending != nil {
-		if mouse, ok := msg.(tea.MouseMsg); ok {
-			switch mouse.Type {
+		if mouseMsg, ok := msg.(tea.MouseWheelMsg); ok {
+			switch mouseMsg.Mouse().Button {
 			case tea.MouseWheelUp:
 				m.scrollMessages(3)
 				return m, nil
@@ -214,7 +211,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if key, ok := msg.(tea.KeyMsg); ok {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
 			switch key.String() {
 			case "ctrl+c":
 				if m.cancel != nil {
@@ -250,7 +247,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.picker != nil {
-		if key, ok := msg.(tea.KeyMsg); ok {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
 			switch key.String() {
 			case "ctrl+c":
 				if m.cancel != nil {
@@ -307,7 +304,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.sessions != nil {
-		if key, ok := msg.(tea.KeyMsg); ok {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
 			switch key.String() {
 			case "ctrl+c":
 				if m.cancel != nil {
@@ -333,12 +330,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.MouseMsg:
-		switch msg.Type {
-		case tea.MouseLeft:
-			if m.toggleMessageAt(msg.X, msg.Y) {
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button == tea.MouseLeft {
+			if m.toggleMessageAt(mouse.X, mouse.Y) {
 				return m, nil
 			}
+		}
+	case tea.MouseWheelMsg:
+		switch msg.Mouse().Button {
 		case tea.MouseWheelUp:
 			m.scrollMessages(3)
 			return m, nil
@@ -350,9 +350,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.status.width = msg.Width
-		m.input.Width = inputWidthForTerminal(msg.Width, m.input.Prompt)
+		m.input.SetWidth(inputWidthForTerminal(msg.Width, m.input.Prompt))
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			if m.cancel != nil {
@@ -489,14 +489,14 @@ func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea
 }
 
 // View implements tea.Model.
-func (m Model) View() string {
-	var b strings.Builder
-	width := contentWidth(m.width)
-	footer := m.footerView(width)
-	b.WriteString(m.messages.view(width, m.messageViewHeight(footer), m.clampedScroll(), m.styles))
-	b.WriteString("\n\n")
-	b.WriteString(footer)
-	return b.String()
+func (m Model) View() tea.View {
+	frame := m.renderFrame()
+	return tea.View{
+		Content:   frame.content,
+		Cursor:    frame.cursor,
+		AltScreen: true,
+		MouseMode: tea.MouseModeCellMotion,
+	}
 }
 
 func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.Cmd) {
@@ -508,41 +508,29 @@ func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.C
 }
 
 func (m Model) footerView(width int) string {
-	var b strings.Builder
-	b.WriteString(m.input.View())
-	b.WriteByte('\n')
-	if hint := m.shellHintView(width); hint != "" {
-		b.WriteString(hint)
-		b.WriteByte('\n')
-	}
-	if picker := m.pickerView(width); picker != "" {
-		b.WriteString(picker)
-		b.WriteByte('\n')
-	} else if picker := m.sessionPickerView(width); picker != "" {
-		b.WriteString(picker)
-		b.WriteByte('\n')
-	} else if picker := m.filePickerView(width); picker != "" {
-		b.WriteString(picker)
-		b.WriteByte('\n')
-	} else if suggestions := m.slashSuggestions(width); suggestions != "" {
-		b.WriteString(suggestions)
-		b.WriteByte('\n')
-	}
-	if queued := m.queuedPromptView(width); queued != "" {
-		b.WriteString(queued)
-		b.WriteByte('\n')
-	}
-	b.WriteString(m.status.view(width, m.styles))
-	if m.pending != nil {
-		b.WriteString("\n\n")
-		b.WriteString(m.modal.View())
-	}
-	return b.String()
+	return strings.Join(m.footerFrame(width).lines, "\n")
 }
 
 func inputWidthForTerminal(width int, prompt string) int {
 	available := contentWidth(width) - runewidth.StringWidth(prompt) - 1
 	return max(1, available)
+}
+
+func inputTextStyles() textinput.Styles {
+	styles := textinput.DefaultDarkStyles()
+	prompt := lipglossv2.NewStyle().Foreground(lipglossv2.Color("43")).Bold(true)
+	text := lipglossv2.NewStyle().Foreground(lipglossv2.Color("252"))
+	placeholder := lipglossv2.NewStyle().Foreground(lipglossv2.Color("244")).Italic(true)
+	styles.Focused.Prompt = prompt
+	styles.Focused.Text = text
+	styles.Focused.Placeholder = placeholder
+	styles.Blurred.Prompt = prompt
+	styles.Blurred.Text = text
+	styles.Blurred.Placeholder = placeholder
+	styles.Cursor.Color = lipglossv2.Color("43")
+	styles.Cursor.Shape = tea.CursorBlock
+	styles.Cursor.Blink = false
+	return styles
 }
 
 func (m *Model) toggleMessageAt(x, y int) bool {

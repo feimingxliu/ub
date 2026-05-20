@@ -56,7 +56,7 @@ TUI SHALL 渲染消息列表、输入框和状态栏三个区域。状态栏 MUS
 
 ### Requirement: 输入回显
 
-TUI SHALL 在用户输入非空文本并按 Enter 后，把普通文本作为用户消息追加到消息列表，并清空输入框。若输入以 `/` 开头，TUI MUST 作为 slash command 本地执行，不得把该输入发送给 Agent。默认输入状态下，TUI SHOULD 支持使用上下方向键浏览此前发送的用户消息，并把选中的历史消息填回输入框。
+TUI SHALL 在用户输入非空文本并按 Enter 后，把普通文本作为用户消息追加到消息列表，并清空输入框。若输入以 `/` 开头，TUI MUST 作为 slash command 本地执行，不得把该输入发送给 Agent。默认输入状态下，TUI SHOULD 支持使用上下方向键浏览此前发送的用户消息，并把选中的历史消息填回输入框。TUI MUST 使用 renderer 管理的真实 terminal cursor 暴露当前可编辑区域位置；中文/日文等 IME 预编辑 MUST 出现在输入框当前行，而不是状态栏或其他 footer 行。
 Agent turn 运行中，TUI SHALL 允许用户继续输入普通文本并按 Enter 加入本地 FIFO 队列；排队消息在实际启动前 MUST NOT 写入 rollout 或消息列表。当前 turn 正常结束后，TUI MUST 自动发送下一条排队消息。运行中上下方向键 SHOULD 优先浏览并编辑已排队消息；slash 命令输入 MUST NOT 作为队列消息发送。
 
 #### Scenario: 发送普通文本
@@ -85,6 +85,13 @@ Agent turn 运行中，TUI SHALL 允许用户继续输入普通文本并按 Ente
 - **THEN** 输入框 SHOULD 填入 `first`
 - **WHEN** 用户按下方向键
 - **THEN** 输入框 SHOULD 回到较新的历史输入
+
+#### Scenario: IME 预编辑跟随输入行
+
+- **GIVEN** TUI 输入框获得焦点
+- **WHEN** TUI 渲染包含 shell hint、queued prompt 或候选列表的 footer
+- **THEN** 渲染帧 MUST 将真实 cursor 指向输入框行
+- **AND** 状态栏 MUST 保持在最后一行
 
 #### Scenario: 运行中输入消息进入队列
 

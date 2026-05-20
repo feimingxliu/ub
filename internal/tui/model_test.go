@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/cursor"
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"github.com/feimingxliu/ub/internal/execution"
@@ -19,10 +19,17 @@ import (
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
-func TestInputCursorIsStaticToAvoidIMERedrawJitter(t *testing.T) {
+func TestInputUsesRealCursorForIMERendering(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test"})
-	if mode := model.input.Cursor.Mode(); mode != cursor.CursorStatic {
-		t.Fatalf("cursor mode = %s, want static", mode)
+	if model.input.VirtualCursor() {
+		t.Fatalf("input should use a renderer-owned real cursor")
+	}
+	cur := model.input.Cursor()
+	if cur == nil {
+		t.Fatalf("input cursor is nil")
+	}
+	if cur.Blink {
+		t.Fatalf("input cursor should not schedule virtual blink redraws")
 	}
 	if cmd := model.Init(); cmd != nil {
 		t.Fatalf("Init returned a command without permission channel; cursor blink should not be scheduled")
@@ -46,12 +53,12 @@ func TestFooterKeepsStatusAtBottom(t *testing.T) {
 	model = assertModel(t, updated)
 	model = sendText(t, model, "!echo")
 
-	view := model.View()
+	view := viewString(model)
 	lines := strings.Split(view, "\n")
 	if !strings.Contains(lines[len(lines)-1], "state: idle") {
 		t.Fatalf("status bar should remain at the bottom:\n%s", view)
 	}
-	if !strings.Contains(view, "› !echo") {
+	if lineContaining(strings.Split(view, "\n"), "› !echo") < 0 {
 		t.Fatalf("input line missing:\n%s", view)
 	}
 	if !strings.Contains(view, "shell mode") {
@@ -59,11 +66,81 @@ func TestFooterKeepsStatusAtBottom(t *testing.T) {
 	}
 }
 
+func TestViewCursorTracksInputLine(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "hello")
+
+	view := model.View()
+	lines := strings.Split(view.Content, "\n")
+	inputLine := lineContaining(lines, "› hello")
+	if inputLine < 0 {
+		t.Fatalf("input line missing:\n%s", view.Content)
+	}
+	if !view.AltScreen || view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("view flags = alt:%v mouse:%v", view.AltScreen, view.MouseMode)
+	}
+	if view.Cursor == nil {
+		t.Fatalf("view cursor is nil")
+	}
+	if view.Cursor.Y != inputLine {
+		t.Fatalf("cursor Y = %d, want input line %d\n%s", view.Cursor.Y, inputLine, view.Content)
+	}
+	if view.Cursor.Y == len(lines)-1 {
+		t.Fatalf("cursor should not point at status line:\n%s", view.Content)
+	}
+}
+
+func TestInputCursorStaysEditableWithFooterAddons(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 14})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "!echo")
+	assertCursorOnInputLine(t, model, "› !echo")
+
+	model.running = true
+	model = sendText(t, model, " queued")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	assertCursorOnInputLine(t, model, "› ")
+
+	model.running = false
+	model.input.SetValue("")
+	model = sendText(t, model, "/model")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if view := model.View(); view.Cursor != nil {
+		t.Fatalf("model picker should not expose an input cursor: %+v\n%s", view.Cursor, view.Content)
+	}
+}
+
+func TestSubmitKeepsSingleFooterAndInputEditable(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "hello")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("enter returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	model = sendText(t, model, "next")
+
+	view := model.View()
+	if count := strings.Count(view.Content, "state: idle"); count != 1 {
+		t.Fatalf("status footer count = %d, want 1\n%s", count, view.Content)
+	}
+	if view.Cursor == nil || lineContaining(strings.Split(view.Content, "\n"), "› next") != view.Cursor.Y {
+		t.Fatalf("input cursor did not remain editable:\n%+v\n%s", view.Cursor, view.Content)
+	}
+}
+
 func TestModelEchoesInputOnEnter(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test", ExecutionMode: "plan", Cwd: "/work"})
 	model = sendText(t, model, "hello")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("enter returned unexpected command")
 	}
@@ -75,7 +152,7 @@ func TestModelEchoesInputOnEnter(t *testing.T) {
 	if got := model.InputValue(); got != "" {
 		t.Fatalf("input = %q, want empty", got)
 	}
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"› hello", "model: fake/test", "mode: plan", "cwd: /work"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
@@ -86,7 +163,7 @@ func TestModelEchoesInputOnEnter(t *testing.T) {
 func TestModelIgnoresEmptyEnter(t *testing.T) {
 	model := NewModel(Options{})
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("enter returned unexpected command")
 	}
@@ -95,8 +172,8 @@ func TestModelIgnoresEmptyEnter(t *testing.T) {
 	if got := model.MessageTexts(); len(got) != 0 {
 		t.Fatalf("messages = %#v, want none", got)
 	}
-	if !strings.Contains(model.View(), "No messages yet") {
-		t.Fatalf("empty view missing placeholder:\n%s", model.View())
+	if !strings.Contains(viewString(model), "No messages yet") {
+		t.Fatalf("empty view missing placeholder:\n%s", viewString(model))
 	}
 }
 
@@ -109,7 +186,7 @@ func TestModelStreamsRunnerEvents(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/test"})
 	model = sendText(t, model, "ping")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatalf("enter returned nil command")
 	}
@@ -129,8 +206,8 @@ func TestModelStreamsRunnerEvents(t *testing.T) {
 	if model.Running() {
 		t.Fatalf("model still running after done")
 	}
-	if !strings.Contains(model.View(), "state: idle") {
-		t.Fatalf("view missing idle state:\n%s", model.View())
+	if !strings.Contains(viewString(model), "state: idle") {
+		t.Fatalf("view missing idle state:\n%s", viewString(model))
 	}
 }
 
@@ -149,8 +226,8 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		t.Fatal("context event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx est: 1200/8000 15%") {
-		t.Fatalf("view missing context usage:\n%s", model.View())
+	if !strings.Contains(viewString(model), "ctx est: 1200/8000 15%") {
+		t.Fatalf("view missing context usage:\n%s", viewString(model))
 	}
 
 	updated, _ = model.Update(streamEventMsg{
@@ -159,8 +236,8 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		event: Event{Type: EventContext, ContextUsedTokens: 800, ContextMaxTokens: 8000, ContextRatio: 0.10},
 	})
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx est: 1200/8000 15%") {
-		t.Fatalf("context usage should not shrink without reset:\n%s", model.View())
+	if !strings.Contains(viewString(model), "ctx est: 1200/8000 15%") {
+		t.Fatalf("context usage should not shrink without reset:\n%s", viewString(model))
 	}
 
 	updated, _ = model.Update(streamEventMsg{
@@ -169,8 +246,8 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		event: Event{Type: EventContext, ContextUsedTokens: 800, ContextMaxTokens: 8000, ContextRatio: 0.10, ContextReset: true},
 	})
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx est: 800/8000 10%") {
-		t.Fatalf("context usage should shrink after reset:\n%s", model.View())
+	if !strings.Contains(viewString(model), "ctx est: 800/8000 10%") {
+		t.Fatalf("context usage should shrink after reset:\n%s", viewString(model))
 	}
 
 	updated, _ = model.Update(streamEventMsg{
@@ -179,7 +256,7 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		event: Event{Type: EventContext, ContextUsedTokens: 1200},
 	})
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "ctx est: 1200") || strings.Contains(view, "ctx est: 1200/") {
 		t.Fatalf("view should show used tokens without unknown max:\n%s", view)
 	}
@@ -197,8 +274,8 @@ func TestModelLabelsProviderUsageAsLastContext(t *testing.T) {
 		event: Event{Type: EventContext, ContextUsedTokens: 1400, ContextMaxTokens: 8000, ContextRatio: 0.175, ContextKind: "last"},
 	})
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx last: 1400/8000 18%") {
-		t.Fatalf("view missing last context label:\n%s", model.View())
+	if !strings.Contains(viewString(model), "ctx last: 1400/8000 18%") {
+		t.Fatalf("view missing last context label:\n%s", viewString(model))
 	}
 }
 
@@ -214,8 +291,8 @@ func TestModelDoneFinalizesUntilRunnerCloses(t *testing.T) {
 		t.Fatalf("done returned nil command")
 	}
 	model = assertModel(t, updated)
-	if !model.Running() || !strings.Contains(model.View(), "state: finalizing") {
-		t.Fatalf("done should keep run finalizing: running=%v view=\n%s", model.Running(), model.View())
+	if !model.Running() || !strings.Contains(viewString(model), "state: finalizing") {
+		t.Fatalf("done should keep run finalizing: running=%v view=\n%s", model.Running(), viewString(model))
 	}
 
 	close(events)
@@ -224,8 +301,8 @@ func TestModelDoneFinalizesUntilRunnerCloses(t *testing.T) {
 		t.Fatalf("closed stream returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if model.Running() || !strings.Contains(model.View(), "state: idle") {
-		t.Fatalf("closed stream should return idle: running=%v view=\n%s", model.Running(), model.View())
+	if model.Running() || !strings.Contains(viewString(model), "state: idle") {
+		t.Fatalf("closed stream should return idle: running=%v view=\n%s", model.Running(), viewString(model))
 	}
 }
 
@@ -234,13 +311,13 @@ func TestModelIgnoresSecondEnterWhileRunning(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "first")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatalf("first enter returned nil command")
 	}
 	model = assertModel(t, updated)
 
-	updated, secondCmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, secondCmd := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if secondCmd != nil {
 		t.Fatalf("second enter returned unexpected command")
@@ -258,7 +335,7 @@ func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "first")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatalf("first enter returned nil command")
 	}
@@ -266,7 +343,7 @@ func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
 	firstRunID := model.runID
 
 	model = sendText(t, model, "second")
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("queued enter returned unexpected command")
 	}
@@ -277,8 +354,8 @@ func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
 	if got := model.InputValue(); got != "" {
 		t.Fatalf("input = %q, want empty after queueing", got)
 	}
-	if !strings.Contains(model.View(), "queued: 1") || !strings.Contains(model.View(), "next: second") {
-		t.Fatalf("view missing queued prompt:\n%s", model.View())
+	if !strings.Contains(viewString(model), "queued: 1") || !strings.Contains(viewString(model), "next: second") {
+		t.Fatalf("view missing queued prompt:\n%s", viewString(model))
 	}
 
 	updated, cmd = model.Update(streamEventMsg{runID: firstRunID, ok: true, event: Event{Type: EventDone}})
@@ -311,13 +388,13 @@ func TestModelEditsQueuedPromptsWithArrowKeys(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}})
 	model.running = true
 	model = sendText(t, model, "first queued")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	model = sendText(t, model, "second queued")
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, cmd := model.Update(keyPress(tea.KeyUp))
 	if cmd != nil {
 		t.Fatalf("up returned unexpected command")
 	}
@@ -327,7 +404,7 @@ func TestModelEditsQueuedPromptsWithArrowKeys(t *testing.T) {
 	}
 	model.input.SetValue("second edited")
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "first queued" {
 		t.Fatalf("second up input = %q, want first queued", got)
@@ -337,7 +414,7 @@ func TestModelEditsQueuedPromptsWithArrowKeys(t *testing.T) {
 	}
 	model.input.SetValue("first edited")
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "second edited" {
 		t.Fatalf("down input = %q, want second edited", got)
@@ -346,7 +423,7 @@ func TestModelEditsQueuedPromptsWithArrowKeys(t *testing.T) {
 		t.Fatalf("queued after editing first = %#v, want %#v", got, want)
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "" {
 		t.Fatalf("second down input = %q, want empty draft", got)
@@ -360,13 +437,13 @@ func TestModelSavesQueuedEditOnEnterWhileRunning(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}})
 	model.running = true
 	model = sendText(t, model, "queued")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	model.input.SetValue("queued edited")
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("edit enter returned unexpected command")
 	}
@@ -377,8 +454,8 @@ func TestModelSavesQueuedEditOnEnterWhileRunning(t *testing.T) {
 	if got, want := model.QueuedPrompts(), []string{"queued edited"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("queued prompts = %#v, want %#v", got, want)
 	}
-	if !strings.Contains(model.View(), "next: queued edited") {
-		t.Fatalf("view missing edited queued prompt:\n%s", model.View())
+	if !strings.Contains(viewString(model), "next: queued edited") {
+		t.Fatalf("view missing edited queued prompt:\n%s", viewString(model))
 	}
 }
 
@@ -386,16 +463,16 @@ func TestModelRemovesQueuedPromptImmediatelyWhenEditBecomesEmpty(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}})
 	model.running = true
 	model = sendText(t, model, "queued")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "queued" {
 		t.Fatalf("input = %q, want queued", got)
 	}
 
 	for range "queued" {
-		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		updated, _ = model.Update(keyPress(tea.KeyBackspace))
 		model = assertModel(t, updated)
 	}
 	if got := model.InputValue(); got != "" {
@@ -404,8 +481,8 @@ func TestModelRemovesQueuedPromptImmediatelyWhenEditBecomesEmpty(t *testing.T) {
 	if got := model.QueuedPrompts(); len(got) != 0 {
 		t.Fatalf("queued prompts = %#v, want empty after deleting edit", got)
 	}
-	if strings.Contains(model.View(), "queued:") || strings.Contains(model.View(), "next: queued") {
-		t.Fatalf("view still shows deleted queued prompt:\n%s", model.View())
+	if strings.Contains(viewString(model), "queued:") || strings.Contains(viewString(model), "next: queued") {
+		t.Fatalf("view still shows deleted queued prompt:\n%s", viewString(model))
 	}
 }
 
@@ -418,11 +495,11 @@ func TestModelRendersToolEvents(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "read file")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	model = drainBatch(t, model, cmd)
 
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"tool read started", "tool read finished"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
@@ -443,11 +520,11 @@ func TestModelRendersActivityEvents(t *testing.T) {
 	model = assertModel(t, updated)
 	model = sendText(t, model, "inspect")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	model = drainBatch(t, model, cmd)
 
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{
 		"thinking: checking repository context",
 		"tools: 1 done",
@@ -462,7 +539,7 @@ func TestModelRendersActivityEvents(t *testing.T) {
 			model.messages.items[i].collapsed = false
 		}
 	}
-	view = model.View()
+	view = viewString(model)
 	for _, want := range []string{
 		"checking repository context",
 		"Read path=main.go",
@@ -480,7 +557,7 @@ func TestModelRendersActivityEvents(t *testing.T) {
 			model.messages.items[i].entries[j].collapsed = false
 		}
 	}
-	view = model.View()
+	view = viewString(model)
 	if !strings.Contains(view, "package main") {
 		t.Fatalf("entry-expanded view missing tool detail:\n%s", view)
 	}
@@ -568,7 +645,7 @@ func TestThinkingActivityDeltasAccumulateInGroup(t *testing.T) {
 		t.Fatalf("messages = %#v, want accumulated thinking summary", got)
 	}
 	model.messages.items[0].collapsed = false
-	if view := model.View(); !strings.Contains(view, "checking repository context before reading files") {
+	if view := viewString(model); !strings.Contains(view, "checking repository context before reading files") {
 		t.Fatalf("expanded view missing accumulated thinking detail:\n%s", view)
 	}
 }
@@ -611,7 +688,7 @@ func TestMarkdownMessagesRenderReadableBlocks(t *testing.T) {
 		Text: "# Plan\n\n- inspect repository\n- patch renderer\n\n```go\nfmt.Println(\"ok\")\n```",
 	}}})
 
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"Plan", "inspect repository", "patch renderer", `fmt.Println("ok")`} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("markdown view missing %q:\n%s", want, view)
@@ -641,10 +718,10 @@ func TestStyledMessageRenderContainsANSIAndSymbols(t *testing.T) {
 
 	model := NewModel(Options{Model: "fake/test"})
 	model = sendText(t, model, "hello")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "\x1b[") || !strings.Contains(view, "› ") || !strings.Contains(view, "hello") {
 		t.Fatalf("styled render missing ANSI or role symbol:\n%q", view)
 	}
@@ -653,10 +730,10 @@ func TestStyledMessageRenderContainsANSIAndSymbols(t *testing.T) {
 func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "first")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	model = sendText(t, model, "second")
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
 	model.messages.appendOrUpdateActivity(Event{
@@ -668,11 +745,11 @@ func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
 		Summary:      "path=main.go",
 		Content:      "file content",
 	})
-	if strings.Contains(model.View(), "file content") {
-		t.Fatalf("tool detail should default collapsed:\n%s", model.View())
+	if strings.Contains(viewString(model), "file content") {
+		t.Fatalf("tool detail should default collapsed:\n%s", viewString(model))
 	}
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, cmd := model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		t.Fatalf("up returned unexpected command")
@@ -680,11 +757,11 @@ func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
 	if got := model.InputValue(); got != "second" {
 		t.Fatalf("up input = %q, want second", got)
 	}
-	if strings.Contains(model.View(), "└ file content") {
-		t.Fatalf("up should not expand activity:\n%s", model.View())
+	if strings.Contains(viewString(model), "└ file content") {
+		t.Fatalf("up should not expand activity:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, cmd = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		t.Fatalf("down returned unexpected command")
@@ -692,26 +769,26 @@ func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
 	if got := model.InputValue(); got != "" {
 		t.Fatalf("down input = %q, want empty draft", got)
 	}
-	if strings.Contains(model.View(), "└ file content") {
-		t.Fatalf("down should not expand activity:\n%s", model.View())
+	if strings.Contains(viewString(model), "└ file content") {
+		t.Fatalf("down should not expand activity:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		t.Fatalf("enter returned unexpected command")
 	}
-	if strings.Contains(model.View(), "└ file content") {
-		t.Fatalf("enter should not expand activity:\n%s", model.View())
+	if strings.Contains(viewString(model), "└ file content") {
+		t.Fatalf("enter should not expand activity:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+	updated, cmd = model.Update(keyPress(tea.KeySpace))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		t.Fatalf("space returned unexpected command")
 	}
-	if strings.Contains(model.View(), "└ file content") {
-		t.Fatalf("space should not expand activity:\n%s", model.View())
+	if strings.Contains(viewString(model), "└ file content") {
+		t.Fatalf("space should not expand activity:\n%s", viewString(model))
 	}
 }
 
@@ -751,22 +828,26 @@ func TestMouseTogglesActivityBlocks(t *testing.T) {
 		Summary:      "checking context",
 		Content:      "full reasoning summary",
 	})
-	if strings.Contains(model.View(), "full reasoning summary") {
-		t.Fatalf("thinking detail should default collapsed:\n%s", model.View())
+	if strings.Contains(viewString(model), "full reasoning summary") {
+		t.Fatalf("thinking detail should default collapsed:\n%s", viewString(model))
 	}
 
-	updated, cmd := model.Update(tea.MouseMsg{
-		Type:   tea.MouseLeft,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
-		Y:      0,
-	})
+	updated, cmd := model.Update(mouseClick(0, 0))
 	if cmd != nil {
 		t.Fatalf("mouse click returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "└ full reasoning summary") {
-		t.Fatalf("mouse click did not expand activity:\n%s", model.View())
+	if !strings.Contains(viewString(model), "└ full reasoning summary") {
+		t.Fatalf("mouse click did not expand activity:\n%s", viewString(model))
+	}
+
+	updated, cmd = model.Update(mouseRelease(0, 0))
+	if cmd != nil {
+		t.Fatalf("mouse release returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "└ full reasoning summary") {
+		t.Fatalf("mouse release should not collapse activity:\n%s", viewString(model))
 	}
 }
 
@@ -795,39 +876,29 @@ func TestMouseExpandsToolGroupFileDiffDetails(t *testing.T) {
 		t.Fatal("activity event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if strings.Contains(model.View(), "+hello") {
-		t.Fatalf("tool diff should default collapsed:\n%s", model.View())
+	if strings.Contains(viewString(model), "+hello") {
+		t.Fatalf("tool diff should default collapsed:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.MouseMsg{
-		Type:   tea.MouseLeft,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
-		Y:      0,
-	})
+	updated, cmd = model.Update(mouseClick(0, 0))
 	if cmd != nil {
 		t.Fatalf("mouse click returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "Wrote create write.md") {
-		t.Fatalf("mouse click did not expand tool group summary:\n%s", model.View())
+	if !strings.Contains(viewString(model), "Wrote create write.md") {
+		t.Fatalf("mouse click did not expand tool group summary:\n%s", viewString(model))
 	}
-	if strings.Contains(model.View(), "+hello") {
-		t.Fatalf("tool diff should stay collapsed after group click:\n%s", model.View())
+	if strings.Contains(viewString(model), "+hello") {
+		t.Fatalf("tool diff should stay collapsed after group click:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.MouseMsg{
-		Type:   tea.MouseLeft,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
-		Y:      1,
-	})
+	updated, cmd = model.Update(mouseClick(0, 1))
 	if cmd != nil {
 		t.Fatalf("mouse click returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "+hello") {
-		t.Fatalf("second mouse click did not expand tool diff:\n%s", model.View())
+	if !strings.Contains(viewString(model), "+hello") {
+		t.Fatalf("second mouse click did not expand tool diff:\n%s", viewString(model))
 	}
 }
 
@@ -844,7 +915,7 @@ func TestToolGroupDoesNotExpandTrivialCompletedDetail(t *testing.T) {
 	})
 	model.messages.items[0].collapsed = false
 
-	view := model.View()
+	view := viewString(model)
 	if strings.Contains(view, "completed") {
 		t.Fatalf("trivial completed detail should not be rendered:\n%s", view)
 	}
@@ -923,18 +994,12 @@ func TestCollapsedActivityBlocksShareRowsAndMouseTargetsChip(t *testing.T) {
 	if x < 0 {
 		t.Fatalf("second chip not found:\n%s", view)
 	}
-	updated, cmd := model.Update(tea.MouseMsg{
-		Type:   tea.MouseLeft,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
-		X:      x,
-		Y:      0,
-	})
+	updated, cmd := model.Update(mouseClick(x, 0))
 	if cmd != nil {
 		t.Fatalf("mouse click returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	rendered := model.View()
+	rendered := viewString(model)
 	if !strings.Contains(rendered, "└ grep detail") {
 		t.Fatalf("mouse click did not expand second activity:\n%s", rendered)
 	}
@@ -960,11 +1025,11 @@ func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 		t.Fatalf("permission request returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "Permission required") || !strings.Contains(model.View(), "tool: bash") {
-		t.Fatalf("view missing modal:\n%s", model.View())
+	if !strings.Contains(viewString(model), "Permission required") || !strings.Contains(viewString(model), "tool: bash") {
+		t.Fatalf("view missing modal:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	updated, cmd = model.Update(runePress('5'))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		msg := cmd()
@@ -980,8 +1045,8 @@ func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 	default:
 		t.Fatalf("no decision returned")
 	}
-	if strings.Contains(model.View(), "Permission required") {
-		t.Fatalf("modal still visible:\n%s", model.View())
+	if strings.Contains(viewString(model), "Permission required") {
+		t.Fatalf("modal still visible:\n%s", viewString(model))
 	}
 }
 
@@ -999,20 +1064,20 @@ func TestModelPermissionSelectionReturnsDecision(t *testing.T) {
 
 	updated, _ := model.Update(permissionRequestMsg{request: req, ok: true})
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "> Allow once") {
-		t.Fatalf("permission modal missing selectable options:\n%s", model.View())
+	if !strings.Contains(viewString(model), "> Allow once") {
+		t.Fatalf("permission modal missing selectable options:\n%s", viewString(model))
 	}
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, cmd := model.Update(keyPress(tea.KeyDown))
 	if cmd != nil {
 		t.Fatalf("down returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "> Deny") {
-		t.Fatalf("permission modal did not move selection:\n%s", model.View())
+	if !strings.Contains(viewString(model), "> Deny") {
+		t.Fatalf("permission modal did not move selection:\n%s", viewString(model))
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		msg := cmd()
@@ -1030,12 +1095,42 @@ func TestModelPermissionSelectionReturnsDecision(t *testing.T) {
 	}
 }
 
+func TestPermissionModalHidesCursorAndKeepsStatusAtBottom(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	updated, cmd := model.Update(permissionRequestMsg{request: PermissionRequest{
+		Request: permission.Request{
+			Tool: "bash",
+			Risk: tool.RiskExec,
+			Mode: execution.ModeWork,
+		},
+		Response: make(chan permission.Decision, 1),
+	}, ok: true})
+	if cmd != nil {
+		t.Fatalf("permission request returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	view := model.View()
+	if view.Cursor != nil {
+		t.Fatalf("permission modal should not expose input cursor: %+v\n%s", view.Cursor, view.Content)
+	}
+	lines := strings.Split(view.Content, "\n")
+	if !strings.Contains(view.Content, "Permission required") {
+		t.Fatalf("view missing modal:\n%s", view.Content)
+	}
+	if !strings.Contains(lines[len(lines)-1], "state: idle") {
+		t.Fatalf("status bar should stay at the bottom with modal:\n%s", view.Content)
+	}
+}
+
 func TestSlashHelpDoesNotCallRunner(t *testing.T) {
 	runner := &scriptedRunner{}
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/help")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash help returned unexpected command")
 	}
@@ -1088,7 +1183,7 @@ func TestSlashCompactRunsCompactRunner(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/compact")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatalf("slash compact returned nil command")
 	}
@@ -1101,7 +1196,7 @@ func TestSlashCompactRunsCompactRunner(t *testing.T) {
 	if runner.calls != 0 || len(runner.prompts) != 0 {
 		t.Fatalf("prompt runner should not be called: calls=%d prompts=%v", runner.calls, runner.prompts)
 	}
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "compacted 4 earlier messages") || !strings.Contains(view, "ctx est: 900/3000 30%") {
 		t.Fatalf("view missing compact result:\n%s", view)
 	}
@@ -1112,7 +1207,7 @@ func TestSlashCompactUnavailable(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/compact")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash compact returned unexpected command")
 	}
@@ -1129,11 +1224,11 @@ func TestSlashCompactUnavailable(t *testing.T) {
 func TestSlashClear(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "hello")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	model = sendText(t, model, "/clear")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash clear returned unexpected command")
 	}
@@ -1156,7 +1251,7 @@ func TestSlashNewStartsEmptySession(t *testing.T) {
 	model.status.contextRatio = 0.15
 	model = sendText(t, model, "/new")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash new returned unexpected command")
 	}
@@ -1171,7 +1266,7 @@ func TestSlashNewStartsEmptySession(t *testing.T) {
 	if got := model.QueuedPrompts(); len(got) != 0 {
 		t.Fatalf("queued prompts = %#v, want cleared", got)
 	}
-	view := model.View()
+	view := viewString(model)
 	for _, unexpected := range []string{"old prompt", "ctx est:", "turn: 3", "model: fake/old"} {
 		if strings.Contains(view, unexpected) {
 			t.Fatalf("new session view still contains %q:\n%s", unexpected, view)
@@ -1186,7 +1281,7 @@ func TestSlashNewUnavailable(t *testing.T) {
 	model := NewModel(Options{Runner: &promptOnlyRunner{}})
 	model = sendText(t, model, "/new")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash new returned unexpected command")
 	}
@@ -1202,7 +1297,7 @@ func TestSlashQuit(t *testing.T) {
 			model := NewModel(Options{})
 			model = sendText(t, model, input)
 
-			updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			updated, cmd := model.Update(keyPress(tea.KeyEnter))
 			_ = assertModel(t, updated)
 			if cmd == nil {
 				t.Fatalf("%s returned nil command", input)
@@ -1218,17 +1313,17 @@ func TestSlashModelAndModeUpdateRunner(t *testing.T) {
 	runner := &scriptedRunner{models: []string{"fake/old", "fake/new"}}
 	model := NewModel(Options{Runner: runner, Model: "fake/old", Models: runner.models, ExecutionMode: "default"})
 	model = sendText(t, model, "/model fake/new")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.model != "fake/new" || !strings.Contains(model.View(), "model: fake/new") {
-		t.Fatalf("model update failed: runner=%q view=\n%s", runner.model, model.View())
+	if runner.model != "fake/new" || !strings.Contains(viewString(model), "model: fake/new") {
+		t.Fatalf("model update failed: runner=%q view=\n%s", runner.model, viewString(model))
 	}
 
 	model = sendText(t, model, "/mode plan")
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
-		t.Fatalf("mode update failed: runner=%q view=\n%s", runner.mode, model.View())
+	if runner.mode != "plan" || !strings.Contains(viewString(model), "mode: plan") {
+		t.Fatalf("mode update failed: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
 	if got, want := model.MessageTexts(), []string{"model set to fake/new"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("messages = %#v, want %#v", got, want)
@@ -1251,9 +1346,9 @@ func TestSlashProviderUpdatesRunner(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/provider second")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	if runner.provider != "second" || runner.model != "second/model" {
 		t.Fatalf("runner provider/model = %q/%q, want second/second/model", runner.provider, runner.model)
 	}
@@ -1278,10 +1373,10 @@ func TestSlashProviderWithExplicitModel(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/provider second second/other")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.provider != "second" || runner.model != "second/other" || !strings.Contains(model.View(), "model: second/other") {
-		t.Fatalf("explicit provider model failed: runner=%q/%q view=\n%s", runner.provider, runner.model, model.View())
+	if runner.provider != "second" || runner.model != "second/other" || !strings.Contains(viewString(model), "model: second/other") {
+		t.Fatalf("explicit provider model failed: runner=%q/%q view=\n%s", runner.provider, runner.model, viewString(model))
 	}
 }
 
@@ -1299,24 +1394,24 @@ func TestSlashProviderWithoutArgsListsCandidates(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/provider")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash provider returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"select provider", "> first", "  second"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("provider picker missing %q:\n%s", want, view)
 		}
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.provider != "second" || runner.model != "second/model" || !strings.Contains(model.View(), "model: second/model") {
-		t.Fatalf("provider picker selection failed: runner=%q/%q view=\n%s", runner.provider, runner.model, model.View())
+	if runner.provider != "second" || runner.model != "second/model" || !strings.Contains(viewString(model), "model: second/model") {
+		t.Fatalf("provider picker selection failed: runner=%q/%q view=\n%s", runner.provider, runner.model, viewString(model))
 	}
 }
 
@@ -1325,10 +1420,10 @@ func TestSlashEffortUpdatesRunner(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
 	model = sendText(t, model, "/effort high")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.effort != "high" || !strings.Contains(model.View(), "effort: high") {
-		t.Fatalf("effort update failed: runner=%q view=\n%s", runner.effort, model.View())
+	if runner.effort != "high" || !strings.Contains(viewString(model), "effort: high") {
+		t.Fatalf("effort update failed: runner=%q view=\n%s", runner.effort, viewString(model))
 	}
 	if got := model.MessageTexts(); len(got) != 1 || got[0] != "effort set to high" {
 		t.Fatalf("messages = %#v", got)
@@ -1340,24 +1435,24 @@ func TestSlashEffortWithoutArgsListsCandidates(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
 	model = sendText(t, model, "/effort")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash effort returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"select effort", "> low", "  high"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("effort picker missing %q:\n%s", want, view)
 		}
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.effort != "high" || !strings.Contains(model.View(), "effort: high") {
-		t.Fatalf("effort picker selection failed: runner=%q view=\n%s", runner.effort, model.View())
+	if runner.effort != "high" || !strings.Contains(viewString(model), "effort: high") {
+		t.Fatalf("effort picker selection failed: runner=%q view=\n%s", runner.effort, viewString(model))
 	}
 }
 
@@ -1366,12 +1461,12 @@ func TestSlashEffortRejectsUnsupportedCandidate(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
 	model = sendText(t, model, "/effort high")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if runner.effort != "low" {
 		t.Fatalf("runner effort changed to %q, want low", runner.effort)
 	}
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "effort: low") || !strings.Contains(view, "not available") {
 		t.Fatalf("invalid effort handling failed:\n%s", view)
 	}
@@ -1382,7 +1477,7 @@ func TestSlashModelWithoutArgsListsCandidates(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/old", Models: runner.models})
 	model = sendText(t, model, "/model")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash model returned unexpected command")
 	}
@@ -1390,19 +1485,19 @@ func TestSlashModelWithoutArgsListsCandidates(t *testing.T) {
 	if runner.model != "" {
 		t.Fatalf("runner model changed to %q, want unchanged", runner.model)
 	}
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"select model", "> fake/old", "  fake/new"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("model picker missing %q:\n%s", want, view)
 		}
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if runner.model != "fake/new" || !strings.Contains(model.View(), "model: fake/new") {
-		t.Fatalf("model picker selection failed: runner=%q view=\n%s", runner.model, model.View())
+	if runner.model != "fake/new" || !strings.Contains(viewString(model), "model: fake/new") {
+		t.Fatalf("model picker selection failed: runner=%q view=\n%s", runner.model, viewString(model))
 	}
 }
 
@@ -1418,7 +1513,7 @@ func TestSlashApprovalModelUpdatesRunner(t *testing.T) {
 	})
 	model = sendText(t, model, "/approval-model fake/review-new")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if runner.approvalModel != "fake/review-new" {
 		t.Fatalf("approval model = %q, want fake/review-new", runner.approvalModel)
@@ -1440,20 +1535,20 @@ func TestSlashApprovalModelWithoutArgsListsCandidates(t *testing.T) {
 	})
 	model = sendText(t, model, "/approval-model")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash approval-model returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	for _, want := range []string{"select model", "> fake/review-old", "  fake/review-new"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("approval model picker missing %q:\n%s", want, view)
 		}
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if runner.approvalModel != "fake/review-new" {
 		t.Fatalf("approval model = %q, want fake/review-new", runner.approvalModel)
@@ -1465,12 +1560,12 @@ func TestSlashModelRejectsUnsupportedCandidate(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/old", Models: runner.models})
 	model = sendText(t, model, "/model fake/missing")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if runner.model != "" {
 		t.Fatalf("runner model changed to %q, want unchanged", runner.model)
 	}
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "model: fake/old") || !strings.Contains(view, "not available") {
 		t.Fatalf("invalid model handling failed:\n%s", view)
 	}
@@ -1503,12 +1598,12 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 	if got := model.MessageTexts(); len(got) != 1 || got[0] != "tools: permissions: 1" {
 		t.Fatalf("messages = %#v, want permission summary", got)
 	}
-	updated, cmd = model.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 0})
+	updated, cmd = model.Update(mouseClick(0, 0))
 	if cmd != nil {
 		t.Fatalf("mouse click returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "approval_agent") || !strings.Contains(view, "read-only command") {
 		t.Fatalf("expanded permission view missing detail:\n%s", view)
 	}
@@ -1518,22 +1613,22 @@ func TestShiftTabCyclesMode(t *testing.T) {
 	runner := &scriptedRunner{}
 	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, cmd := model.Update(keyPress(tea.KeyTab, tea.ModShift))
 	if cmd != nil {
 		t.Fatalf("shift+tab returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
-		t.Fatalf("first shift+tab failed: runner=%q view=\n%s", runner.mode, model.View())
+	if runner.mode != "plan" || !strings.Contains(viewString(model), "mode: plan") {
+		t.Fatalf("first shift+tab failed: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
 	if got := model.MessageTexts(); len(got) != 0 {
 		t.Fatalf("messages = %#v, want no mode switch log", got)
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, _ = model.Update(keyPress(tea.KeyTab, tea.ModShift))
 	model = assertModel(t, updated)
-	if runner.mode != "auto" || !strings.Contains(model.View(), "mode: auto") {
-		t.Fatalf("second shift+tab failed: runner=%q view=\n%s", runner.mode, model.View())
+	if runner.mode != "auto" || !strings.Contains(viewString(model), "mode: auto") {
+		t.Fatalf("second shift+tab failed: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
 	if got := model.MessageTexts(); len(got) != 0 {
 		t.Fatalf("messages = %#v, want no mode switch log", got)
@@ -1546,13 +1641,13 @@ func TestShiftTabCyclesModeWhileRunning(t *testing.T) {
 	model.running = true
 	model.status.state = statusTool
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, cmd := model.Update(keyPress(tea.KeyTab, tea.ModShift))
 	if cmd != nil {
 		t.Fatalf("shift+tab returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") || !model.Running() {
-		t.Fatalf("running mode switch failed: runner=%q running=%v view=\n%s", runner.mode, model.Running(), model.View())
+	if runner.mode != "plan" || !strings.Contains(viewString(model), "mode: plan") || !model.Running() {
+		t.Fatalf("running mode switch failed: runner=%q running=%v view=\n%s", runner.mode, model.Running(), viewString(model))
 	}
 }
 
@@ -1571,16 +1666,16 @@ func TestShiftTabCyclesModeDuringPermission(t *testing.T) {
 	updated, _ := model.Update(permissionRequestMsg{request: req, ok: true})
 	model = assertModel(t, updated)
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, cmd := model.Update(keyPress(tea.KeyTab, tea.ModShift))
 	if cmd != nil {
 		t.Fatalf("shift+tab returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if runner.mode != "plan" || !strings.Contains(model.View(), "mode: plan") {
-		t.Fatalf("permission mode switch failed: runner=%q view=\n%s", runner.mode, model.View())
+	if runner.mode != "plan" || !strings.Contains(viewString(model), "mode: plan") {
+		t.Fatalf("permission mode switch failed: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
-	if !strings.Contains(model.View(), "mode: plan") {
-		t.Fatalf("permission modal did not reflect mode switch:\n%s", model.View())
+	if !strings.Contains(viewString(model), "mode: plan") {
+		t.Fatalf("permission modal did not reflect mode switch:\n%s", viewString(model))
 	}
 	select {
 	case decision := <-response:
@@ -1614,13 +1709,13 @@ func TestStreamEventsContinueDuringPermissionModeSwitch(t *testing.T) {
 	}, ok: true})
 	model = assertModel(t, updated)
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, cmd = model.Update(keyPress(tea.KeyTab, tea.ModShift))
 	if cmd != nil {
 		t.Fatalf("shift+tab returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if runner.mode != "auto" || !strings.Contains(model.View(), "mode: auto") {
-		t.Fatalf("permission mode switch failed: runner=%q view=\n%s", runner.mode, model.View())
+	if runner.mode != "auto" || !strings.Contains(viewString(model), "mode: auto") {
+		t.Fatalf("permission mode switch failed: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
 
 	updated, cmd = model.Update(streamEventMsg{
@@ -1639,7 +1734,7 @@ func TestStreamEventsContinueDuringPermissionModeSwitch(t *testing.T) {
 		t.Fatal("stream event should not close pending permission modal")
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		msg := cmd()
@@ -1665,7 +1760,7 @@ func TestTabCompletesSlashCommand(t *testing.T) {
 	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
 	model = sendText(t, model, "/m")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd := model.Update(keyPress(tea.KeyTab))
 	if cmd != nil {
 		t.Fatalf("tab returned unexpected command")
 	}
@@ -1673,8 +1768,8 @@ func TestTabCompletesSlashCommand(t *testing.T) {
 	if got := model.InputValue(); got != "/model " {
 		t.Fatalf("input = %q, want /model ", got)
 	}
-	if runner.mode != "" || !strings.Contains(model.View(), "mode: work") {
-		t.Fatalf("tab unexpectedly changed mode: runner=%q view=\n%s", runner.mode, model.View())
+	if runner.mode != "" || !strings.Contains(viewString(model), "mode: work") {
+		t.Fatalf("tab unexpectedly changed mode: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
 }
 
@@ -1682,7 +1777,7 @@ func TestTabCompletesSlashValueCandidate(t *testing.T) {
 	model := NewModel(Options{Model: "fake/current", Effort: "low", Efforts: []string{"none", "low", "high"}})
 	model = sendText(t, model, "/effort h")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd := model.Update(keyPress(tea.KeyTab))
 	if cmd != nil {
 		t.Fatalf("tab returned unexpected command")
 	}
@@ -1697,7 +1792,7 @@ func TestEnterSelectsSlashValueCandidate(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/current", Effort: "low", Efforts: runner.efforts})
 	model = sendText(t, model, "/effort h")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("enter returned unexpected command")
 	}
@@ -1705,8 +1800,8 @@ func TestEnterSelectsSlashValueCandidate(t *testing.T) {
 	if runner.effort != "high" || model.InputValue() != "" {
 		t.Fatalf("effort/input = %q/%q, want high/empty", runner.effort, model.InputValue())
 	}
-	if !strings.Contains(model.View(), "effort set to high") || !strings.Contains(model.View(), "effort: high") {
-		t.Fatalf("enter did not apply selected effort:\n%s", model.View())
+	if !strings.Contains(viewString(model), "effort set to high") || !strings.Contains(viewString(model), "effort: high") {
+		t.Fatalf("enter did not apply selected effort:\n%s", viewString(model))
 	}
 }
 
@@ -1715,16 +1810,16 @@ func TestArrowSelectsSlashValueCandidate(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/current", Effort: "none", Efforts: runner.efforts})
 	model = sendText(t, model, "/effort ")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, cmd := model.Update(keyPress(tea.KeyDown))
 	if cmd != nil {
 		t.Fatalf("down returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if view := model.View(); !strings.Contains(view, "  none") || !strings.Contains(view, "> low") {
+	if view := viewString(model); !strings.Contains(view, "  none") || !strings.Contains(view, "> low") {
 		t.Fatalf("down did not move effort selection:\n%s", view)
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("enter returned unexpected command")
 	}
@@ -1738,21 +1833,21 @@ func TestArrowSelectsSlashSuggestion(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "/m")
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "> /model [model]") || !strings.Contains(view, "  /mode <work|plan|auto>") {
 		t.Fatalf("initial slash selection missing:\n%s", view)
 	}
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, cmd := model.Update(keyPress(tea.KeyDown))
 	if cmd != nil {
 		t.Fatalf("down returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	view = model.View()
+	view = viewString(model)
 	if !strings.Contains(view, "  /model [model]") || !strings.Contains(view, "> /mode <work|plan|auto>") {
 		t.Fatalf("down did not move slash selection:\n%s", view)
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("enter returned unexpected command")
 	}
@@ -1765,28 +1860,28 @@ func TestArrowSelectsSlashSuggestion(t *testing.T) {
 func TestArrowNavigatesPromptHistory(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "first")
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	model = sendText(t, model, "second")
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "second" {
 		t.Fatalf("first up input = %q, want second", got)
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "first" {
 		t.Fatalf("second up input = %q, want first", got)
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "second" {
 		t.Fatalf("first down input = %q, want second", got)
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "" {
 		t.Fatalf("second down input = %q, want empty draft", got)
@@ -1799,7 +1894,7 @@ func TestPromptHistoryIncludesRestoredUserMessages(t *testing.T) {
 		{Role: assistantRole, Text: "past answer"},
 	}})
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ := model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "past prompt" {
 		t.Fatalf("input = %q, want restored prompt", got)
@@ -1815,21 +1910,21 @@ func TestMessageAreaScrollsWithinWindow(t *testing.T) {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	model = assertModel(t, updated)
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "message-06") || strings.Contains(view, "message-01") {
 		t.Fatalf("initial view should show bottom of message area:\n%s", view)
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	updated, _ = model.Update(keyPress(tea.KeyPgUp))
 	model = assertModel(t, updated)
-	view = model.View()
+	view = viewString(model)
 	if !strings.Contains(view, "message-03") || strings.Contains(view, "message-06") {
 		t.Fatalf("pgup did not scroll message area up:\n%s", view)
 	}
 
-	updated, _ = model.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
+	updated, _ = model.Update(mouseWheel(tea.MouseWheelDown))
 	model = assertModel(t, updated)
-	view = model.View()
+	view = viewString(model)
 	if !strings.Contains(view, "message-06") {
 		t.Fatalf("mouse wheel down did not return to bottom:\n%s", view)
 	}
@@ -1843,13 +1938,13 @@ func TestActivityMessagesScrollWithinWindow(t *testing.T) {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	model = assertModel(t, updated)
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "activity-06") || strings.Contains(view, "activity-01") {
 		t.Fatalf("initial view should show bottom of activity messages:\n%s", view)
 	}
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	updated, _ = model.Update(keyPress(tea.KeyPgUp))
 	model = assertModel(t, updated)
-	view = model.View()
+	view = viewString(model)
 	if !strings.Contains(view, "activity-03") || strings.Contains(view, "activity-06") {
 		t.Fatalf("pgup did not scroll activity messages:\n%s", view)
 	}
@@ -1869,12 +1964,12 @@ func TestMessageAreaScrollsDuringPermission(t *testing.T) {
 	}, ok: true})
 	model = assertModel(t, updated)
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	updated, cmd := model.Update(keyPress(tea.KeyPgUp))
 	if cmd != nil {
 		t.Fatalf("pgup returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "message-03") {
 		t.Fatalf("pgup did not scroll while permission modal is open:\n%s", view)
 	}
@@ -1884,7 +1979,7 @@ func TestSlashSuggestionsRenderUsage(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "/m")
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "/model [model]") || !strings.Contains(view, "supported model") {
 		t.Fatalf("view missing slash suggestions:\n%s", view)
 	}
@@ -1894,7 +1989,7 @@ func TestSlashModelSuggestionsRenderCandidates(t *testing.T) {
 	model := NewModel(Options{Model: "fake/current", Models: []string{"fake/new", "fake/other"}})
 	model = sendText(t, model, "/model new")
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "> fake/new") || strings.Contains(view, "fake/other") {
 		t.Fatalf("view missing filtered model suggestions:\n%s", view)
 	}
@@ -1904,7 +1999,7 @@ func TestSlashEffortSuggestionsRenderCandidates(t *testing.T) {
 	model := NewModel(Options{Model: "fake/current", Effort: "low", Efforts: []string{"none", "low", "high"}})
 	model = sendText(t, model, "/effort h")
 
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "> high") || strings.Contains(view, "\n  low") || strings.Contains(view, "\n> low") {
 		t.Fatalf("view missing filtered effort suggestions:\n%s", view)
 	}
@@ -1931,18 +2026,18 @@ func TestSlashSessionsPickerSwitchesSession(t *testing.T) {
 	model := NewModel(Options{Runner: runner, Model: "fake/one"})
 	model = sendText(t, model, "/sessions")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("slash sessions returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "select session") || !strings.Contains(model.View(), "s2") {
-		t.Fatalf("sessions picker missing:\n%s", model.View())
+	if !strings.Contains(viewString(model), "select session") || !strings.Contains(viewString(model), "s2") {
+		t.Fatalf("sessions picker missing:\n%s", viewString(model))
 	}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = model.Update(keyPress(tea.KeyDown))
 	model = assertModel(t, updated)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if runner.currentSessionID != "s2" {
 		t.Fatalf("current session = %q, want s2", runner.currentSessionID)
@@ -1950,8 +2045,8 @@ func TestSlashSessionsPickerSwitchesSession(t *testing.T) {
 	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"old prompt", "old answer", "session set to s2"}) {
 		t.Fatalf("messages = %#v", got)
 	}
-	if !strings.Contains(model.View(), "model: fake/two") || !strings.Contains(model.View(), "turn: 3") {
-		t.Fatalf("view missing restored state:\n%s", model.View())
+	if !strings.Contains(viewString(model), "model: fake/two") || !strings.Contains(viewString(model), "turn: 3") {
+		t.Fatalf("view missing restored state:\n%s", viewString(model))
 	}
 }
 
@@ -1973,11 +2068,11 @@ func TestSelectSessionOnStartOpensPicker(t *testing.T) {
 		},
 	}
 	model := NewModel(Options{Runner: runner, Model: "fake/default", SelectSession: true})
-	if !strings.Contains(model.View(), "select session") || !strings.Contains(model.View(), "s1") {
-		t.Fatalf("startup session picker missing:\n%s", model.View())
+	if !strings.Contains(viewString(model), "select session") || !strings.Contains(viewString(model), "s1") {
+		t.Fatalf("startup session picker missing:\n%s", viewString(model))
 	}
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if runner.currentSessionID != "s1" {
 		t.Fatalf("current session = %q, want s1", runner.currentSessionID)
@@ -1997,7 +2092,7 @@ func TestBangShellRunsLocallyWithoutAgentPrompt(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "!echo hello")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("bang shell returned nil command")
 	}
@@ -2013,15 +2108,15 @@ func TestBangShellRunsLocallyWithoutAgentPrompt(t *testing.T) {
 	if len(got) != 2 || got[0] != "!echo hello" || !strings.Contains(got[1], "hello") {
 		t.Fatalf("messages = %#v, want local command and output", got)
 	}
-	if strings.Contains(model.View(), "tool bash") || strings.Contains(model.View(), "local_shell") {
-		t.Fatalf("shell run rendered as tool activity:\n%s", model.View())
+	if strings.Contains(viewString(model), "tool bash") || strings.Contains(viewString(model), "local_shell") {
+		t.Fatalf("shell run rendered as tool activity:\n%s", viewString(model))
 	}
 }
 
 func TestBangShellInputShowsShellModeHint(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}, Cwd: "/tmp/work"})
 	model = sendText(t, model, "!")
-	view := model.View()
+	view := viewString(model)
 	if !strings.Contains(view, "shell mode") || !strings.Contains(view, "enter runs locally") {
 		t.Fatalf("shell hint missing:\n%s", view)
 	}
@@ -2035,7 +2130,7 @@ func TestBangShellWhileRunningStaysInInput(t *testing.T) {
 	model.running = true
 	model = sendText(t, model, "!date")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if cmd != nil {
 		t.Fatalf("running bang shell returned unexpected command")
@@ -2054,11 +2149,11 @@ func TestAtFilePickerInsertsMentionPath(t *testing.T) {
 	}
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "read @mod")
-	if !strings.Contains(model.View(), "attach file") || !strings.Contains(model.View(), "internal/tui/model.go") {
-		t.Fatalf("file picker missing:\n%s", model.View())
+	if !strings.Contains(viewString(model), "attach file") || !strings.Contains(viewString(model), "internal/tui/model.go") {
+		t.Fatalf("file picker missing:\n%s", viewString(model))
 	}
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd := model.Update(keyPress(tea.KeyTab))
 	if cmd != nil {
 		t.Fatalf("file picker tab returned unexpected command")
 	}
@@ -2075,7 +2170,7 @@ func TestAtFilePickerQuotesPathsWithSpaces(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "read @note")
 
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != `read @"docs/my note.md" ` {
 		t.Fatalf("input = %q, want quoted file mention", got)
@@ -2087,10 +2182,10 @@ func TestViewWrapsLongMessagesToWidth(t *testing.T) {
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 24, Height: 20})
 	model = assertModel(t, updated)
 	model = sendText(t, model, "abcdefghijklmnopqrstuvwxyz")
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
 
-	view := model.View()
+	view := viewString(model)
 	if strings.Contains(view, "› abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("long line was not wrapped:\n%s", view)
 	}
@@ -2111,7 +2206,7 @@ func TestViewWrapsLongActivityAndKeepsRedaction(t *testing.T) {
 		Summary:      "cmd=[redacted], cwd=/workspace, detail=abcdefghijklmnopqrstuvwxyz",
 	}))
 
-	view := model.View()
+	view := viewString(model)
 	if strings.Contains(view, "secret-token") {
 		t.Fatalf("view leaked secret:\n%s", view)
 	}
@@ -2128,7 +2223,7 @@ func TestSlashUnknownCommand(t *testing.T) {
 	model := NewModel(Options{Runner: runner})
 	model = sendText(t, model, "/wat")
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
 	if cmd != nil {
 		t.Fatalf("unknown slash returned unexpected command")
 	}
@@ -2144,7 +2239,7 @@ func TestSlashUnknownCommand(t *testing.T) {
 func TestModelCtrlCQuits(t *testing.T) {
 	model := NewModel(Options{})
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	updated, cmd := model.Update(keyPress('c', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatalf("ctrl+c returned nil command")
 	}
@@ -2162,13 +2257,13 @@ func TestEscInterruptsRunningInsteadOfQuitting(t *testing.T) {
 	model.runID = 3
 	model.cancel = func() { cancelled = true }
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, cmd := model.Update(keyPress(tea.KeyEsc))
 	if cmd != nil {
 		t.Fatalf("esc returned unexpected command")
 	}
 	model = assertModel(t, updated)
-	if !cancelled || model.Running() || !strings.Contains(model.View(), "state: idle") {
-		t.Fatalf("esc did not interrupt: cancelled=%v running=%v view=\n%s", cancelled, model.Running(), model.View())
+	if !cancelled || model.Running() || !strings.Contains(viewString(model), "state: idle") {
+		t.Fatalf("esc did not interrupt: cancelled=%v running=%v view=\n%s", cancelled, model.Running(), viewString(model))
 	}
 	if model.runID != 4 {
 		t.Fatalf("runID = %d, want 4", model.runID)
@@ -2187,7 +2282,7 @@ func TestEscDuringPermissionDeniesAndInterrupts(t *testing.T) {
 	}, ok: true})
 	model = assertModel(t, updated)
 
-	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, cmd := model.Update(keyPress(tea.KeyEsc))
 	if cmd == nil {
 		t.Fatalf("esc returned nil command")
 	}
@@ -2246,8 +2341,8 @@ func TestStreamWaitTimeoutCancelsRun(t *testing.T) {
 	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "timed out") {
 		t.Fatalf("messages = %#v, want timeout error", got)
 	}
-	if !strings.Contains(model.View(), "state: idle") {
-		t.Fatalf("view missing idle state:\n%s", model.View())
+	if !strings.Contains(viewString(model), "state: idle") {
+		t.Fatalf("view missing idle state:\n%s", viewString(model))
 	}
 }
 
@@ -2464,10 +2559,59 @@ func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 func sendText(t *testing.T, model Model, text string) Model {
 	t.Helper()
 	for _, r := range text {
-		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		updated, _ := model.Update(runePress(r))
 		model = assertModel(t, updated)
 	}
 	return model
+}
+
+func viewString(model Model) string {
+	return model.View().Content
+}
+
+func assertCursorOnInputLine(t *testing.T, model Model, marker string) {
+	t.Helper()
+	view := model.View()
+	inputLine := lineContaining(strings.Split(view.Content, "\n"), marker)
+	if inputLine < 0 {
+		t.Fatalf("input marker %q missing:\n%s", marker, view.Content)
+	}
+	if view.Cursor == nil || view.Cursor.Y != inputLine {
+		t.Fatalf("cursor = %+v, want Y %d\n%s", view.Cursor, inputLine, view.Content)
+	}
+}
+
+func lineContaining(lines []string, needle string) int {
+	for i, line := range lines {
+		if strings.Contains(xansi.Strip(line), needle) {
+			return i
+		}
+	}
+	return -1
+}
+
+func keyPress(code rune, mods ...tea.KeyMod) tea.KeyPressMsg {
+	var mod tea.KeyMod
+	for _, next := range mods {
+		mod |= next
+	}
+	return tea.KeyPressMsg(tea.Key{Code: code, Mod: mod})
+}
+
+func runePress(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: r, Text: string(r)})
+}
+
+func mouseClick(x, y int) tea.MouseClickMsg {
+	return tea.MouseClickMsg(tea.Mouse{X: x, Y: y, Button: tea.MouseLeft})
+}
+
+func mouseRelease(x, y int) tea.MouseReleaseMsg {
+	return tea.MouseReleaseMsg(tea.Mouse{X: x, Y: y, Button: tea.MouseLeft})
+}
+
+func mouseWheel(button tea.MouseButton) tea.MouseWheelMsg {
+	return tea.MouseWheelMsg(tea.Mouse{Button: button})
 }
 
 func assertModel(t *testing.T, model tea.Model) Model {
