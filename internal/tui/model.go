@@ -556,6 +556,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		m.messages.clear()
 		m.scrollToBottom()
 		return m, nil
+	case "new":
+		return m.newSession()
 	case "help":
 		m.messages.append(systemRole, slashHelp())
 		return m, nil
@@ -1062,9 +1064,34 @@ func (m Model) switchSession(id string) (tea.Model, tea.Cmd) {
 		m.messages.append(systemRole, err.Error())
 		return m, nil
 	}
-	m.messages.load(state.Messages)
+	m.applySessionState(state)
 	m.messages.append(systemRole, "session set to "+state.ID)
+	return m, nil
+}
+
+func (m Model) newSession() (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(SessionRunner)
+	if !ok {
+		m.messages.append(systemRole, "new session is unavailable in this runner")
+		return m, nil
+	}
+	state, err := runner.NewSession(m.ctx)
+	if err != nil {
+		m.messages.append(systemRole, err.Error())
+		return m, nil
+	}
+	m.applySessionState(state)
+	if strings.TrimSpace(state.ID) != "" {
+		m.messages.append(systemRole, "new session "+state.ID)
+	}
+	return m, nil
+}
+
+func (m *Model) applySessionState(state SessionState) {
+	m.messages.load(state.Messages)
 	m.history = promptHistoryFromMessages(state.Messages)
+	m.queuedPrompts = nil
+	m.resetQueuedPromptNavigation()
 	m.resetPromptHistoryNavigation()
 	m.scrollToBottom()
 	if strings.TrimSpace(state.Model) != "" {
@@ -1077,7 +1104,6 @@ func (m Model) switchSession(id string) (tea.Model, tea.Cmd) {
 	m.status.contextMaxTokens = 0
 	m.status.contextRatio = 0
 	m.status.contextKind = ""
-	return m, nil
 }
 
 func (m *Model) updateContextUsage(event Event) {

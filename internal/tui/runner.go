@@ -66,6 +66,7 @@ type SessionState struct {
 // SessionRunner optionally lets slash commands list and switch persisted sessions.
 type SessionRunner interface {
 	ListSessions(ctx context.Context) ([]SessionInfo, error)
+	NewSession(ctx context.Context) (SessionState, error)
 	SwitchSession(ctx context.Context, id string) (SessionState, error)
 	CurrentSessionID() string
 }

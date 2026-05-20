@@ -8,7 +8,7 @@
 
 ### Requirement: Slash 命令解析
 
-系统 SHALL 在 TUI 中识别以 `/` 开头的输入，并解析为 slash command。支持的命令 MUST 至少包含 `model`、`mode`、`clear`、`sessions`、`help`、`quit`、`exit`、`config`、`profile`。未知命令 MUST 返回可读错误，不得发送给 Agent。
+系统 SHALL 在 TUI 中识别以 `/` 开头的输入，并解析为 slash command。支持的命令 MUST 至少包含 `model`、`mode`、`clear`、`new`、`sessions`、`help`、`quit`、`exit`、`config`、`profile`。未知命令 MUST 返回可读错误，不得发送给 Agent。
 当输入框内容以 `/` 开头但尚未提交时，TUI SHOULD 显示匹配命令候选和每条命令的用法说明。候选存在时，上下方向键 SHOULD 移动候选选中项，Tab SHOULD 补全当前选中的命令名，而不是切换执行模式。对于未补全成完整命令的 slash 输入，Enter SHOULD 先选择当前候选，不得直接执行或报未知命令。对于 `/model`、`/approval-model` 和 `/effort` 的参数候选，TUI SHOULD 同样支持方向键移动候选、Tab 补全当前候选、Enter 选择并执行当前候选。
 
 #### Scenario: 解析 model 命令
@@ -51,13 +51,22 @@
 
 ### Requirement: 本地命令执行
 
-TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表；`/help` MUST 显示支持的命令；`/quit` 和 `/exit` MUST 退出 TUI。
+TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表但保留当前 session；`/new` MUST 创建并切换到一个新的空 session；`/help` MUST 显示支持的命令；`/quit` 和 `/exit` MUST 退出 TUI。
 
 #### Scenario: clear 清空消息
 
 - **GIVEN** 消息列表已有内容
 - **WHEN** 用户输入 `/clear`
 - **THEN** 消息列表 MUST 被清空
+- **THEN** 后续 Agent turn MUST 继续使用当前 session 历史
+
+#### Scenario: new 开启空 session
+
+- **GIVEN** 当前 TUI 已有 session 历史和 context 状态栏
+- **WHEN** 用户输入 `/new`
+- **THEN** TUI MUST 创建并切换到新的空 session
+- **THEN** 消息列表、本地排队输入和 context 状态栏 MUST 被清空
+- **THEN** 后续 Agent turn MUST 使用新 session 的空历史
 
 #### Scenario: quit 退出
 
@@ -71,7 +80,7 @@ TUI SHALL 在本地执行 slash command。`/clear` MUST 清空消息列表；`/h
 
 ### Requirement: 运行时状态命令
 
-`/model <id>`、`/mode <mode>` 和 `/sessions` SHALL 更新 TUI 状态栏或会话状态，并在 runner 支持时同步到后续 Agent turn。`/model` 不带参数时 MUST 打开当前 provider 的可选模型选择列表，不得把模型切为空值。显式指定模型时，TUI MUST 校验该模型属于当前 provider 的候选列表；非法模型 MUST 保持当前模型不变并显示错误。`/sessions` 不带参数时 MUST 打开当前 workspace 的 session 选择列表；`/sessions <id>` MUST 切换到指定 session。`/config`、`/profile` SHALL 输出当前状态或明确操作提示。
+`/model <id>`、`/mode <mode>`、`/new` 和 `/sessions` SHALL 更新 TUI 状态栏或会话状态，并在 runner 支持时同步到后续 Agent turn。`/model` 不带参数时 MUST 打开当前 provider 的可选模型选择列表，不得把模型切为空值。显式指定模型时，TUI MUST 校验该模型属于当前 provider 的候选列表；非法模型 MUST 保持当前模型不变并显示错误。`/sessions` 不带参数时 MUST 打开当前 workspace 的 session 选择列表；`/sessions <id>` MUST 切换到指定 session。`/config`、`/profile` SHALL 输出当前状态或明确操作提示。
 
 #### Scenario: model 切换
 

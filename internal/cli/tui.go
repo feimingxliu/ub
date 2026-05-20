@@ -304,6 +304,24 @@ func (r *tuiAgentRunner) ListSessions(ctx context.Context) ([]tui.SessionInfo, e
 	return out, nil
 }
 
+func (r *tuiAgentRunner) NewSession(ctx context.Context) (tui.SessionState, error) {
+	state, err := startChatRollout(r.cmd, "", r.model, chatOptions{})
+	if err != nil {
+		return tui.SessionState{}, err
+	}
+	state.session.Title = ""
+	if err := state.store.UpdateSession(ctx, state.session); err != nil {
+		_ = state.store.Close()
+		return tui.SessionState{}, err
+	}
+	if r.state != nil {
+		_ = r.state.store.Close()
+	}
+	r.state = state
+	r.closedStore = false
+	return r.sessionState(), nil
+}
+
 func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.SessionState, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {

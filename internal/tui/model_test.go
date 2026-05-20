@@ -966,6 +966,59 @@ func TestSlashClear(t *testing.T) {
 	}
 }
 
+func TestSlashNewStartsEmptySession(t *testing.T) {
+	runner := &scriptedRunner{
+		newSessionState: SessionState{ID: "s-new", Model: "fake/new"},
+	}
+	model := NewModel(Options{Runner: runner, Model: "fake/old"})
+	model.messages.append(userRole, "old prompt")
+	model.queuedPrompts = []string{"queued prompt"}
+	model.status.turn = 3
+	model.status.contextUsedTokens = 1200
+	model.status.contextMaxTokens = 8000
+	model.status.contextRatio = 0.15
+	model = sendText(t, model, "/new")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash new returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	if runner.newSessionCalls != 1 || runner.currentSessionID != "s-new" {
+		t.Fatalf("new session calls/current = %d/%q, want 1/s-new", runner.newSessionCalls, runner.currentSessionID)
+	}
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"new session s-new"}) {
+		t.Fatalf("messages = %#v, want new-session confirmation only", got)
+	}
+	if got := model.QueuedPrompts(); len(got) != 0 {
+		t.Fatalf("queued prompts = %#v, want cleared", got)
+	}
+	view := model.View()
+	for _, unexpected := range []string{"old prompt", "ctx est:", "turn: 3", "model: fake/old"} {
+		if strings.Contains(view, unexpected) {
+			t.Fatalf("new session view still contains %q:\n%s", unexpected, view)
+		}
+	}
+	if !strings.Contains(view, "model: fake/new") {
+		t.Fatalf("new session view missing new model:\n%s", view)
+	}
+}
+
+func TestSlashNewUnavailable(t *testing.T) {
+	model := NewModel(Options{Runner: &promptOnlyRunner{}})
+	model = sendText(t, model, "/new")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash new returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "new session is unavailable") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestSlashQuit(t *testing.T) {
 	for _, input := range []string{"/quit", "/exit"} {
 		t.Run(input, func(t *testing.T) {
@@ -1825,6 +1878,8 @@ type scriptedRunner struct {
 	sessions         []SessionInfo
 	sessionStates    map[string]SessionState
 	currentSessionID string
+	newSessionState  SessionState
+	newSessionCalls  int
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -1891,6 +1946,19 @@ func (r *scriptedRunner) ApprovalModels() []string {
 
 func (r *scriptedRunner) ListSessions(context.Context) ([]SessionInfo, error) {
 	return append([]SessionInfo(nil), r.sessions...), nil
+}
+
+func (r *scriptedRunner) NewSession(context.Context) (SessionState, error) {
+	r.newSessionCalls++
+	state := r.newSessionState
+	if state.ID == "" {
+		state.ID = "new-session"
+	}
+	r.currentSessionID = state.ID
+	if state.Model != "" {
+		r.model = state.Model
+	}
+	return state, nil
 }
 
 func (r *scriptedRunner) SwitchSession(_ context.Context, id string) (SessionState, error) {

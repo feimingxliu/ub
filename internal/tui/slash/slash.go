@@ -28,6 +28,7 @@ var specs = []Spec{
 	{Name: "mode", Usage: "/mode <work|plan|auto>", Description: "switch execution mode"},
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
+	{Name: "new", Usage: "/new", Description: "start a new empty session"},
 	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},
 	{Name: "help", Usage: "/help", Description: "show slash command help"},
 	{Name: "quit", Usage: "/quit", Description: "exit the TUI"},
