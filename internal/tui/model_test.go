@@ -430,6 +430,7 @@ func TestModelRendersActivityEvents(t *testing.T) {
 
 	view := model.View()
 	for _, want := range []string{
+		"thinking: checking repository context",
 		"tools: 1 done",
 		"permissions: 1",
 	} {
@@ -437,11 +438,11 @@ func TestModelRendersActivityEvents(t *testing.T) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
 	}
-	updated, cmd = model.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 2})
-	if cmd != nil {
-		t.Fatalf("mouse click returned unexpected command")
+	for i := range model.messages.items {
+		if model.messages.items[i].collapsible() {
+			model.messages.items[i].collapsed = false
+		}
 	}
-	model = assertModel(t, updated)
 	view = model.View()
 	for _, want := range []string{
 		"checking repository context",
@@ -455,6 +456,32 @@ func TestModelRendersActivityEvents(t *testing.T) {
 	}
 	if strings.Contains(view, "assistant:") || strings.Contains(view, "user:") {
 		t.Fatalf("view should not render explicit role labels:\n%s", view)
+	}
+}
+
+func TestActivityEventsSplitThinkingAndTools(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 6
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "checking repository", Content: "checking repository"},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "done", Summary: "path=main.go", Content: "file content"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 6, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("activity event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	got := model.MessageTexts()
+	if len(got) != 2 {
+		t.Fatalf("messages = %#v, want split thinking/tool groups", got)
+	}
+	if !strings.HasPrefix(got[0], "thinking: checking repository") || !strings.HasPrefix(got[1], "tools: 1 done") {
+		t.Fatalf("messages = %#v, want thinking group before tool group", got)
 	}
 }
 
@@ -658,7 +685,7 @@ func TestKeyboardDoesNotToggleActivityBlocks(t *testing.T) {
 	}
 }
 
-func TestActivityGroupSummaryShowsNoticeWithTools(t *testing.T) {
+func TestNoticeActivityRendersSeparateFromToolGroup(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true
 	model.runID = 3
@@ -676,8 +703,11 @@ func TestActivityGroupSummaryShowsNoticeWithTools(t *testing.T) {
 	}
 
 	got := model.MessageTexts()
-	if len(got) != 1 || !strings.Contains(got[0], "summarized 8 earlier messages") {
-		t.Fatalf("messages = %#v, want notice included with tool summary", got)
+	if len(got) != 2 {
+		t.Fatalf("messages = %#v, want tool group and separate notice", got)
+	}
+	if !strings.Contains(got[0], "tools: 1 done") || !strings.Contains(got[1], "summarized 8 earlier messages") {
+		t.Fatalf("messages = %#v, want notice separate from tool summary", got)
 	}
 }
 
@@ -1155,7 +1185,7 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 		t.Fatal("permission event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if got := model.MessageTexts(); len(got) != 1 || got[0] != "permissions: 1" {
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "tools: permissions: 1" {
 		t.Fatalf("messages = %#v, want permission summary", got)
 	}
 	updated, cmd = model.Update(tea.MouseMsg{Type: tea.MouseLeft, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: 0})

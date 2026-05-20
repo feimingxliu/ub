@@ -541,7 +541,7 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 	m.events = events
 	m.runID++
 	runID := m.runID
-	m.messages.startActivityGroup(activityGroupKey(runID), "Thinking...")
+	m.messages.startActivityGroup(thinkingActivityGroupKey(runID), "Thinking...")
 	return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout))
 }
 
@@ -655,43 +655,51 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventDeltaText:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		m.messages.removePlaceholderActivityGroup(activityGroupKey(m.runID))
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
 		m.messages.appendAssistantDelta(event.Text)
 		m.status.state = statusStreaming
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventActivity:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		m.messages.appendOrUpdateActivityInGroup(activityGroupKey(m.runID), event)
+		if activityGroupNameForEvent(event) != thinkingGroupName {
+			m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
+		}
+		if groupName := activityGroupNameForEvent(event); groupName != "" {
+			m.messages.appendOrUpdateActivityInGroup(activityGroupKeyForName(m.runID, groupName), groupName, event)
+		} else {
+			m.messages.appendOrUpdateActivity(event)
+		}
 		m.status.state = statusForActivity(event)
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallStart:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
 		m.messages.appendToolStatus(event.ToolName, "started")
 		m.status.state = statusTool
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventToolCallEnd:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
 		m.messages.appendToolStatus(event.ToolName, "finished")
 		m.status.state = statusThinking
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventPermission:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
 		m.messages.appendPermissionEvent(event)
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventDone:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		if m.messages.removePlaceholderActivityGroup(activityGroupKey(m.runID)) {
-			m.status.state = statusFinalizing
-			m.cancel = nil
-			return waitForEventWithTimeout(m.events, m.runID, m.timeout)
-		}
-		m.messages.finishActivityGroup(activityGroupKey(m.runID), "done")
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
+		m.messages.finishActivityGroup(thinkingActivityGroupKey(m.runID), "done")
+		m.messages.finishActivityGroup(toolActivityGroupKey(m.runID), "done")
 		m.status.state = statusFinalizing
 		m.cancel = nil
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventError:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		m.messages.finishActivityGroup(activityGroupKey(m.runID), "failed")
+		m.messages.finishActivityGroup(thinkingActivityGroupKey(m.runID), "failed")
+		m.messages.finishActivityGroup(toolActivityGroupKey(m.runID), "failed")
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -754,8 +762,27 @@ func thinkingActivityKey(runID int) string {
 	return fmt.Sprintf("thinking:%d", runID)
 }
 
-func activityGroupKey(runID int) string {
-	return fmt.Sprintf("activity:%d", runID)
+func thinkingActivityGroupKey(runID int) string {
+	return activityGroupKeyForName(runID, thinkingGroupName)
+}
+
+func toolActivityGroupKey(runID int) string {
+	return activityGroupKeyForName(runID, toolGroupName)
+}
+
+func activityGroupKeyForName(runID int, groupName string) string {
+	return fmt.Sprintf("activity:%s:%d", groupName, runID)
+}
+
+func activityGroupNameForEvent(event Event) string {
+	switch strings.TrimSpace(event.ActivityKind) {
+	case "thinking":
+		return thinkingGroupName
+	case "tool", "permission":
+		return toolGroupName
+	default:
+		return ""
+	}
 }
 
 func toolActivityText(event Event) string {
@@ -929,7 +956,7 @@ func (m Model) startCompact() (tea.Model, tea.Cmd) {
 	m.events = events
 	m.runID++
 	runID := m.runID
-	m.messages.startActivityGroup(activityGroupKey(runID), "Compacting...")
+	m.messages.startActivityGroup(thinkingActivityGroupKey(runID), "Compacting...")
 	return m, tea.Batch(runCompact(ctx, runner, events), waitForEventWithTimeout(events, runID, m.timeout))
 }
 

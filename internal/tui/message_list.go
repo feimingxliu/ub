@@ -21,6 +21,11 @@ const errorRole = "error"
 
 const maxThinkingSummaryRunes = 180
 
+const (
+	thinkingGroupName = "thinking"
+	toolGroupName     = "tool"
+)
+
 type messageKind string
 
 const (
@@ -126,6 +131,7 @@ func (l *messageList) startActivityGroup(key, text string) {
 		text:      text,
 		key:       key,
 		kind:      activityGroupMessage,
+		name:      thinkingGroupName,
 		title:     text,
 		status:    "running",
 		collapsed: true,
@@ -147,7 +153,7 @@ func (l *messageList) appendOrUpdateActivity(event Event) {
 	l.appendOrUpdateBlock(block)
 }
 
-func (l *messageList) appendOrUpdateActivityInGroup(groupKey string, event Event) {
+func (l *messageList) appendOrUpdateActivityInGroup(groupKey, groupName string, event Event) {
 	if strings.TrimSpace(groupKey) == "" {
 		l.appendOrUpdateActivity(event)
 		return
@@ -158,7 +164,8 @@ func (l *messageList) appendOrUpdateActivityInGroup(groupKey string, event Event
 			role:      activityRole,
 			key:       groupKey,
 			kind:      activityGroupMessage,
-			title:     "Activity",
+			name:      groupName,
+			title:     activityGroupPlaceholderTitle(groupName),
 			status:    "running",
 			collapsed: true,
 		})
@@ -167,12 +174,15 @@ func (l *messageList) appendOrUpdateActivityInGroup(groupKey string, event Event
 	entry := activityMessage(event)
 	entry.key = defaultString(activityEntryKey(event), entry.key)
 	group := &l.items[idx]
+	if strings.TrimSpace(group.name) == "" {
+		group.name = groupName
+	}
 	if entry.kind != thinkingMessage {
 		group.entries = removePlaceholderThinkingEntry(group.entries)
 	}
 	group.entries = upsertActivityEntry(group.entries, entry)
 	group.status = activityGroupStatus(group.entries)
-	group.title = activityGroupTitle(group.entries)
+	group.title = activityGroupTitleForName(group.name, group.entries)
 	group.text = group.title
 	l.clampFocus()
 }
@@ -820,6 +830,35 @@ func activityEntryKey(event Event) string {
 		return "notice:" + defaultString(event.Summary, event.Text)
 	default:
 		return ""
+	}
+}
+
+func activityGroupPlaceholderTitle(groupName string) string {
+	switch groupName {
+	case thinkingGroupName:
+		return "Thinking..."
+	case toolGroupName:
+		return "tools"
+	default:
+		return "Activity"
+	}
+}
+
+func activityGroupTitleForName(groupName string, entries []message) string {
+	title := activityGroupTitle(entries)
+	switch groupName {
+	case thinkingGroupName:
+		if isPlaceholderActivityTitle(title) || strings.HasPrefix(strings.ToLower(title), "thinking") {
+			return title
+		}
+		return "thinking: " + title
+	case toolGroupName:
+		if strings.HasPrefix(strings.ToLower(title), "tools") {
+			return title
+		}
+		return "tools: " + title
+	default:
+		return title
 	}
 }
 
