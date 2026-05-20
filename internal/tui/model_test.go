@@ -40,6 +40,25 @@ func TestInputViewFitsTerminalWidth(t *testing.T) {
 	}
 }
 
+func TestFooterKeepsStatusAtBottom(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	model = assertModel(t, updated)
+	model = sendText(t, model, "!echo")
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(lines[len(lines)-1], "state: idle") {
+		t.Fatalf("status bar should remain at the bottom:\n%s", view)
+	}
+	if !strings.Contains(view, "› !echo") {
+		t.Fatalf("input line missing:\n%s", view)
+	}
+	if !strings.Contains(view, "shell mode") {
+		t.Fatalf("shell hint should remain visible above input:\n%s", view)
+	}
+}
+
 func TestModelEchoesInputOnEnter(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test", ExecutionMode: "plan", Cwd: "/work"})
 	model = sendText(t, model, "hello")
@@ -812,6 +831,31 @@ func TestMouseExpandsToolGroupFileDiffDetails(t *testing.T) {
 	}
 }
 
+func TestToolGroupDoesNotExpandTrivialCompletedDetail(t *testing.T) {
+	model := NewModel(Options{})
+	model.messages.appendOrUpdateActivityInGroup("activity:tool:1", toolGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_ls",
+		ToolName:     "ls",
+		Status:       "done",
+		Summary:      "path=.",
+		Content:      "completed",
+	})
+	model.messages.items[0].collapsed = false
+
+	view := model.View()
+	if strings.Contains(view, "completed") {
+		t.Fatalf("trivial completed detail should not be rendered:\n%s", view)
+	}
+	if strings.Contains(view, "▸ ✓ Listed path=.") {
+		t.Fatalf("trivial detail should not make the tool row clickable:\n%s", view)
+	}
+	if !strings.Contains(view, "✓ Listed path=.") {
+		t.Fatalf("tool summary should remain visible:\n%s", view)
+	}
+}
+
 func TestToolDetailLineKindClassifiesDiffLines(t *testing.T) {
 	cases := map[string]toolDetailLineKindValue{
 		"create write.md": toolDetailSummaryLine,
@@ -826,6 +870,19 @@ func TestToolDetailLineKindClassifiesDiffLines(t *testing.T) {
 	for line, want := range cases {
 		if got := toolDetailLineKind(line); got != want {
 			t.Fatalf("toolDetailLineKind(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+func TestFormatToolDetailLineHumanizesFileChangeSummary(t *testing.T) {
+	cases := map[string]string{
+		"create write.md":      "created file: write.md",
+		"modify internal/a.go": "modified file: internal/a.go",
+		"delete old.txt":       "deleted file: old.txt",
+	}
+	for line, want := range cases {
+		if got := formatToolDetailLine(line); got != want {
+			t.Fatalf("formatToolDetailLine(%q) = %q, want %q", line, got, want)
 		}
 	}
 }

@@ -543,7 +543,7 @@ func renderActivityBlock(item message, focused bool, width int, styles tuitheme.
 	}
 	detail := expandedDetail(item)
 	if detail == "" {
-		detail = item.text
+		return out
 	}
 	if item.kind == toolMessage {
 		return appendToolDetailLines(out, detail, "└ ", width, styles)
@@ -624,7 +624,7 @@ func activityEntryLine(entry message, width int, twoStageDetails bool) string {
 }
 
 func activityEntryHasDetail(entry message) bool {
-	return strings.TrimSpace(entry.detail) != ""
+	return expandedDetail(entry) != ""
 }
 
 func appendActivityEntryDetailLines(out []string, entry message, detail, prefix string, width int, styles tuitheme.Styles) []string {
@@ -648,8 +648,9 @@ func appendToolDetailLines(out []string, detail, prefix string, width int, style
 	}
 	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
 	for _, line := range strings.Split(detail, "\n") {
+		displayLine := formatToolDetailLine(line)
 		style := toolDetailLineStyle(line, styles)
-		for _, wrapped := range wrapLine(line, textWidth) {
+		for _, wrapped := range wrapLine(displayLine, textWidth) {
 			out = append(out, styles.Render(style, prefix+wrapped))
 		}
 	}
@@ -712,6 +713,33 @@ func isFileChangeSummaryLine(line string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func formatToolDetailLine(line string) string {
+	if summary, ok := humanFileChangeSummary(line); ok {
+		return summary
+	}
+	return line
+}
+
+func humanFileChangeSummary(line string) (string, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 2 {
+		return "", false
+	}
+	path := strings.Join(fields[1:], " ")
+	switch fields[0] {
+	case "create":
+		return "created file: " + path, true
+	case "modify":
+		return "modified file: " + path, true
+	case "delete":
+		return "deleted file: " + path, true
+	case "changed":
+		return "changed file: " + path, true
+	default:
+		return "", false
 	}
 }
 
@@ -1342,11 +1370,29 @@ func activityStatusIcon(kind messageKind, status string) string {
 
 func expandedDetail(item message) string {
 	detail := strings.TrimSpace(item.detail)
-	if detail != "" {
-		return detail
+	if detail == "" {
+		return ""
 	}
-	if item.status != "" {
-		return "status: " + item.status
+	if item.kind == toolMessage && !meaningfulToolDetail(detail, item) {
+		return ""
 	}
-	return ""
+	return detail
+}
+
+func meaningfulToolDetail(detail string, item message) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(detail), " "))
+	switch normalized {
+	case "", "completed", "complete", "done", "queued", "running", "started", "failed", "error", "status: done", "status: running", "status: queued", "status: failed", "status: error":
+		return false
+	}
+	if normalized == strings.ToLower(strings.Join(strings.Fields(item.text), " ")) {
+		return false
+	}
+	if normalized == strings.ToLower(strings.Join(strings.Fields(item.title), " ")) {
+		return false
+	}
+	if item.status != "" && normalized == strings.ToLower(strings.Join(strings.Fields(item.status), " ")) {
+		return false
+	}
+	return true
 }
