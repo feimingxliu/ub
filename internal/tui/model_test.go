@@ -2546,7 +2546,7 @@ func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 	}
 	_ = batch[0]()
 	msg := batch[1]()
-	for {
+	for steps := 0; steps < 32; steps++ {
 		updated, next := model.Update(msg)
 		model = assertModel(t, updated)
 		if next == nil {
@@ -2554,6 +2554,8 @@ func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 		}
 		msg = next()
 	}
+	t.Fatalf("drainBatch did not settle after 32 stream messages; last message %T", msg)
+	return model
 }
 
 func sendText(t *testing.T, model Model, text string) Model {

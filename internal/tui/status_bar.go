@@ -103,7 +103,11 @@ func shrinkStatusSegments(segments []statusSegment, width int, styles tuitheme.S
 		{label: "ctx est", minWidth: 5},
 		{label: "ctx last", minWidth: 5},
 	}
-	for statusSegmentsWidth(out, styles) > width {
+	for {
+		beforeWidth := statusSegmentsWidth(out, styles)
+		if beforeWidth <= width {
+			return out
+		}
 		changed := false
 		for _, rule := range rules {
 			idx := statusSegmentIndex(out, rule.label)
@@ -114,19 +118,26 @@ func shrinkStatusSegments(segments []statusSegment, width int, styles tuitheme.S
 			if currentWidth <= rule.minWidth {
 				continue
 			}
-			overflow := statusSegmentsWidth(out, styles) - width
+			currentTotal := statusSegmentsWidth(out, styles)
+			if currentTotal <= width {
+				return out
+			}
+			overflow := currentTotal - width
 			reduceBy := min(overflow, currentWidth-rule.minWidth)
-			out[idx].value = shrinkStatusValue(out[idx].value, currentWidth-reduceBy)
+			nextValue := shrinkStatusValue(out[idx].value, currentWidth-reduceBy)
+			if nextValue == out[idx].value {
+				continue
+			}
+			out[idx].value = nextValue
 			changed = true
 			if statusSegmentsWidth(out, styles) <= width {
 				return out
 			}
 		}
-		if !changed {
+		if !changed || statusSegmentsWidth(out, styles) >= beforeWidth {
 			return out
 		}
 	}
-	return out
 }
 
 type statusShrinkRule struct {
