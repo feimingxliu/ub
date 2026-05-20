@@ -13,6 +13,13 @@ type ChangeNotifier interface {
 	DidChangeFile(ctx context.Context, absPath string) error
 }
 
+// Options controls read-only state paths and model-facing read defaults.
+type Options struct {
+	StateRoot      string
+	ReadMaxLines   int
+	ChangeNotifier ChangeNotifier
+}
+
 // Register adds the five fs tools (read, ls, glob, write, edit) to reg.
 // All tools share the same cleaned workspace root.
 func Register(reg *tool.Registry, root string) error {
@@ -22,6 +29,11 @@ func Register(reg *tool.Registry, root string) error {
 // RegisterWithNotifier adds fs tools and wires write/edit to notify after a
 // successful disk mutation.
 func RegisterWithNotifier(reg *tool.Registry, root string, notifier ChangeNotifier) error {
+	return RegisterWithOptions(reg, root, Options{ChangeNotifier: notifier})
+}
+
+// RegisterWithOptions adds fs tools with optional read access to ub state.
+func RegisterWithOptions(reg *tool.Registry, root string, opts Options) error {
 	if reg == nil {
 		return fmt.Errorf("fs: nil registry")
 	}
@@ -31,11 +43,11 @@ func RegisterWithNotifier(reg *tool.Registry, root string, notifier ChangeNotifi
 	root = filepath.Clean(root)
 
 	tools := []tool.Tool{
-		newReadTool(root),
+		newReadToolWithOptions(root, opts.StateRoot, opts.ReadMaxLines),
 		newLsTool(root),
 		newGlobTool(root),
-		newWriteToolWithNotifier(root, notifier),
-		newEditToolWithNotifier(root, notifier),
+		newWriteToolWithNotifier(root, opts.ChangeNotifier),
+		newEditToolWithNotifier(root, opts.ChangeNotifier),
 	}
 	for _, t := range tools {
 		if err := reg.Register(t); err != nil {

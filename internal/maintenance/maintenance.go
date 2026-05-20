@@ -12,6 +12,7 @@ import (
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/store"
+	"github.com/feimingxliu/ub/internal/tooloutput"
 )
 
 // RunStartup performs best-effort startup maintenance. Failures are logged as
@@ -56,10 +57,81 @@ func runStartup(ctx context.Context, cfg *config.Config, opts startupOptions) er
 	if err := pruneSessions(ctx, cfg, opts.StorePath, now); err != nil {
 		return err
 	}
+	pruneToolOutputs(ctx, cfg, opts.StatePath, now)
 	if err := writeCleanupState(statePath, cleanupState{LastRun: now}); err != nil {
 		return err
 	}
 	return nil
+}
+
+func pruneToolOutputs(ctx context.Context, cfg *config.Config, statePath string, now time.Time) {
+	maxAge := cfg.Context.ToolResults.SpilloverMaxAge
+	if maxAge <= 0 {
+		return
+	}
+	stateRoot := ""
+	if statePath != "" {
+		stateRoot = filepath.Dir(statePath)
+	}
+	root, err := tooloutput.OutputRoot(stateRoot)
+	if err != nil {
+		slog.Warn("startup cleanup could not locate tool outputs", "err", err)
+		return
+	}
+	cutoff := now.Add(-maxAge)
+	var deleted int
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			slog.Warn("startup cleanup skipped tool output path", "path", path, "err", walkErr)
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			slog.Warn("startup cleanup stat tool output", "path", path, "err", err)
+			return nil
+		}
+		if info.ModTime().After(cutoff) {
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			slog.Warn("startup cleanup remove tool output", "path", path, "err", err)
+			return nil
+		}
+		deleted++
+		return nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		slog.Warn("startup cleanup walk tool outputs", "err", err)
+		return
+	}
+	removeEmptyDirs(root)
+	if deleted > 0 {
+		slog.Info("startup cleanup pruned tool outputs", "deleted", deleted)
+	}
+}
+
+func removeEmptyDirs(root string) {
+	var dirs []string
+	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() && path != root {
+			dirs = append(dirs, path)
+		}
+		return nil
+	}); err != nil {
+		return
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i])
+	}
 }
 
 func pruneSessions(ctx context.Context, cfg *config.Config, storePath string, now time.Time) error {

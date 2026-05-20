@@ -66,6 +66,30 @@
         },
         "keep_recent_turns": {
           "type": "integer"
+        },
+        "reserve_output_tokens": {
+          "type": "integer"
+        },
+        "tool_results": {
+          "$ref": "#/$defs/ContextToolResultConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ContextToolResultConfig": {
+      "properties": {
+        "inline_max_bytes": {
+          "type": "integer"
+        },
+        "inline_max_lines": {
+          "type": "integer"
+        },
+        "spillover_enabled": {
+          "type": "boolean"
+        },
+        "spillover_max_age": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,
@@ -279,6 +303,15 @@
           "type": "integer"
         },
         "output_tokens": {
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "type": "integer"
+        },
+        "cache_write_tokens": {
           "type": "integer"
         },
         "error": {

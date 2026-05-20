@@ -415,7 +415,9 @@ func (s *sdkStream) Close() error {
 
 func eventUsage(usage sdk.CompletionUsage) *provider.Usage {
 	return &provider.Usage{
-		InputTokens:  int(usage.PromptTokens),
-		OutputTokens: int(usage.CompletionTokens),
+		InputTokens:     int(usage.PromptTokens),
+		OutputTokens:    int(usage.CompletionTokens),
+		ReasoningTokens: int(usage.CompletionTokensDetails.ReasoningTokens),
+		CacheReadTokens: int(usage.PromptTokensDetails.CachedTokens),
 	}
 }

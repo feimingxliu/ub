@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/provider"
 )
 
 type countingEncoder struct{}
@@ -65,6 +66,27 @@ func TestEstimateCountsToolBlocks(t *testing.T) {
 	}, "local/unknown")
 	if withTools <= empty {
 		t.Fatalf("tool estimate = %d, empty = %d, want tool estimate larger", withTools, empty)
+	}
+}
+
+func TestEstimateRequestIncludesToolSchemas(t *testing.T) {
+	resetForTest(t)
+	msgs := []message.Message{message.Text(message.RoleUser, "hello")}
+	withoutTools := EstimateRequest(msgs, nil, "local/unknown")
+	withTools := EstimateRequest(msgs, []provider.ToolDefinition{{
+		Name:        "read",
+		Description: "Read a file",
+		Schema:      json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+	}}, "local/unknown")
+	if withTools <= withoutTools {
+		t.Fatalf("with tools = %d, without tools = %d", withTools, withoutTools)
+	}
+	breakdown := EstimateRequestBreakdown(msgs, []provider.ToolDefinition{{
+		Name:   "bash",
+		Schema: json.RawMessage(`{"type":"object"}`),
+	}}, "local/unknown")
+	if breakdown.ToolSchema <= 0 || breakdown.Total <= withoutTools {
+		t.Fatalf("breakdown = %#v", breakdown)
 	}
 }
 

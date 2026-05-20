@@ -130,7 +130,7 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		t.Fatal("context event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx: 1200/8000 15%") {
+	if !strings.Contains(model.View(), "ctx est: 1200/8000 15%") {
 		t.Fatalf("view missing context usage:\n%s", model.View())
 	}
 
@@ -140,7 +140,7 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		event: Event{Type: EventContext, ContextUsedTokens: 800, ContextMaxTokens: 8000, ContextRatio: 0.10},
 	})
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx: 1200/8000 15%") {
+	if !strings.Contains(model.View(), "ctx est: 1200/8000 15%") {
 		t.Fatalf("context usage should not shrink without reset:\n%s", model.View())
 	}
 
@@ -150,7 +150,7 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 		event: Event{Type: EventContext, ContextUsedTokens: 800, ContextMaxTokens: 8000, ContextRatio: 0.10, ContextReset: true},
 	})
 	model = assertModel(t, updated)
-	if !strings.Contains(model.View(), "ctx: 800/8000 10%") {
+	if !strings.Contains(model.View(), "ctx est: 800/8000 10%") {
 		t.Fatalf("context usage should shrink after reset:\n%s", model.View())
 	}
 
@@ -161,8 +161,25 @@ func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 	})
 	model = assertModel(t, updated)
 	view := model.View()
-	if !strings.Contains(view, "ctx: 1200") || strings.Contains(view, "ctx: 1200/") {
+	if !strings.Contains(view, "ctx est: 1200") || strings.Contains(view, "ctx est: 1200/") {
 		t.Fatalf("view should show used tokens without unknown max:\n%s", view)
+	}
+}
+
+func TestModelLabelsProviderUsageAsLastContext(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	model.running = true
+	model.runID = 1
+	model.events = make(chan Event)
+
+	updated, _ := model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventContext, ContextUsedTokens: 1400, ContextMaxTokens: 8000, ContextRatio: 0.175, ContextKind: "last"},
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(model.View(), "ctx last: 1400/8000 18%") {
+		t.Fatalf("view missing last context label:\n%s", model.View())
 	}
 }
 
@@ -878,7 +895,7 @@ func TestSlashCompactRunsCompactRunner(t *testing.T) {
 		t.Fatalf("prompt runner should not be called: calls=%d prompts=%v", runner.calls, runner.prompts)
 	}
 	view := model.View()
-	if !strings.Contains(view, "compacted 4 earlier messages") || !strings.Contains(view, "ctx: 900/3000 30%") {
+	if !strings.Contains(view, "compacted 4 earlier messages") || !strings.Contains(view, "ctx est: 900/3000 30%") {
 		t.Fatalf("view missing compact result:\n%s", view)
 	}
 }

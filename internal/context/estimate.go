@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/provider"
 	tiktoken "github.com/pkoukk/tiktoken-go"
 )
 
@@ -45,6 +46,52 @@ var (
 
 // Estimate returns a non-negative token estimate for provider-neutral messages.
 func Estimate(msgs []message.Message, model string) int {
+	return applyCalibration(model, estimateMessagesRaw(msgs, model))
+}
+
+// EstimateRequest returns a token estimate for a provider request, including
+// the message list and tool schemas that providers count as prompt input.
+func EstimateRequest(msgs []message.Message, tools []provider.ToolDefinition, model string) int {
+	raw := estimateMessagesRaw(msgs, model) + estimateToolsRaw(tools, model)
+	return applyCalibration(model, raw)
+}
+
+// Breakdown summarizes the uncalibrated request estimate by broad source.
+type Breakdown struct {
+	SystemRuntime int
+	ToolSchema    int
+	UserAssistant int
+	ToolResult    int
+	Other         int
+	Total         int
+}
+
+// EstimateRequestBreakdown returns a lightweight request estimate breakdown.
+func EstimateRequestBreakdown(msgs []message.Message, tools []provider.ToolDefinition, model string) Breakdown {
+	var b Breakdown
+	for _, msg := range msgs {
+		msgTokens := messageOverhead + countText(string(msg.Role), model)
+		for _, block := range msg.Content {
+			msgTokens += countText(blockFrame(block), model)
+		}
+		switch msg.Role {
+		case message.RoleSystem:
+			b.SystemRuntime += msgTokens
+		case message.RoleUser, message.RoleAssistant:
+			b.UserAssistant += msgTokens
+		case message.RoleTool:
+			b.ToolResult += msgTokens
+		default:
+			b.Other += msgTokens
+		}
+	}
+	b.Other += replyOverhead
+	b.ToolSchema = estimateToolsRaw(tools, model)
+	b.Total = b.SystemRuntime + b.ToolSchema + b.UserAssistant + b.ToolResult + b.Other
+	return b
+}
+
+func estimateMessagesRaw(msgs []message.Message, model string) int {
 	if len(msgs) == 0 {
 		return 0
 	}
@@ -56,7 +103,21 @@ func Estimate(msgs []message.Message, model string) int {
 			total += countText(blockFrame(block), model)
 		}
 	}
-	return applyCalibration(model, total)
+	return total
+}
+
+func estimateToolsRaw(tools []provider.ToolDefinition, model string) int {
+	if len(tools) == 0 {
+		return 0
+	}
+	total := 0
+	for _, def := range tools {
+		total += messageOverhead
+		total += countText("tool:"+def.Name, model)
+		total += countText(def.Description, model)
+		total += countText(string(def.Schema), model)
+	}
+	return total
 }
 
 // ObserveUsage records provider input-token usage to calibrate future estimates.

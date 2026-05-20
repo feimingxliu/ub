@@ -83,9 +83,13 @@ const (
 // optional summary of disk changes (post-execution) that the dispatcher
 // may surface in the UI.
 type Result struct {
-	Content string       `json:"content"`
-	IsError bool         `json:"is_error,omitempty"`
-	Files   []FileChange `json:"files,omitempty"`
+	Content        string       `json:"content"`
+	IsError        bool         `json:"is_error,omitempty"`
+	Files          []FileChange `json:"files,omitempty"`
+	FullContent    string       `json:"-"`
+	Truncated      bool         `json:"truncated,omitempty"`
+	OriginalBytes  int          `json:"original_bytes,omitempty"`
+	FullOutputPath string       `json:"full_output_path,omitempty"`
 }
 
 // FileChange mirrors FileDiff at execution time. UnifiedDiff is optional

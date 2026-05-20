@@ -7,6 +7,7 @@ import "time"
 // user configuration at all.
 func Defaults() *Config {
 	cleanupEnabled := true
+	toolSpilloverEnabled := true
 	return &Config{
 		ExecutionMode: ModeWork,
 		TUI: TUIConfig{
@@ -18,8 +19,15 @@ func Defaults() *Config {
 			AutoAllowExec:  false,
 		},
 		Context: ContextConfig{
-			TriggerRatio:    0.8,
-			KeepRecentTurns: 3,
+			TriggerRatio:        0.8,
+			KeepRecentTurns:     3,
+			ReserveOutputTokens: 12000,
+			ToolResults: ContextToolResultConfig{
+				InlineMaxBytes:   12288,
+				InlineMaxLines:   400,
+				SpilloverEnabled: &toolSpilloverEnabled,
+				SpilloverMaxAge:  168 * time.Hour,
+			},
 		},
 		Cleanup: CleanupConfig{
 			Enabled:  &cleanupEnabled,

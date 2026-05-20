@@ -1,11 +1,15 @@
-Summarize the earlier conversation so the main coding agent can continue accurately.
+Update the anchored conversation summary for the main coding agent.
 
-Preserve:
-- User goals, constraints, and explicit preferences.
-- Important facts, decisions, file paths, commands, errors, and test results.
-- Open tasks and any unresolved risks.
+If the conversation already contains a prior "Conversation summary", merge it with later progress instead of stacking summaries. Do not invent details. Keep only durable context needed to continue accurately.
 
-Do not invent details. Keep the summary concise but complete enough to replace the earlier messages.
+Return Markdown with exactly these sections:
 
-Conversation:
+## Goal
+## Constraints & Preferences
+## Progress
+## Key Decisions
+## Critical Context
+## Relevant Files
+
+Conversation to summarize:
 {{conversation}}

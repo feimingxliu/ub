@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -13,26 +14,42 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
-// readMaxLines is the cap applied when the caller does not pass an
-// explicit limit, to keep a single tool_result from blowing up the
-// context window.
-const readMaxLines = 2000
+// defaultReadMaxLines is the cap applied when the caller does not pass an
+// explicit limit. The agent may apply a stricter byte cap and spill the full
+// output to state storage before returning the result to the model.
+const defaultReadMaxLines = 400
 
 type readArgs struct {
-	Path   string      `json:"path"   jsonschema:"required,description=Path relative to workspace root (absolute paths must still be inside root)."`
+	Path   string      `json:"path"   jsonschema:"required,description=Path relative to workspace root. Absolute paths must be inside the workspace or ub tool-output state."`
 	Offset tool.IntArg `json:"offset,omitempty" jsonschema:"description=1-based line number to start at. Defaults to 1."`
-	Limit  tool.IntArg `json:"limit,omitempty"  jsonschema:"description=Maximum number of lines to return. Defaults to all lines (capped at 2000)."`
+	Limit  tool.IntArg `json:"limit,omitempty"  jsonschema:"description=Maximum number of lines to return. Defaults to all lines (capped for model context)."`
 }
 
 type readTool struct {
-	root   string
-	schema *jsonschema.Schema
+	root      string
+	stateRoot string
+	maxLines  int
+	schema    *jsonschema.Schema
+}
+
+type numbered struct {
+	n    int
+	text string
 }
 
 func newReadTool(root string) *readTool {
+	return newReadToolWithOptions(root, "", defaultReadMaxLines)
+}
+
+func newReadToolWithOptions(root, stateRoot string, maxLines int) *readTool {
+	if maxLines <= 0 {
+		maxLines = defaultReadMaxLines
+	}
 	return &readTool{
-		root:   root,
-		schema: jsonschema.Reflect(&readArgs{}),
+		root:      root,
+		stateRoot: stateRoot,
+		maxLines:  maxLines,
+		schema:    jsonschema.Reflect(&readArgs{}),
 	}
 }
 
@@ -51,7 +68,7 @@ func (t *readTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result,
 	if a.Path == "" {
 		return tool.Result{}, fmt.Errorf("read: path is required")
 	}
-	abs, err := resolve(t.root, a.Path)
+	abs, err := t.resolveReadPath(a.Path)
 	if err != nil {
 		return tool.Result{}, err
 	}
@@ -65,63 +82,84 @@ func (t *readTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result,
 	offset := max(int(a.Offset), 1)
 
 	limit := int(a.Limit)
-	truncated := false
-	if limit <= 0 {
-		// no explicit limit: cap at readMaxLines and signal truncation
-		limit = readMaxLines
-		truncated = true
+	implicitLimit := limit <= 0
+	if implicitLimit {
+		limit = t.maxLines
 	}
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
-	type numbered struct {
-		n    int
-		text string
-	}
 	var picked []numbered
+	var all []numbered
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
 		if lineNo < offset {
 			continue
 		}
-		if len(picked) >= limit {
+		ln := numbered{n: lineNo, text: scanner.Text()}
+		if implicitLimit {
+			all = append(all, ln)
+		}
+		if len(picked) < limit {
+			picked = append(picked, ln)
+		} else if !implicitLimit {
 			break
 		}
-		picked = append(picked, numbered{n: lineNo, text: scanner.Text()})
 	}
 	if err := scanner.Err(); err != nil {
 		return tool.Result{}, fmt.Errorf("read: scan %s: %w", a.Path, err)
-	}
-
-	// truncated only matters if (a) we hit the implicit cap and (b) more
-	// lines exist beyond what we returned.
-	moreExists := false
-	if truncated && len(picked) >= limit {
-		// try to read one more line to confirm
-		if scanner.Scan() {
-			moreExists = true
-		}
 	}
 
 	if len(picked) == 0 {
 		return tool.Result{Content: ""}, nil
 	}
 
-	maxN := picked[len(picked)-1].n
-	width := len(fmt.Sprintf("%d", maxN))
+	content := formatNumberedLines(picked)
+	var full string
+	if implicitLimit && len(all) > len(picked) {
+		full = formatNumberedLines(all)
+		content += "\n... (truncated, use offset/limit)"
+	}
+	return tool.Result{Content: content, FullContent: full}, nil
+}
 
+func (t *readTool) resolveReadPath(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return resolve(t.root, path)
+	}
+	if abs, err := resolve(t.root, path); err == nil {
+		return abs, nil
+	}
+	stateRoot := strings.TrimSpace(t.stateRoot)
+	if stateRoot == "" {
+		return resolve(t.root, path)
+	}
+	cleanRoot := filepath.Clean(stateRoot)
+	abs := filepath.Clean(path)
+	rel, err := filepath.Rel(cleanRoot, abs)
+	if err != nil {
+		return "", fmt.Errorf("tool: resolve %q: %w", path, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("tool: path %q is outside workspace root and tool-output state", path)
+	}
+	return abs, nil
+}
+
+func formatNumberedLines(lines []numbered) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	maxN := lines[len(lines)-1].n
+	width := len(fmt.Sprintf("%d", maxN))
 	var b strings.Builder
-	for i, ln := range picked {
+	for i, ln := range lines {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
 		fmt.Fprintf(&b, "%*d\t%s", width, ln.n, ln.text)
 	}
-	if truncated && moreExists {
-		b.WriteString("\n... (truncated, use offset/limit)")
-	}
-
-	return tool.Result{Content: b.String()}, nil
+	return b.String()
 }

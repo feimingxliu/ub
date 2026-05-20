@@ -165,6 +165,26 @@ func mergeContext(dst *ContextConfig, src ContextConfig) {
 	if src.KeepRecentTurns != 0 {
 		dst.KeepRecentTurns = src.KeepRecentTurns
 	}
+	if src.ReserveOutputTokens != 0 {
+		dst.ReserveOutputTokens = src.ReserveOutputTokens
+	}
+	mergeContextToolResults(&dst.ToolResults, src.ToolResults)
+}
+
+func mergeContextToolResults(dst *ContextToolResultConfig, src ContextToolResultConfig) {
+	if src.InlineMaxBytes != 0 {
+		dst.InlineMaxBytes = src.InlineMaxBytes
+	}
+	if src.InlineMaxLines != 0 {
+		dst.InlineMaxLines = src.InlineMaxLines
+	}
+	if src.SpilloverEnabled != nil {
+		enabled := *src.SpilloverEnabled
+		dst.SpilloverEnabled = &enabled
+	}
+	if src.SpilloverMaxAge != 0 {
+		dst.SpilloverMaxAge = src.SpilloverMaxAge
+	}
 }
 
 func mergeCleanup(dst *CleanupConfig, src CleanupConfig) {

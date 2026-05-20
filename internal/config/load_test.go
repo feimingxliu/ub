@@ -22,7 +22,15 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 	if len(files) != 0 {
 		t.Fatalf("files = %#v, want empty", files)
 	}
-	if cfg.Context.TriggerRatio != 0.8 || cfg.Context.KeepRecentTurns != 3 || cfg.TUI.Theme == "" {
+	if cfg.Context.TriggerRatio != 0.8 ||
+		cfg.Context.KeepRecentTurns != 3 ||
+		cfg.Context.ReserveOutputTokens != 12000 ||
+		cfg.Context.ToolResults.InlineMaxBytes != 12288 ||
+		cfg.Context.ToolResults.InlineMaxLines != 400 ||
+		cfg.Context.ToolResults.SpilloverEnabled == nil ||
+		!*cfg.Context.ToolResults.SpilloverEnabled ||
+		cfg.Context.ToolResults.SpilloverMaxAge.String() != "168h0m0s" ||
+		cfg.TUI.Theme == "" {
 		t.Fatalf("defaults not applied: %#v", cfg)
 	}
 	if !cfg.Cleanup.CleanupEnabled() ||
@@ -188,6 +196,35 @@ func TestLoadFromDirsParsesCleanupConfig(t *testing.T) {
 	}
 	if cfg.Cleanup.Logs.MaxSizeMB != 25 || cfg.Cleanup.Logs.MaxBackups != 9 {
 		t.Fatalf("cleanup logs = %#v", cfg.Cleanup.Logs)
+	}
+}
+
+func TestLoadFromDirsParsesContextToolResults(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `context:
+  trigger_ratio: 0.7
+  keep_recent_turns: 2
+  reserve_output_tokens: 9000
+  tool_results:
+    inline_max_bytes: 4096
+    inline_max_lines: 120
+    spillover_enabled: false
+    spillover_max_age: 24h
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Context.TriggerRatio != 0.7 || cfg.Context.KeepRecentTurns != 2 || cfg.Context.ReserveOutputTokens != 9000 {
+		t.Fatalf("context = %#v", cfg.Context)
+	}
+	tools := cfg.Context.ToolResults
+	if tools.InlineMaxBytes != 4096 || tools.InlineMaxLines != 120 || tools.SpilloverEnabled == nil || *tools.SpilloverEnabled || tools.SpilloverMaxAge.String() != "24h0m0s" {
+		t.Fatalf("tool_results = %#v", tools)
 	}
 }
 

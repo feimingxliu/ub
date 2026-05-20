@@ -98,15 +98,18 @@ type ModelConfig struct {
 // ProviderScriptEvent is used by the fake provider to produce deterministic
 // stream events from configuration.
 type ProviderScriptEvent struct {
-	Type         string `yaml:"type,omitempty"          json:"type,omitempty"`
-	Text         string `yaml:"text,omitempty"          json:"text,omitempty"`
-	Reasoning    string `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
-	ToolUseID    string `yaml:"tool_use_id,omitempty"   json:"tool_use_id,omitempty"`
-	ToolName     string `yaml:"tool_name,omitempty"     json:"tool_name,omitempty"`
-	Input        any    `yaml:"input,omitempty"         json:"input,omitempty"`
-	InputTokens  int    `yaml:"input_tokens,omitempty"  json:"input_tokens,omitempty"`
-	OutputTokens int    `yaml:"output_tokens,omitempty" json:"output_tokens,omitempty"`
-	Error        string `yaml:"error,omitempty"         json:"error,omitempty"`
+	Type             string `yaml:"type,omitempty"               json:"type,omitempty"`
+	Text             string `yaml:"text,omitempty"               json:"text,omitempty"`
+	Reasoning        string `yaml:"reasoning,omitempty"          json:"reasoning,omitempty"`
+	ToolUseID        string `yaml:"tool_use_id,omitempty"        json:"tool_use_id,omitempty"`
+	ToolName         string `yaml:"tool_name,omitempty"          json:"tool_name,omitempty"`
+	Input            any    `yaml:"input,omitempty"              json:"input,omitempty"`
+	InputTokens      int    `yaml:"input_tokens,omitempty"       json:"input_tokens,omitempty"`
+	OutputTokens     int    `yaml:"output_tokens,omitempty"      json:"output_tokens,omitempty"`
+	ReasoningTokens  int    `yaml:"reasoning_tokens,omitempty"   json:"reasoning_tokens,omitempty"`
+	CacheReadTokens  int    `yaml:"cache_read_tokens,omitempty"  json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int    `yaml:"cache_write_tokens,omitempty" json:"cache_write_tokens,omitempty"`
+	Error            string `yaml:"error,omitempty"              json:"error,omitempty"`
 }
 
 // TUIConfig controls how the Bubble Tea interface renders.
@@ -141,8 +144,18 @@ type LSPServerConfig struct {
 
 // ContextConfig controls auto-summarization (used by I-28).
 type ContextConfig struct {
-	TriggerRatio    float64 `yaml:"trigger_ratio,omitempty"    json:"trigger_ratio,omitempty"`
-	KeepRecentTurns int     `yaml:"keep_recent_turns,omitempty" json:"keep_recent_turns,omitempty"`
+	TriggerRatio        float64                 `yaml:"trigger_ratio,omitempty"         json:"trigger_ratio,omitempty"`
+	KeepRecentTurns     int                     `yaml:"keep_recent_turns,omitempty"     json:"keep_recent_turns,omitempty"`
+	ReserveOutputTokens int                     `yaml:"reserve_output_tokens,omitempty" json:"reserve_output_tokens,omitempty"`
+	ToolResults         ContextToolResultConfig `yaml:"tool_results,omitempty"          json:"tool_results,omitempty"`
+}
+
+// ContextToolResultConfig controls model-visible tool result limiting.
+type ContextToolResultConfig struct {
+	InlineMaxBytes   int           `yaml:"inline_max_bytes,omitempty"  json:"inline_max_bytes,omitempty"`
+	InlineMaxLines   int           `yaml:"inline_max_lines,omitempty"  json:"inline_max_lines,omitempty"`
+	SpilloverEnabled *bool         `yaml:"spillover_enabled,omitempty" json:"spillover_enabled,omitempty"`
+	SpilloverMaxAge  time.Duration `yaml:"spillover_max_age,omitempty" json:"spillover_max_age,omitempty"`
 }
 
 // CleanupConfig controls best-effort startup cleanup for persisted sessions and

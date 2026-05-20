@@ -122,11 +122,19 @@ func ToolCall(name string, input any) provider.Event {
 
 // Usage creates a usage script event.
 func Usage(inputTokens, outputTokens int) provider.Event {
+	return UsageDetails(inputTokens, outputTokens, 0, 0, 0)
+}
+
+// UsageDetails creates a usage event with optional detailed counters.
+func UsageDetails(inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens int) provider.Event {
 	return provider.Event{
 		Type: provider.EventUsage,
 		Usage: &provider.Usage{
-			InputTokens:  inputTokens,
-			OutputTokens: outputTokens,
+			InputTokens:      inputTokens,
+			OutputTokens:     outputTokens,
+			ReasoningTokens:  reasoningTokens,
+			CacheReadTokens:  cacheReadTokens,
+			CacheWriteTokens: cacheWriteTokens,
 		},
 	}
 }
@@ -192,7 +200,7 @@ func eventFromConfig(item config.ProviderScriptEvent) (provider.Event, error) {
 			Input:     raw,
 		}, nil
 	case string(provider.EventUsage):
-		return Usage(item.InputTokens, item.OutputTokens), nil
+		return UsageDetails(item.InputTokens, item.OutputTokens, item.ReasoningTokens, item.CacheReadTokens, item.CacheWriteTokens), nil
 	case string(provider.EventDone):
 		return Done(), nil
 	case string(provider.EventError):

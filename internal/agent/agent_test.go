@@ -160,6 +160,76 @@ func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestAgentLimitsToolResultAndSpillsFullOutput(t *testing.T) {
+	root := t.TempDir()
+	var content strings.Builder
+	for i := 1; i <= 450; i++ {
+		fmt.Fprintf(&content, "line-%03d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(root, "big.txt"), []byte(content.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("read", map[string]any{"path": "big.txt"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	writer := &recordingRollout{}
+	stateRoot := t.TempDir()
+	a, err := New(Options{
+		Provider:        p,
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		ToolOutputState: stateRoot,
+		Context: config.ContextConfig{
+			ToolResults: config.ContextToolResultConfig{
+				InlineMaxBytes: 2048,
+				InlineMaxLines: 20,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_spill", Prompt: "read big.txt", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	last := lastMessage(t, p.requests[1].Messages)
+	block := last.Content[0]
+	if block.Type != message.BlockToolResult || !strings.Contains(block.Output, "full_output_path=") {
+		t.Fatalf("tool result output missing spillover footer:\n%s", block.Output)
+	}
+	if strings.Contains(block.Output, "line-450") {
+		t.Fatalf("model-visible output kept tail beyond cap:\n%s", block.Output)
+	}
+	var payload rollout.ToolResultPayload
+	for _, event := range writer.events {
+		if event.Type == rollout.TypeToolResult {
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				t.Fatalf("decode payload: %v", err)
+			}
+			break
+		}
+	}
+	if !payload.Truncated || payload.FullOutputPath == "" || payload.OriginalBytes == 0 {
+		t.Fatalf("payload metadata = %#v", payload)
+	}
+	raw, err := os.ReadFile(payload.FullOutputPath)
+	if err != nil {
+		t.Fatalf("read spillover: %v", err)
+	}
+	if !strings.Contains(string(raw), "line-450") {
+		t.Fatalf("spillover missing tail: %q", tailString(string(raw), 80))
+	}
+}
+
 func TestAgentFinalizesWithoutToolsAfterMaxTurns(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
@@ -809,6 +879,37 @@ func TestAgentManualCompactNoopsWithoutPrefix(t *testing.T) {
 	}
 }
 
+func TestSplitSummaryWindowKeepsRecentTurnsWithinBudget(t *testing.T) {
+	history := []message.Message{
+		message.Text(message.RoleUser, "user 1"),
+		message.Text(message.RoleAssistant, "assistant 1"),
+		message.Text(message.RoleUser, "user 2 "+strings.Repeat("x", 70000)),
+		message.Text(message.RoleAssistant, "assistant 2"),
+		message.Text(message.RoleUser, "user 3"),
+		message.Text(message.RoleAssistant, "assistant 3"),
+		message.Text(message.RoleUser, "current"),
+	}
+	prefix, suffix, ok := splitSummaryWindow(history, summaryWindowOptions{
+		KeepRecentTurns: 3,
+		MaxContext:      100000,
+		Model:           "local/unknown",
+	})
+	if !ok {
+		t.Fatal("splitSummaryWindow returned !ok")
+	}
+	if containsText(suffix, "user 2") {
+		t.Fatalf("suffix kept oversized older turn: %#v", suffix)
+	}
+	for _, want := range []string{"user 3", "current"} {
+		if !containsText(suffix, want) {
+			t.Fatalf("suffix missing %q: %#v", want, suffix)
+		}
+	}
+	if !containsText(prefix, "user 2") {
+		t.Fatalf("prefix should contain compacted oversized turn: %#v", prefix)
+	}
+}
+
 func TestAgentDoesNotSummarizeBelowThreshold(t *testing.T) {
 	reg := tool.New()
 	perm := newPermissionManager(t, nil)
@@ -865,7 +966,7 @@ func TestAgentUsesModelContextOverrideForSummaryThreshold(t *testing.T) {
 		Model:            "fake/model",
 		Mode:             execution.ModeWork,
 		MaxContextTokens: 1_000_000,
-		Context:          config.ContextConfig{TriggerRatio: 0.01, KeepRecentTurns: 3},
+		Context:          config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
 		Events: func(event Event) {
 			events = append(events, event)
 		},
@@ -1058,6 +1159,13 @@ func lastMessage(t *testing.T, messages []message.Message) message.Message {
 		t.Fatal("empty messages")
 	}
 	return messages[len(messages)-1]
+}
+
+func tailString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 type recordingAsker struct {

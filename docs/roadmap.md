@@ -546,8 +546,9 @@
 - **依赖**：I-05
 - **In Scope**：
   - `internal/context/`：`Estimate(msgs []Message, model string) int`
+  - request 级估算包含 tool schema，并提供 system/runtime、tool schema、user/assistant、tool result 的轻量 breakdown
   - 用 `tiktoken-go`（OpenAI 系准）+ 简单字符近似（Claude / Ollama）
-  - 响应里若有 `usage` 就回灌缓存校正
+  - 响应里若有 `usage` 就回灌缓存校正，并保存 input/output/reasoning/cache read/cache write 中 provider 支持的字段
 - **Out of Scope**：精确 BPE for Anthropic
 - **验证**：单测：已知字符串 / 已知 token 数对照
 
@@ -556,13 +557,14 @@
 - **目标**：长会话不爆 context
 - **依赖**：I-21 / I-27
 - **In Scope**：
-  - Agent 发请求前检查 estimated tokens / model.MaxContext > threshold（默认 0.8）
+  - Agent 发请求前检查 `(estimated tokens + reserve_output_tokens) / model.MaxContext > threshold`（默认 0.8）
   - 触发：用 small_model 跑 `summary` prompt 模板（embed template）
-  - 替换早期 N-3 轮为单条 system 摘要，保留最近 3 轮
+  - 替换早期消息为单条 anchored system 摘要；最近原文按 `keep_recent_turns` 和 token budget 保留，按完整 user turn 截断
+  - tool result 默认限幅到 12KiB/400 行，完整输出作为 state artifact 保存；rollout 只保存模型可见 preview 与 truncation metadata
   - rollout 写一条 `Summary` 事件
-  - TUI 状态栏展示 context used/max/%；`/compact` 可主动触发同一压缩逻辑
-- **Out of Scope**：摘要重组策略
-- **验证**：单测：构造超长历史 → 触发 → 历史被替换为 summary + 最近 3 轮；rollout 多一条 Summary 事件；`/compact` 主动压缩并刷新状态栏 context 用量
+  - TUI 状态栏展示 `ctx est` / `ctx last`；`/compact` 可主动触发同一压缩逻辑
+- **Out of Scope**：provider 专属远程 compact API
+- **验证**：单测：构造超长历史和大 tool result → 触发 → 历史被替换为 summary + 预算内最近 turn；rollout 多一条 Summary 事件；`/compact` 主动压缩并刷新状态栏 context 用量
 
 ---
 

@@ -44,8 +44,11 @@ type MessagePayload struct {
 
 // UsagePayload stores provider token usage.
 type UsagePayload struct {
-	InputTokens  int `json:"input_tokens,omitempty"`
-	OutputTokens int `json:"output_tokens,omitempty"`
+	InputTokens      int `json:"input_tokens,omitempty"`
+	OutputTokens     int `json:"output_tokens,omitempty"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
 }
 
 // ErrorPayload stores a user-readable error.
@@ -55,11 +58,14 @@ type ErrorPayload struct {
 
 // ToolResultPayload stores one executed tool result.
 type ToolResultPayload struct {
-	ToolUseID string            `json:"tool_use_id"`
-	ToolName  string            `json:"tool_name,omitempty"`
-	Output    string            `json:"output"`
-	IsError   bool              `json:"is_error,omitempty"`
-	Files     []tool.FileChange `json:"files,omitempty"`
+	ToolUseID      string            `json:"tool_use_id"`
+	ToolName       string            `json:"tool_name,omitempty"`
+	Output         string            `json:"output"`
+	IsError        bool              `json:"is_error,omitempty"`
+	Files          []tool.FileChange `json:"files,omitempty"`
+	Truncated      bool              `json:"truncated,omitempty"`
+	OriginalBytes  int               `json:"original_bytes,omitempty"`
+	FullOutputPath string            `json:"full_output_path,omitempty"`
 }
 
 // SummaryPayload stores an automatic context summary.
@@ -117,11 +123,14 @@ func AssistantMessage(sessionID string, turn int, msg message.Message) (Event, e
 // ToolResult creates a tool_result event.
 func ToolResult(sessionID string, turn int, toolUseID, toolName string, result tool.Result) (Event, error) {
 	return NewEvent(sessionID, turn, TypeToolResult, ToolResultPayload{
-		ToolUseID: toolUseID,
-		ToolName:  toolName,
-		Output:    result.Content,
-		IsError:   result.IsError,
-		Files:     append([]tool.FileChange(nil), result.Files...),
+		ToolUseID:      toolUseID,
+		ToolName:       toolName,
+		Output:         result.Content,
+		IsError:        result.IsError,
+		Files:          append([]tool.FileChange(nil), result.Files...),
+		Truncated:      result.Truncated,
+		OriginalBytes:  result.OriginalBytes,
+		FullOutputPath: result.FullOutputPath,
 	})
 }
 
@@ -183,9 +192,21 @@ func MessageFromEvent(event Event) (message.Message, bool, error) {
 
 // Usage creates a usage event.
 func Usage(sessionID string, turn, inputTokens, outputTokens int) (Event, error) {
-	return NewEvent(sessionID, turn, TypeUsage, UsagePayload{
+	return UsageWithDetails(sessionID, turn, UsagePayload{
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
+	})
+}
+
+// UsageWithDetails creates a usage event with all provider-reported token
+// fields that are available.
+func UsageWithDetails(sessionID string, turn int, usage UsagePayload) (Event, error) {
+	return NewEvent(sessionID, turn, TypeUsage, UsagePayload{
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		ReasoningTokens:  usage.ReasoningTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
 	})
 }
 

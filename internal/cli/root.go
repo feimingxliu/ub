@@ -36,6 +36,7 @@ import (
 	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
+	"github.com/feimingxliu/ub/internal/tooloutput"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 )
@@ -476,7 +477,27 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 			closers = append(closers, lspManager.Close)
 		}
 	}
-	if err := fs.RegisterWithNotifier(reg, cwd, lspManager); err != nil {
+	stateRoot, err := tooloutput.StateRoot()
+	if err != nil {
+		warnings = append(warnings, fmt.Errorf("locate tool-output state: %w", err))
+	}
+	readStateRoot := ""
+	if stateRoot != "" {
+		if outputRoot, err := tooloutput.OutputRoot(stateRoot); err == nil {
+			readStateRoot = outputRoot
+		} else {
+			warnings = append(warnings, fmt.Errorf("locate tool-output root: %w", err))
+		}
+	}
+	limits := tooloutput.EffectiveLimits(config.ContextConfig{})
+	if cfg != nil {
+		limits = tooloutput.EffectiveLimits(cfg.Context)
+	}
+	if err := fs.RegisterWithOptions(reg, cwd, fs.Options{
+		StateRoot:      readStateRoot,
+		ReadMaxLines:   limits.InlineMaxLines,
+		ChangeNotifier: lspManager,
+	}); err != nil {
 		return nil, err
 	}
 	if err := lsptool.Register(reg, lspManager); err != nil {
@@ -614,7 +635,13 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 			continue
 		case provider.EventUsage:
 			if event.Usage != nil {
-				usageEvent, err := rollout.Usage(state.sessionID, state.nextTurn, event.Usage.InputTokens, event.Usage.OutputTokens)
+				usageEvent, err := rollout.UsageWithDetails(state.sessionID, state.nextTurn, rollout.UsagePayload{
+					InputTokens:      event.Usage.InputTokens,
+					OutputTokens:     event.Usage.OutputTokens,
+					ReasoningTokens:  event.Usage.ReasoningTokens,
+					CacheReadTokens:  event.Usage.CacheReadTokens,
+					CacheWriteTokens: event.Usage.CacheWriteTokens,
+				})
 				if err != nil {
 					return err
 				}

@@ -100,6 +100,9 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 			Path: "main.go",
 			Kind: tool.KindModify,
 		}},
+		Truncated:      true,
+		OriginalBytes:  1234,
+		FullOutputPath: "/tmp/full.txt",
 	})
 	if err != nil {
 		t.Fatalf("ToolResult: %v", err)
@@ -113,6 +116,9 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 	}
 	if payload.ToolUseID != "call_1" || payload.ToolName != "read" || payload.Output != "file content" || !payload.IsError {
 		t.Fatalf("payload = %#v", payload)
+	}
+	if !payload.Truncated || payload.OriginalBytes != 1234 || payload.FullOutputPath != "/tmp/full.txt" {
+		t.Fatalf("payload metadata = %#v", payload)
 	}
 	msg, ok, err := MessageFromEvent(event)
 	if err != nil {

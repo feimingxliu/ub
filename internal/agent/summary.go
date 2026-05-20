@@ -14,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/rollout"
+	"github.com/feimingxliu/ub/internal/tooloutput"
 )
 
 const (
@@ -48,15 +49,15 @@ type CompactResult struct {
 	Reason            string
 }
 
-func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message) (preparedMessages, error) {
+func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, tools []provider.ToolDefinition) (preparedMessages, error) {
 	requestMessages := cloneMessages(messages)
 	providerMessages := a.withRuntimeContext(requestMessages)
-	estimated := contextmgr.Estimate(providerMessages, a.model)
+	estimated := contextmgr.EstimateRequest(providerMessages, tools, a.model)
 	if !a.shouldSummarize(estimated) {
 		a.emitContextUsage(estimated, false)
 		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
-	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated)
+	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated, tools)
 	if err != nil {
 		return preparedMessages{}, err
 	}
@@ -85,8 +86,8 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 		req.Turn = 1
 	}
 	messages := cloneMessages(req.History)
-	estimated := contextmgr.Estimate(messages, a.model)
-	compacted, ok, err := a.compactMessages(ctx, req.SessionID, req.Turn, messages, estimated)
+	estimated := contextmgr.EstimateRequest(a.withRuntimeContext(messages), nil, a.model)
+	compacted, ok, err := a.compactMessages(ctx, req.SessionID, req.Turn, messages, estimated, nil)
 	if err != nil {
 		return CompactResult{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 	}
@@ -132,8 +133,12 @@ type compactedMessages struct {
 	estimatedTokens   int
 }
 
-func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int) (compactedMessages, bool, error) {
-	prefix, suffix, ok := splitSummaryWindow(messages, effectiveKeepRecentTurns(a.contextCfg))
+func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int, tools []provider.ToolDefinition) (compactedMessages, bool, error) {
+	prefix, suffix, ok := splitSummaryWindow(messages, summaryWindowOptions{
+		KeepRecentTurns: effectiveKeepRecentTurns(a.contextCfg),
+		MaxContext:      a.effectiveMaxContextTokens(),
+		Model:           a.model,
+	})
 	if !ok {
 		return compactedMessages{}, false, nil
 	}
@@ -152,7 +157,7 @@ func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int,
 		summary:           summary,
 		compactedMessages: len(prefix),
 		keptMessages:      len(suffix),
-		estimatedTokens:   contextmgr.Estimate(a.withRuntimeContext(compacted), a.model),
+		estimatedTokens:   contextmgr.EstimateRequest(a.withRuntimeContext(compacted), tools, a.model),
 	}, true, nil
 }
 
@@ -164,7 +169,8 @@ func (a *Agent) shouldSummarize(estimated int) bool {
 	if maxContext <= 0 {
 		return false
 	}
-	return float64(estimated)/float64(maxContext) > effectiveTriggerRatio(a.contextCfg)
+	reserve := tooloutput.ReserveOutputTokens(a.contextCfg)
+	return float64(estimated+reserve)/float64(maxContext) > effectiveTriggerRatio(a.contextCfg)
 }
 
 func (a *Agent) generateSummary(ctx context.Context, messages []message.Message) (string, error) {
@@ -249,6 +255,25 @@ func (a *Agent) emitContextUsage(used int, reset bool) {
 		ContextMaxTokens:  maxContext,
 		ContextRatio:      ratio,
 		ContextReset:      reset,
+		ContextKind:       "est",
+	})
+}
+
+func (a *Agent) emitActualContextUsage(used int) {
+	if used <= 0 {
+		return
+	}
+	maxContext := a.effectiveMaxContextTokens()
+	ratio := 0.0
+	if maxContext > 0 {
+		ratio = float64(used) / float64(maxContext)
+	}
+	a.emit(Event{
+		Type:              EventContext,
+		ContextUsedTokens: used,
+		ContextMaxTokens:  maxContext,
+		ContextRatio:      ratio,
+		ContextKind:       "last",
 	})
 }
 
@@ -259,29 +284,31 @@ func (a *Agent) effectiveMaxContextTokens() int {
 	return a.provider.Caps().MaxContextTokens
 }
 
-func splitSummaryWindow(messages []message.Message, keepRecentTurns int) ([]message.Message, []message.Message, bool) {
-	keepRecentTurns = effectiveKeepRecentTurns(config.ContextConfig{KeepRecentTurns: keepRecentTurns})
-	totalUserTurns := 0
-	for _, msg := range messages {
-		if msg.Role == message.RoleUser {
-			totalUserTurns++
-		}
-	}
-	if totalUserTurns <= keepRecentTurns {
+type summaryWindowOptions struct {
+	KeepRecentTurns int
+	MaxContext      int
+	Model           string
+}
+
+func splitSummaryWindow(messages []message.Message, opts summaryWindowOptions) ([]message.Message, []message.Message, bool) {
+	keepRecentTurns := effectiveKeepRecentTurns(config.ContextConfig{KeepRecentTurns: opts.KeepRecentTurns})
+	turns := userTurnWindows(messages)
+	if len(turns) <= 1 {
 		return nil, nil, false
 	}
-	seenUserTurns := 0
-	cutoff := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role != message.RoleUser {
-			continue
-		}
-		seenUserTurns++
-		if seenUserTurns == keepRecentTurns {
-			cutoff = i
+	budget := summaryRecentBudget(opts.MaxContext)
+	keepStart := len(turns) - 1
+	for i := len(turns) - 2; i >= 0; i-- {
+		if len(turns)-i > keepRecentTurns {
 			break
 		}
+		candidate := cloneMessages(messages[turns[i].start:])
+		if budget > 0 && contextmgr.Estimate(candidate, opts.Model) > budget {
+			break
+		}
+		keepStart = i
 	}
+	cutoff := turns[keepStart].start
 	if cutoff <= 0 {
 		return nil, nil, false
 	}
@@ -291,6 +318,42 @@ func splitSummaryWindow(messages []message.Message, keepRecentTurns int) ([]mess
 		return nil, nil, false
 	}
 	return prefix, suffix, true
+}
+
+type turnWindow struct {
+	start int
+	end   int
+}
+
+func userTurnWindows(messages []message.Message) []turnWindow {
+	var turns []turnWindow
+	for i, msg := range messages {
+		if msg.Role != message.RoleUser {
+			continue
+		}
+		if len(turns) > 0 {
+			turns[len(turns)-1].end = i
+		}
+		turns = append(turns, turnWindow{start: i, end: len(messages)})
+	}
+	if len(turns) > 0 {
+		turns[len(turns)-1].end = len(messages)
+	}
+	return turns
+}
+
+func summaryRecentBudget(maxContext int) int {
+	if maxContext <= 0 {
+		return 32000
+	}
+	budget := int(float64(maxContext) * 0.15)
+	if budget < 8000 {
+		budget = 8000
+	}
+	if budget > 32000 {
+		budget = 32000
+	}
+	return budget
 }
 
 func effectiveTriggerRatio(cfg config.ContextConfig) float64 {

@@ -319,8 +319,10 @@ func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
 			}
 		case "message_delta":
 			s.usage = &provider.Usage{
-				InputTokens:  int(event.Usage.InputTokens),
-				OutputTokens: int(event.Usage.OutputTokens),
+				InputTokens:      int(event.Usage.InputTokens),
+				OutputTokens:     int(event.Usage.OutputTokens),
+				CacheReadTokens:  int(event.Usage.CacheReadInputTokens),
+				CacheWriteTokens: int(event.Usage.CacheCreationInputTokens),
 			}
 		case "message_stop":
 			if s.usage != nil {

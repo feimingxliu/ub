@@ -18,6 +18,7 @@ import (
 	"github.com/feimingxliu/ub/internal/reasoning"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tooloutput"
 )
 
 const defaultMaxTurns = 25
@@ -44,6 +45,7 @@ type Options struct {
 	SummaryModel     string
 	Context          config.ContextConfig
 	Runtime          RuntimeContext
+	ToolOutputState  string
 }
 
 // Agent runs a single headless agent loop.
@@ -63,6 +65,7 @@ type Agent struct {
 	summaryModel     string
 	contextCfg       config.ContextConfig
 	runtime          RuntimeContext
+	toolOutputState  string
 }
 
 // Request is one Agent run input.
@@ -107,6 +110,12 @@ func New(opts Options) (*Agent, error) {
 	if maxTurns <= 0 {
 		maxTurns = defaultMaxTurns
 	}
+	toolOutputState := strings.TrimSpace(opts.ToolOutputState)
+	if toolOutputState == "" {
+		if stateRoot, err := tooloutput.StateRoot(); err == nil {
+			toolOutputState = stateRoot
+		}
+	}
 	return &Agent{
 		provider:         opts.Provider,
 		tools:            opts.Tools,
@@ -123,6 +132,7 @@ func New(opts Options) (*Agent, error) {
 		summaryModel:     strings.TrimSpace(opts.SummaryModel),
 		contextCfg:       opts.Context,
 		runtime:          opts.Runtime.normalized(),
+		toolOutputState:  toolOutputState,
 	}, nil
 }
 
@@ -146,7 +156,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	for turn := 0; turn < a.maxTurns; turn++ {
-		prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages)
+		prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages, tools)
 		if err != nil {
 			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 		}
@@ -181,7 +191,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 			return Result{Text: consumed.text, Messages: messages}, nil
 		}
 		for _, call := range consumed.toolCalls {
-			result := a.runTool(ctx, call)
+			result := a.runTool(ctx, req.SessionID, call)
 			messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
 			if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 				return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
@@ -204,7 +214,7 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 	requestMessages := cloneMessages(messages)
 	requestMessages = append(requestMessages, message.Text(message.RoleSystem, maxTurnsFinalInstruction))
 	providerMessages := a.withRuntimeContext(requestMessages)
-	estimated := contextmgr.Estimate(providerMessages, a.model)
+	estimated := contextmgr.EstimateRequest(providerMessages, nil, a.model)
 	a.emitContextUsage(estimated, false)
 	stream, err := a.provider.Chat(ctx, provider.Request{
 		Model:     a.model,
@@ -279,8 +289,9 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 		case provider.EventUsage:
 			if event.Usage != nil {
 				observeInputUsage(a.model, estimatedTokens, event.Usage.InputTokens)
+				a.emitActualContextUsage(event.Usage.InputTokens)
 				if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
-					return rollout.Usage(sessionID, turn, event.Usage.InputTokens, event.Usage.OutputTokens)
+					return rollout.UsageWithDetails(sessionID, turn, usagePayload(event.Usage))
 				}); err != nil {
 					return streamResult{}, err
 				}
@@ -307,7 +318,20 @@ done:
 	}, nil
 }
 
-func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
+func usagePayload(usage *provider.Usage) rollout.UsagePayload {
+	if usage == nil {
+		return rollout.UsagePayload{}
+	}
+	return rollout.UsagePayload{
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		ReasoningTokens:  usage.ReasoningTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+	}
+}
+
+func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) tool.Result {
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
@@ -358,14 +382,40 @@ func (a *Agent) runTool(ctx context.Context, call toolCall) tool.Result {
 	if err != nil {
 		result := tool.Result{Content: err.Error(), IsError: true}
 		a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
-		return result
+		return a.limitToolResult(sessionID, call, result)
 	}
+	result = a.limitToolResult(sessionID, call, result)
 	status := "done"
 	if result.IsError {
 		status = "failed"
 	}
 	a.emitToolActivity(call, status, summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), result.IsError)
 	return result
+}
+
+func (a *Agent) limitToolResult(sessionID string, call toolCall, result tool.Result) tool.Result {
+	limited, err := tooloutput.LimitResult(result, tooloutput.LimitOptions{
+		SessionID: sessionID,
+		ToolUseID: call.ID,
+		StateRoot: a.toolOutputState,
+		Limits:    tooloutput.EffectiveLimits(a.contextCfg),
+	})
+	if err == nil {
+		return limited
+	}
+	fallbackLimits := tooloutput.EffectiveLimits(a.contextCfg)
+	fallbackLimits.SpilloverEnabled = false
+	limited, fallbackErr := tooloutput.LimitResult(result, tooloutput.LimitOptions{
+		Limits: fallbackLimits,
+	})
+	if fallbackErr != nil {
+		return tool.Result{Content: fmt.Sprintf("tool result limiting failed: %v", fallbackErr), IsError: true}
+	}
+	if limited.Content != "" {
+		limited.Content += "\n"
+	}
+	limited.Content += fmt.Sprintf("spillover_error=%v", err)
+	return limited
 }
 
 func (a *Agent) permissionObserver(toolName string, observed *bool) func(permission.ApprovalObservation) {

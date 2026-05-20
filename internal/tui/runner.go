@@ -105,6 +105,7 @@ type Event struct {
 	ContextMaxTokens  int
 	ContextRatio      float64
 	ContextReset      bool
+	ContextKind       string
 }
 
 type streamEventMsg struct {

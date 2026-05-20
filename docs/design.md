@@ -279,10 +279,11 @@ type ModelConfig struct {
 - TUI 通过 `/effort` 列出和切换当前模型支持的等级，并在状态栏展示当前值
 
 **上下文压缩与状态栏**：
-- Agent 每次发起 provider 请求前估算请求消息 token，并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏以紧凑 `ctx` 段展示最近一次用量
+- Agent 每次发起 provider 请求前估算请求消息 token（含 tool schema），并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏用 `ctx est` 展示请求前估算，用 `ctx last` 展示 provider usage 的最近实际 input token
 - Agent 每次 provider 请求都会临时注入当前运行环境（workspace cwd、shell、OS）和路径规则，避免模型猜测 `/home/user` 等默认路径；该 runtime context 不写入 rollout，也不进入恢复后的历史消息
 - max context 优先读取 `providers.<name>.models.<model>.max_context_tokens`，未配置时回退 provider `Caps().MaxContextTokens`
-- 自动 summary 按 `context.trigger_ratio` 触发；TUI 的 `/compact` 可主动触发同一 summary 逻辑，保留最近 `context.keep_recent_turns` 个 user turn
+- 自动 summary 按 `estimated_input + context.reserve_output_tokens > max_context * context.trigger_ratio` 触发；TUI 的 `/compact` 可主动触发同一 summary 逻辑。最近原文保留使用 `context.keep_recent_turns` + 最近上下文 token budget，至少保留当前 user turn，且按完整 user turn 边界截断，避免孤立 tool_use/tool_result
+- tool result 在进入下一次 provider 请求和写入 rollout 前统一限幅：默认最多 12KiB/400 行模型可见内容；超限时完整输出写入 `$XDG_STATE_HOME/ub/tool_outputs/<session>/<tool_use>.txt`（否则 `~/.local/state/ub/...`），rollout 只保存 preview、`truncated`、`original_bytes`、`full_output_path`
 - 读取 rollout 历史时遇到 `Summary` 事件即从该 summary message 重新开始构造上下文，避免恢复 session 后重新带上已压缩旧消息
 
 **重要的内部消息表示**：
@@ -304,7 +305,7 @@ type Event struct {
 
 **存储**：SQLite 表 `events(id, session_id, turn, time, type, payload BLOB)`，按 `(session_id, turn, time)` 建索引。写入策略：单条 `INSERT` 即 commit；DB 启用 `PRAGMA journal_mode=WAL` + `PRAGMA synchronous=NORMAL`。
 
-**清理**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不单独按条数/大小裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
+**清理**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不单独按条数/大小裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。tool-output spillover 文件按 `context.tool_results.spillover_max_age` 清理，失败只 warning。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
 
 **耐久性目标**（与 requirements F-SESS-4 对齐）：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 的事件；操作系统断电可能丢最后若干条尚未刷盘的事件。**不**为此牺牲性能逐条 fsync——agent 一轮会写数十条事件，每条 fsync 在 SSD 上也要几毫秒，TUI 流畅度会肉眼可见地下降。
 
@@ -426,6 +427,12 @@ tui:
 context:
   trigger_ratio: 0.8
   keep_recent_turns: 3
+  reserve_output_tokens: 12000
+  tool_results:
+    inline_max_bytes: 12288
+    inline_max_lines: 400
+    spillover_enabled: true
+    spillover_max_age: 168h
 
 cleanup:
   enabled: true

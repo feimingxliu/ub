@@ -120,7 +120,7 @@ func schemaProperties(t *testing.T, schema map[string]any, raw []byte) map[strin
 func TestRead_LargeFileTruncated(t *testing.T) {
 	root := t.TempDir()
 	var b strings.Builder
-	for i := 1; i <= 2100; i++ {
+	for i := 1; i <= 450; i++ {
 		b.WriteString("x\n")
 	}
 	writeFile(t, root, "big.txt", b.String())
@@ -132,8 +132,26 @@ func TestRead_LargeFileTruncated(t *testing.T) {
 	if !strings.HasSuffix(res.Content, "... (truncated, use offset/limit)") {
 		t.Fatalf("expected truncation marker, got tail: %q", tail(res.Content, 80))
 	}
-	if strings.Count(res.Content, "\n") < 1999 {
-		t.Fatalf("expected ~2000 lines in output, got %d newlines", strings.Count(res.Content, "\n"))
+	if strings.Count(res.Content, "\n") < 400 || strings.Count(res.Content, "\n") > 401 {
+		t.Fatalf("expected ~400 lines in output, got %d newlines", strings.Count(res.Content, "\n"))
+	}
+	if !strings.Contains(res.FullContent, "450\tx") {
+		t.Fatalf("expected full content to preserve tail, got: %q", tail(res.FullContent, 80))
+	}
+}
+
+func TestRead_AllowsToolOutputStatePath(t *testing.T) {
+	root := t.TempDir()
+	stateRoot := filepath.Join(t.TempDir(), "tool_outputs")
+	outputPath := filepath.Join(stateRoot, "sess", "call.txt")
+	writeFile(t, filepath.Dir(outputPath), filepath.Base(outputPath), "full\noutput\n")
+	r := newReadToolWithOptions(root, stateRoot, 400)
+	res, err := execTool(t, r, readArgs{Path: outputPath})
+	if err != nil {
+		t.Fatalf("read state path: %v", err)
+	}
+	if res.Content != "1\tfull\n2\toutput" {
+		t.Fatalf("content = %q", res.Content)
 	}
 }
 

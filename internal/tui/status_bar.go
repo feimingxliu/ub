@@ -21,6 +21,7 @@ type statusBar struct {
 	contextUsedTokens int
 	contextMaxTokens  int
 	contextRatio      float64
+	contextKind       string
 }
 
 const (
@@ -76,7 +77,7 @@ func fitStatusSegments(segments []statusSegment, width int) []statusSegment {
 			out[i].value = shrinkStatusValue(out[i].value, max(8, width/4))
 		case "model":
 			out[i].value = shrinkStatusValue(out[i].value, max(10, width/3))
-		case "ctx":
+		case "ctx est", "ctx last":
 			out[i].value = shrinkStatusValue(out[i].value, max(8, width/6))
 		}
 	}
@@ -104,7 +105,11 @@ func (s statusBar) contextSegment() (statusSegment, bool) {
 		}
 		value = fmt.Sprintf("%d/%d %d%%", s.contextUsedTokens, s.contextMaxTokens, percent)
 	}
-	return statusSegment{label: "ctx", value: value}, true
+	label := "ctx est"
+	if s.contextKind == "last" {
+		label = "ctx last"
+	}
+	return statusSegment{label: label, value: value}, true
 }
 
 func statusSegmentsWidth(segments []statusSegment) int {

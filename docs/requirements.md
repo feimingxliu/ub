@@ -120,18 +120,19 @@
 
 ### 4.7 上下文管理
 
-- F-CTX-1：每次发请求前估算 token 数（按 provider 计费方式）
-- F-CTX-2：当前 turn + history token 超过 `context_window * threshold`（默认 0.8）时，自动触发 summary
-- F-CTX-3：Summary 由小模型（配置可指定）生成；摘要替换早期消息，保留最近 N 轮原文
+- F-CTX-1：每次发请求前估算 token 数（按 provider 计费方式），估算 MUST 包含 provider 请求里的工具 schema
+- F-CTX-2：当前 turn + history + 预留输出 token 超过 `context_window * threshold`（默认 0.8）时，自动触发 summary
+- F-CTX-3：Summary 由小模型（配置可指定）生成；摘要替换早期消息，最近原文按 `keep_recent_turns` 与 token budget 共同保留，且不得留下孤立 tool_use/tool_result
 - F-CTX-4：Summary 事件本身写入 rollout，下次恢复 session 可从 summary 起步
 - F-CTX-5：TUI 可通过 `/compact` 主动触发一次 summary/压缩；手动触发复用同一 summary 策略，但不依赖自动阈值
-- F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量；当前模型配置或 provider 声明最大上下文时同时上报 context 百分比，模型级 `max_context_tokens` 优先
+- F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量，provider 返回 usage 后上报最近实际 input token；TUI MUST 区分 `ctx est` 与 `ctx last`，且普通 usage 校准不得伪装成压缩导致的下降
 - F-CTX-7：Agent 发起 provider 请求时 MUST 携带当前 runtime context（workspace cwd、shell、OS 与路径规则），但该上下文 MUST NOT 写入 rollout 历史，避免恢复 session 后累积过期路径
+- F-CTX-8：模型可见 tool result MUST 按 `context.tool_results` 做统一限幅；超限时完整输出写入 ub state 的 tool-output 文件，rollout 只保存模型可见 preview 与 truncation metadata，恢复 session 不得重新灌入完整大输出
 
 ### 4.8 配置
 
 - F-CFG-1：默认配置位于 `~/.config/ub/config.yaml`；工作目录可有 `.ub/config.yaml` 覆盖
-- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`context`、`cleanup`、`profiles`；`providers.<name>.models.<model>` 可声明 reasoning 能力和 `max_context_tokens`
+- F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 summary/title 与 approval fallback）、`execution_mode`、`reasoning`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`context`、`cleanup`、`profiles`；`providers.<name>.models.<model>` 可声明 reasoning 能力和 `max_context_tokens`；`context` 支持 `reserve_output_tokens` 与 `tool_results`
 - F-CFG-3：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
 - F-CFG-4：配置 schema 用 JSON Schema 描述，IDE 可补全
 - F-CFG-5：配置支持全局 `reasoning.effort`、`approval_agent.reasoning.effort` 和 `providers.<name>.models.<id>` 能力覆盖；effort 值为 `none|minimal|low|medium|high|xhigh`

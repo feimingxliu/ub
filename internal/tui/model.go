@@ -1049,6 +1049,7 @@ func (m Model) switchSession(id string) (tea.Model, tea.Cmd) {
 	m.status.contextUsedTokens = 0
 	m.status.contextMaxTokens = 0
 	m.status.contextRatio = 0
+	m.status.contextKind = ""
 	return m, nil
 }
 
@@ -1062,6 +1063,7 @@ func (m *Model) updateContextUsage(event Event) {
 	m.status.contextUsedTokens = event.ContextUsedTokens
 	m.status.contextMaxTokens = event.ContextMaxTokens
 	m.status.contextRatio = event.ContextRatio
+	m.status.contextKind = defaultString(event.ContextKind, "est")
 }
 
 func slashHelp() string {

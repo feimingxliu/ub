@@ -163,6 +163,52 @@ func TestRunStartupDisabledDoesNotPruneOrWriteState(t *testing.T) {
 	}
 }
 
+func TestRunStartupPrunesOldToolOutputs(t *testing.T) {
+	ctx := context.Background()
+	temp := t.TempDir()
+	storePath := filepath.Join(temp, "ub.db")
+	statePath := filepath.Join(temp, "state", "cleanup.json")
+	outputRoot := filepath.Join(temp, "state", "tool_outputs", "sess")
+	oldPath := filepath.Join(outputRoot, "old.txt")
+	newPath := filepath.Join(outputRoot, "new.txt")
+	if err := os.MkdirAll(outputRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldPath, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newPath, []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.UnixMilli(1_800_000_000_000).UTC()
+	oldTime := now.Add(-8 * 24 * time.Hour)
+	newTime := now.Add(-time.Hour)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newPath, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Cleanup.Interval = 24 * time.Hour
+	cfg.Cleanup.Sessions.MaxAge = 0
+	cfg.Context.ToolResults.SpilloverMaxAge = 7 * 24 * time.Hour
+	if err := runStartup(ctx, cfg, startupOptions{
+		StorePath: storePath,
+		StatePath: statePath,
+		Now:       func() time.Time { return now },
+	}); err != nil {
+		t.Fatalf("runStartup: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old output stat err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(newPath); err != nil {
+		t.Fatalf("new output should remain: %v", err)
+	}
+}
+
 func openMaintenanceStore(t *testing.T, path string) *store.Store {
 	t.Helper()
 	st, err := store.Open(path)
