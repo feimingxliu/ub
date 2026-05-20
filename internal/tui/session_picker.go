@@ -49,7 +49,7 @@ func (p *sessionPicker) view(width int, styles tuitheme.Styles) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(styles.Render(styles.Picker.Title, "select session (enter switch, esc cancel)"))
+	b.WriteString(styles.Render(styles.Picker.Title, truncateText("◇ select session (enter switch, esc cancel)", width)))
 	for i, sess := range p.sessions {
 		b.WriteByte('\n')
 		marker := "  "

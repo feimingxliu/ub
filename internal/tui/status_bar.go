@@ -30,6 +30,7 @@ const (
 	statusStreaming  = "streaming"
 	statusTool       = "tool"
 	statusFinalizing = "finalizing"
+	statusSeparator  = " │ "
 )
 
 func (s statusBar) view(width int, styles tuitheme.Styles) string {
@@ -55,7 +56,8 @@ func (s statusBar) view(width int, styles tuitheme.Styles) string {
 		raw := segment.label + ": " + segment.value
 		rendered[i] = styles.Render(statusSegmentStyle(segment, styles), raw)
 	}
-	return styles.Render(styles.Status.Bar, strings.Join(rendered, " "))
+	separator := styles.Render(styles.SubtleLine, statusSeparator)
+	return styles.Render(styles.Status.Bar, strings.Join(rendered, separator))
 }
 
 type statusSegment struct {
@@ -117,7 +119,7 @@ func statusSegmentsWidth(segments []statusSegment) int {
 	for _, segment := range segments {
 		parts = append(parts, segment.label+": "+segment.value)
 	}
-	return runewidth.StringWidth(strings.Join(parts, " "))
+	return runewidth.StringWidth(strings.Join(parts, statusSeparator))
 }
 
 func shrinkStatusValue(value string, width int) string {

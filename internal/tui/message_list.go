@@ -352,7 +352,7 @@ func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.
 func (l messageList) view(width, height, scroll int, styles tuitheme.Styles) string {
 	lines := l.render(width, styles).lines
 	if len(lines) == 0 {
-		return styles.Render(styles.Muted, "No messages yet")
+		return styles.Render(styles.Muted, truncateText("No messages yet · type a prompt or /help", contentWidth(width)))
 	}
 	if height <= 0 || height >= len(lines) {
 		return strings.Join(lines, "\n")

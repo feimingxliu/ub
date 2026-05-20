@@ -57,7 +57,7 @@ func (p *modelPicker) view(width int, styles tuitheme.Styles) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(styles.Render(styles.Picker.Title, p.title))
+	b.WriteString(styles.Render(styles.Picker.Title, truncateText("◇ "+p.title, width)))
 	for i, model := range p.models {
 		b.WriteByte('\n')
 		marker := "  "

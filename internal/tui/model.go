@@ -96,7 +96,7 @@ type Model struct {
 func NewModel(opts Options) Model {
 	styles := tuitheme.Default()
 	input := textinput.New()
-	input.Placeholder = "Type a message"
+	input.Placeholder = "Type a message or /help"
 	input.Prompt = "› "
 	input.PromptStyle = styles.Input.Prompt
 	input.TextStyle = styles.Input.Text
@@ -1574,8 +1574,10 @@ func (m Model) queuedPromptView(width int) string {
 		index = m.queueIdx
 		label = fmt.Sprintf("editing %d/%d", m.queueIdx+1, len(m.queuedPrompts))
 	}
-	line := fmt.Sprintf("%s · %s: %s", prefix, label, m.queuedPrompts[index])
-	return m.styles.Render(m.styles.Picker.Item, truncateText(line, width))
+	rail := "┃ "
+	bodyWidth := max(1, contentWidth(width)-runewidth.StringWidth(rail)-2)
+	body := truncateText(fmt.Sprintf("%s%s%s: %s", prefix, statusSeparator, label, m.queuedPrompts[index]), bodyWidth)
+	return m.styles.Render(m.styles.SubtleLine, rail) + m.styles.Render(m.styles.Status.Segment, body)
 }
 
 func (m *Model) scrollMessages(delta int) {
