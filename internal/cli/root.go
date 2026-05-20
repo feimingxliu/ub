@@ -120,13 +120,15 @@ func newRootCmd() *cobra.Command {
 			if resume == resumeSelectSentinel && len(args) == 1 {
 				resume = args[0]
 			}
-			return runTUI(cmd, cfg, resume)
+			return runTUI(cmd, cfg, resume, opts.provider, opts.model)
 		},
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringVar(&opts.profile, "profile", "", "configuration profile to apply")
 	root.PersistentFlags().BoolVar(&opts.dev, "dev", false, "use the dev profile")
 	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: work, plan, or auto")
+	root.Flags().StringVar(&opts.provider, "provider", "", "provider config name for TUI")
+	root.Flags().StringVar(&opts.model, "model", "", "model id override for TUI")
 	root.Flags().StringVar(&opts.resume, "resume", "", "choose a TUI session to resume, or resume the specified id with --resume=<id>")
 	root.Flags().Lookup("resume").NoOptDefVal = resumeSelectSentinel
 
@@ -140,10 +142,12 @@ func newRootCmd() *cobra.Command {
 }
 
 type runtimeOptions struct {
-	profile string
-	dev     bool
-	mode    string
-	resume  string
+	profile  string
+	dev      bool
+	mode     string
+	resume   string
+	provider string
+	model    string
 }
 
 func configForProcessStartup(args []string) *config.Config {

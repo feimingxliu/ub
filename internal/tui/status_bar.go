@@ -11,6 +11,7 @@ import (
 )
 
 type statusBar struct {
+	provider          string
 	model             string
 	effort            string
 	executionMode     string
@@ -32,6 +33,7 @@ const (
 	statusShell      = "shell"
 	statusFinalizing = "finalizing"
 	statusSeparator  = " │ "
+	statusCompactSep = "│"
 )
 
 func (s statusBar) view(width int, styles tuitheme.Styles) string {
@@ -50,14 +52,14 @@ func (s statusBar) view(width int, styles tuitheme.Styles) string {
 		segments = append(segments, statusSegment{label: "turn", value: fmt.Sprintf("%d", s.turn)})
 	}
 	segments = append(segments, statusSegment{label: "cwd", value: defaultString(s.cwd, ".")})
-	segments = fitStatusSegments(segments, width)
+	segments = fitStatusSegments(segments, width, styles)
 
 	rendered := make([]string, len(segments))
 	for i, segment := range segments {
 		raw := segment.label + ": " + segment.value
 		rendered[i] = styles.Render(statusSegmentStyle(segment, styles), raw)
 	}
-	separator := styles.Render(styles.SubtleLine, statusSeparator)
+	separator := styles.Render(styles.SubtleLine, statusSeparatorText(styles))
 	return styles.Render(styles.Status.Bar, strings.Join(rendered, separator))
 }
 
@@ -67,33 +69,69 @@ type statusSegment struct {
 	semantic string
 }
 
-func fitStatusSegments(segments []statusSegment, width int) []statusSegment {
+func fitStatusSegments(segments []statusSegment, width int, styles tuitheme.Styles) []statusSegment {
 	width = contentWidth(width)
-	rawWidth := statusSegmentsWidth(segments)
-	if rawWidth <= width {
-		return segments
-	}
 	out := append([]statusSegment(nil), segments...)
-	for i := range out {
-		switch out[i].label {
-		case "cwd":
-			out[i].value = shrinkStatusValue(out[i].value, max(8, width/4))
-		case "model":
-			out[i].value = shrinkStatusValue(out[i].value, max(10, width/3))
-		case "ctx est", "ctx last":
-			out[i].value = shrinkStatusValue(out[i].value, max(8, width/6))
-		}
-	}
-	if statusSegmentsWidth(out) <= width {
+	if statusSegmentsWidth(out, styles) <= width {
 		return out
 	}
-	for i := range out {
-		switch out[i].label {
-		case "effort", "mode", "state":
-			out[i].value = shrinkStatusValue(out[i].value, max(4, width/8))
+
+	out = removeStatusSegment(out, "effort")
+	if statusSegmentsWidth(out, styles) <= width {
+		return out
+	}
+
+	out = shrinkStatusSegments(out, width, styles)
+	if statusSegmentsWidth(out, styles) <= width {
+		return out
+	}
+
+	for _, label := range []string{"cwd", "turn", "ctx est", "ctx last", "effort", "model", "mode"} {
+		out = removeStatusSegment(out, label)
+		if statusSegmentsWidth(out, styles) <= width {
+			return out
 		}
 	}
 	return out
+}
+
+func shrinkStatusSegments(segments []statusSegment, width int, styles tuitheme.Styles) []statusSegment {
+	out := append([]statusSegment(nil), segments...)
+	rules := []statusShrinkRule{
+		{label: "cwd", minWidth: 4},
+		{label: "model", minWidth: 8},
+		{label: "ctx est", minWidth: 5},
+		{label: "ctx last", minWidth: 5},
+	}
+	for statusSegmentsWidth(out, styles) > width {
+		changed := false
+		for _, rule := range rules {
+			idx := statusSegmentIndex(out, rule.label)
+			if idx < 0 {
+				continue
+			}
+			currentWidth := runewidth.StringWidth(out[idx].value)
+			if currentWidth <= rule.minWidth {
+				continue
+			}
+			overflow := statusSegmentsWidth(out, styles) - width
+			reduceBy := min(overflow, currentWidth-rule.minWidth)
+			out[idx].value = shrinkStatusValue(out[idx].value, currentWidth-reduceBy)
+			changed = true
+			if statusSegmentsWidth(out, styles) <= width {
+				return out
+			}
+		}
+		if !changed {
+			return out
+		}
+	}
+	return out
+}
+
+type statusShrinkRule struct {
+	label    string
+	minWidth int
 }
 
 func (s statusBar) contextSegment() (statusSegment, bool) {
@@ -115,19 +153,66 @@ func (s statusBar) contextSegment() (statusSegment, bool) {
 	return statusSegment{label: label, value: value}, true
 }
 
-func statusSegmentsWidth(segments []statusSegment) int {
-	var parts []string
-	for _, segment := range segments {
-		parts = append(parts, segment.label+": "+segment.value)
+func statusSegmentsWidth(segments []statusSegment, styles tuitheme.Styles) int {
+	separator := styles.Render(styles.SubtleLine, statusSeparatorText(styles))
+	total := 0
+	for i, segment := range segments {
+		if i > 0 {
+			total += lipgloss.Width(separator)
+		}
+		total += lipgloss.Width(styles.Render(statusSegmentStyle(segment, styles), segment.label+": "+segment.value))
 	}
-	return runewidth.StringWidth(strings.Join(parts, statusSeparator))
+	return total
+}
+
+func statusSeparatorText(styles tuitheme.Styles) string {
+	if styles.Plain {
+		return statusSeparator
+	}
+	return statusCompactSep
+}
+
+func statusSegmentIndex(segments []statusSegment, label string) int {
+	for i, segment := range segments {
+		if segment.label == label {
+			return i
+		}
+	}
+	return -1
+}
+
+func removeStatusSegment(segments []statusSegment, label string) []statusSegment {
+	idx := statusSegmentIndex(segments, label)
+	if idx < 0 {
+		return segments
+	}
+	out := append([]statusSegment(nil), segments[:idx]...)
+	return append(out, segments[idx+1:]...)
 }
 
 func shrinkStatusValue(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
 	if runewidth.StringWidth(value) <= width {
 		return value
 	}
-	return truncateText(value, width)
+	if width == 1 {
+		return "…"
+	}
+	target := width - 1
+	var b strings.Builder
+	lineWidth := 0
+	for _, r := range value {
+		rw := runewidth.RuneWidth(r)
+		if lineWidth+rw > target {
+			break
+		}
+		b.WriteRune(r)
+		lineWidth += rw
+	}
+	b.WriteRune('…')
+	return b.String()
 }
 
 func statusSegmentStyle(segment statusSegment, styles tuitheme.Styles) lipgloss.Style {

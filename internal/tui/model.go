@@ -27,6 +27,8 @@ type Options struct {
 	Context        context.Context
 	Runner         Runner
 	Permissions    <-chan PermissionRequest
+	Provider       string
+	Providers      []string
 	Model          string
 	Models         []string
 	Effort         string
@@ -72,6 +74,7 @@ type Model struct {
 	cancel         context.CancelFunc
 	running        bool
 	events         <-chan Event
+	providers      []string
 	models         []string
 	efforts        []string
 	approvalModel  string
@@ -111,6 +114,16 @@ func NewModel(opts Options) Model {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	providerName := strings.TrimSpace(opts.Provider)
+	providers := opts.Providers
+	if providerRunner, ok := opts.Runner.(ProviderControlRunner); ok {
+		if providerName == "" {
+			providerName = providerRunner.Provider()
+		}
+		if len(providers) == 0 {
+			providers = providerRunner.Providers()
+		}
+	}
 	modelName := defaultString(opts.Model, "unknown")
 	models := opts.Models
 	if len(models) == 0 {
@@ -147,6 +160,7 @@ func NewModel(opts Options) Model {
 		runner:         opts.Runner,
 		permReqs:       opts.Permissions,
 		ctx:            ctx,
+		providers:      normalizeOptions(providers, providerName),
 		models:         normalizeModels(models, modelName),
 		efforts:        normalizeOptions(efforts, effort),
 		approvalModel:  approvalModel,
@@ -156,6 +170,7 @@ func NewModel(opts Options) Model {
 		queueIdx:       -1,
 		timeout:        opts.EventTimeout,
 		status: statusBar{
+			provider:      defaultString(providerName, "unknown"),
 			model:         modelName,
 			effort:        effort,
 			executionMode: defaultString(opts.ExecutionMode, string(execution.ModeWork)),
@@ -270,6 +285,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					m.messages.append(systemRole, "effort set to "+selected)
+					return m, nil
+				}
+				if target == "provider" {
+					if err := m.setProvider(selected, ""); err != nil {
+						m.messages.append(systemRole, err.Error())
+						return m, nil
+					}
+					m.messages.append(systemRole, "provider set to "+m.status.provider+" model "+m.status.model)
 					return m, nil
 				}
 				if err := m.setModel(selected); err != nil {
@@ -641,7 +664,7 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "config":
 		approvalModel := defaultString(m.approvalModel, "none")
-		m.messages.append(systemRole, fmt.Sprintf("model=%s effort=%s approval_model=%s mode=%s cwd=%s", m.status.model, m.status.effort, approvalModel, m.status.executionMode, m.status.cwd))
+		m.messages.append(systemRole, fmt.Sprintf("provider=%s model=%s effort=%s approval_model=%s mode=%s cwd=%s", m.status.provider, m.status.model, m.status.effort, approvalModel, m.status.executionMode, m.status.cwd))
 		return m, nil
 	case "sessions":
 		if len(cmd.Args) > 0 {
@@ -654,6 +677,24 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages.append(systemRole, fmt.Sprintf("profile %q requires restart via `ub --profile %s` or UB_PROFILE=%s", cmd.Args[0], cmd.Args[0], cmd.Args[0]))
 		}
+		return m, nil
+	case "provider":
+		if len(cmd.Args) == 0 {
+			if len(m.providers) == 0 {
+				m.messages.append(systemRole, "no providers available")
+				return m, nil
+			}
+			m.picker = newProviderPicker(m.providers, m.status.provider)
+			m.pickerTarget = "provider"
+			return m, nil
+		}
+		providerName := cmd.Args[0]
+		model := strings.Join(cmd.Args[1:], " ")
+		if err := m.setProvider(providerName, model); err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		m.messages.append(systemRole, "provider set to "+m.status.provider+" model "+m.status.model)
 		return m, nil
 	case "model":
 		if len(cmd.Args) == 0 {
@@ -1058,6 +1099,43 @@ func (m *Model) setModel(model string) error {
 	m.status.model = model
 	m.models = normalizeModels(m.models, model)
 	m.refreshEffortFromRunner()
+	return nil
+}
+
+func (m *Model) setProvider(providerName, model string) error {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return fmt.Errorf("provider cannot be empty")
+	}
+	if !modelAllowed(m.providers, providerName) {
+		return fmt.Errorf("provider %q is not available; use /provider to list candidates", providerName)
+	}
+	runner, ok := m.runner.(ProviderControlRunner)
+	if !ok {
+		return fmt.Errorf("provider switching is unavailable in this runner")
+	}
+	state, err := runner.SetProvider(providerName, strings.TrimSpace(model))
+	if err != nil {
+		return err
+	}
+	if state.Provider == "" {
+		state.Provider = providerName
+	}
+	m.status.provider = state.Provider
+	m.providers = normalizeOptions(state.Providers, state.Provider)
+	if state.Model != "" {
+		m.status.model = state.Model
+		m.models = normalizeModels(state.Models, state.Model)
+	} else {
+		m.status.model = "unknown"
+		m.models = append([]string(nil), state.Models...)
+	}
+	if state.Effort != "" || len(state.Efforts) > 0 {
+		m.status.effort = defaultString(state.Effort, "none")
+		m.efforts = normalizeOptions(state.Efforts, m.status.effort)
+	} else {
+		m.refreshEffortFromRunner()
+	}
 	return nil
 }
 
@@ -1601,6 +1679,9 @@ type slashValueSource struct {
 }
 
 func (m Model) slashValueSource() (slashValueSource, bool) {
+	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "provider"); ok {
+		return slashValueSource{command: "provider", label: "provider", prefix: prefix, values: m.providers}, true
+	}
 	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "model"); ok {
 		return slashValueSource{command: "model", label: "model", prefix: prefix, values: m.models}, true
 	}

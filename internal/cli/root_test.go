@@ -18,6 +18,11 @@ func TestRootHelp(t *testing.T) {
 	if !strings.Contains(out.String(), "ub") {
 		t.Errorf("help output missing program name: %s", out.String())
 	}
+	for _, want := range []string{"--provider", "--model"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("help output missing %s flag: %s", want, out.String())
+		}
+	}
 }
 
 func TestSubcommandsExist(t *testing.T) {

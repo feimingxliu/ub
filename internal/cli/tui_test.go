@@ -31,6 +31,70 @@ func TestResolveResumeSessionIDRequiresExplicitID(t *testing.T) {
 	}
 }
 
+func TestTUIRunnerUsesProviderAndModelFlags(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {Type: "fake"},
+			"manual":  {Type: "fake"},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "manual", "manual/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	if runner.providerName != "manual" {
+		t.Fatalf("providerName = %q, want manual", runner.providerName)
+	}
+	if runner.model != "manual/model" {
+		t.Fatalf("model = %q, want manual/model", runner.model)
+	}
+}
+
+func TestTUIRunnerSetProviderSwitchesProviderAndModel(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {Type: "fake"},
+			"manual":  {Type: "fake"},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	state, err := runner.SetProvider("manual", "manual/model")
+	if err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if runner.providerName != "manual" || runner.model != "manual/model" {
+		t.Fatalf("runner provider/model = %q/%q, want manual/manual/model", runner.providerName, runner.model)
+	}
+	if state.Provider != "manual" || state.Model != "manual/model" {
+		t.Fatalf("state = %#v, want manual/manual-model", state)
+	}
+	if !modelInList(state.Providers, "primary") || !modelInList(state.Providers, "manual") {
+		t.Fatalf("providers = %#v, want both configured providers", state.Providers)
+	}
+}
+
 func TestTUIRunnerNewSessionCreatesBlankSession(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `providers:

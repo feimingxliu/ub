@@ -35,6 +35,23 @@ type ControlRunner interface {
 	Models() []string
 }
 
+// ProviderSelection is the effective provider/model state after switching.
+type ProviderSelection struct {
+	Provider  string
+	Providers []string
+	Model     string
+	Models    []string
+	Effort    string
+	Efforts   []string
+}
+
+// ProviderControlRunner optionally lets slash commands update the chat provider.
+type ProviderControlRunner interface {
+	SetProvider(provider, model string) (ProviderSelection, error)
+	Provider() string
+	Providers() []string
+}
+
 // EffortControlRunner optionally lets slash commands update reasoning effort.
 type EffortControlRunner interface {
 	SetEffort(effort string) error

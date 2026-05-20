@@ -16,6 +16,10 @@ func newModelPicker(models []string, current string) *modelPicker {
 	return newValuePicker(models, current, "select model (enter select, esc cancel)")
 }
 
+func newProviderPicker(providers []string, current string) *modelPicker {
+	return newValuePicker(providers, current, "select provider (enter select, esc cancel)")
+}
+
 func newEffortPicker(efforts []string, current string) *modelPicker {
 	return newValuePicker(efforts, current, "select effort (enter select, esc cancel)")
 }

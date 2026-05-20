@@ -22,6 +22,7 @@ type Spec struct {
 }
 
 var specs = []Spec{
+	{Name: "provider", Usage: "/provider [provider] [model]", Description: "show providers or switch provider and optional model"},
 	{Name: "model", Usage: "/model [model]", Description: "show models or switch to a supported model"},
 	{Name: "effort", Usage: "/effort [effort]", Description: "show or switch reasoning effort for the current model"},
 	{Name: "approval-model", Usage: "/approval-model [model]", Description: "show or switch the auto approval model"},

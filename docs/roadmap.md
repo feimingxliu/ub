@@ -490,6 +490,7 @@
   - TUI 与 Agent 之间用 channel：UI 发 `UserSend`，Agent 推 `DeltaText`、`ToolCallStart`、`ToolCallEnd`、`Done`
   - 消息列表组件支持流式追加
   - 状态栏显示当前 model / execution mode / turn 序号
+  - TUI 启动支持 `ub --provider <name>` / `ub --model <id>` 临时覆盖主对话 provider/model
 - **Out of Scope**：权限弹窗、diff 渲染、slash 命令
 - **验证**：手测在 TUI 内问 "say hi"；按 Ctrl+C 可中断；`teatest` 模拟一段流（fake provider）
 
@@ -532,7 +533,7 @@
 
 - **目标**：基础工作流 hotkey
 - **依赖**：I-22 / I-14
-- **In Scope**：`/model`、`/approval-model`、`/mode`、`/clear`、`/new`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
+- **In Scope**：`/provider`、`/model`、`/approval-model`、`/mode`、`/clear`、`/new`、`/sessions`、`/help`、`/quit`、`/config`、`/profile`
 - **补充要求**：`/approval-model [model]` 只切换 auto 模式使用的审批模型；无参数时展示候选列表，显式指定时校验候选模型，切换后重建 approval agent 并只影响后续命令审批
 - **补充要求**：TUI 支持 `!cmd` 本地直跑 shell（输入区提示 shell 模式，输出直接显示，不渲染为 tool 调用，不走模型 / 审批 / rollout）和 `@` workspace 文件候选插入路径引用
 - **Out of Scope**：自定义 alias

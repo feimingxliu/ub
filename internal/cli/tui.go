@@ -28,7 +28,7 @@ import (
 
 const resumeSelectSentinel = "latest"
 
-func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
+func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelFlag string) (err error) {
 	logger, cleanupLog, logPath, err := logx.SetupTUIFromEnvWithRotation(cmd.ErrOrStderr(), logRotationOptions(cfg))
 	if err != nil {
 		return err
@@ -45,7 +45,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 	}
 
 	permBridge := tui.NewPermissionBridge()
-	runner, err := newTUIAgentRunner(cmd, cfg, permBridge)
+	runner, err := newTUIAgentRunner(cmd, cfg, permBridge, providerFlag, modelFlag)
 	if err != nil {
 		return err
 	}
@@ -75,6 +75,8 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 		Output:         cmd.OutOrStdout(),
 		Runner:         runner,
 		Permissions:    permBridge.Requests(),
+		Provider:       runner.Provider(),
+		Providers:      runner.Providers(),
 		Model:          runner.model,
 		Models:         runner.Models(),
 		Effort:         runner.Effort(),
@@ -96,6 +98,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume string) (err error) {
 
 type tuiAgentRunner struct {
 	cmd                  *cobra.Command
+	cfg                  *config.Config
 	provider             provider.Provider
 	providerName         string
 	providerCfg          config.ProviderConfig
@@ -122,8 +125,8 @@ type tuiAgentRunner struct {
 	closedStore          bool
 }
 
-func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker) (*tuiAgentRunner, error) {
-	providerName, model, err := selectChatProvider(cfg, "", "")
+func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker, providerFlag, modelFlag string) (*tuiAgentRunner, error) {
+	providerName, model, err := selectChatProvider(cfg, providerFlag, modelFlag)
 	if err != nil {
 		return nil, err
 	}
@@ -165,6 +168,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	writeToolWarnings(cmd.ErrOrStderr(), tools.Warnings)
 	return &tuiAgentRunner{
 		cmd:                  cmd,
+		cfg:                  cfg,
 		provider:             p,
 		providerName:         providerName,
 		providerCfg:          providerCfg,
@@ -525,6 +529,75 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	return nil
 }
 
+func (r *tuiAgentRunner) SetProvider(providerName, model string) (tui.ProviderSelection, error) {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return tui.ProviderSelection{}, fmt.Errorf("provider cannot be empty")
+	}
+	if r == nil || r.cfg == nil {
+		return tui.ProviderSelection{}, fmt.Errorf("provider switching is unavailable")
+	}
+	providerCfg, ok := r.cfg.Providers[providerName]
+	if !ok {
+		return tui.ProviderSelection{}, fmt.Errorf("provider %q not configured; check `ub config show`", providerName)
+	}
+	selectedModel, err := r.modelForProviderSwitch(providerName, providerCfg, model)
+	if err != nil {
+		return tui.ProviderSelection{}, err
+	}
+	p, err := provider.New(providerName, providerCfg)
+	if err != nil {
+		return tui.ProviderSelection{}, fmt.Errorf("create provider %q: %w", providerName, err)
+	}
+	models := providerModels(r.cmd.Context(), providerName, providerCfg, selectedModel)
+	info := modelinfo.Resolve(providerName, providerCfg, selectedModel)
+	summarySetup, err := newSummarySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel)
+	if err != nil {
+		return tui.ProviderSelection{}, err
+	}
+	approvalSetup, err := newApprovalAgentSetup(r.cmd.Context(), r.cfg, providerName, selectedModel)
+	if err != nil {
+		return tui.ProviderSelection{}, err
+	}
+	r.provider = p
+	r.providerName = providerName
+	r.providerCfg = providerCfg
+	r.model = selectedModel
+	r.models = models
+	r.efforts = modelinfo.EffortOptions(info)
+	r.summaryProvider = summarySetup.Provider
+	r.summaryModel = summarySetup.Model
+	r.summaryUsesCurrent = summarySetup.UsesCurrentModel
+	r.approvalProviderName = approvalSetup.ProviderName
+	r.approvalProviderCfg = approvalSetup.ProviderConfig
+	r.approvalModel = approvalSetup.Model
+	r.approvalModels = approvalSetup.Models
+	r.approvalReasoning = r.cfg.ApprovalAgent.Reasoning
+	if r.permission != nil {
+		r.permission.SetApprovalAgent(approvalSetup.Agent)
+	}
+	r.refreshReasoning()
+	return tui.ProviderSelection{
+		Provider:  r.providerName,
+		Providers: r.Providers(),
+		Model:     r.model,
+		Models:    r.Models(),
+		Effort:    r.Effort(),
+		Efforts:   r.Efforts(),
+	}, nil
+}
+
+func (r *tuiAgentRunner) modelForProviderSwitch(providerName string, providerCfg config.ProviderConfig, model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model, nil
+	}
+	if r != nil && r.cfg != nil && strings.TrimSpace(r.cfg.DefaultProvider) == providerName && strings.TrimSpace(r.cfg.DefaultModel) != "" {
+		return strings.TrimSpace(r.cfg.DefaultModel), nil
+	}
+	return selectProviderModel(r.cmd.Context(), providerName, providerCfg, "")
+}
+
 func (r *tuiAgentRunner) SetEffort(effort string) error {
 	info := modelinfo.Resolve(r.providerName, r.providerCfg, r.model)
 	parsed, err := modelinfo.ValidateEffort(info, effort)
@@ -579,6 +652,27 @@ func (r *tuiAgentRunner) Models() []string {
 		return nil
 	}
 	return append([]string(nil), r.models...)
+}
+
+func (r *tuiAgentRunner) Provider() string {
+	if r == nil {
+		return ""
+	}
+	return r.providerName
+}
+
+func (r *tuiAgentRunner) Providers() []string {
+	if r == nil || r.cfg == nil {
+		return nil
+	}
+	var out []string
+	for _, name := range sortedProviderNames(r.cfg.Providers) {
+		if strings.TrimSpace(r.cfg.Providers[name].Type) == "" {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 func (r *tuiAgentRunner) Effort() string {

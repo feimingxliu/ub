@@ -1178,6 +1178,91 @@ func TestSlashModelAndModeUpdateRunner(t *testing.T) {
 	}
 }
 
+func TestSlashProviderUpdatesRunner(t *testing.T) {
+	runner := &scriptedRunner{
+		provider:  "first",
+		providers: []string{"first", "second"},
+		model:     "first/model",
+		models:    []string{"first/model"},
+		providerModels: map[string][]string{
+			"first":  {"first/model"},
+			"second": {"second/model", "second/other"},
+		},
+		effort:  "low",
+		efforts: []string{"none", "low", "high"},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/provider second")
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	view := model.View()
+	if runner.provider != "second" || runner.model != "second/model" {
+		t.Fatalf("runner provider/model = %q/%q, want second/second/model", runner.provider, runner.model)
+	}
+	for _, want := range []string{"model: second/model", "provider set to second model second/model"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("provider switch view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestSlashProviderWithExplicitModel(t *testing.T) {
+	runner := &scriptedRunner{
+		provider:  "first",
+		providers: []string{"first", "second"},
+		model:     "first/model",
+		models:    []string{"first/model"},
+		providerModels: map[string][]string{
+			"first":  {"first/model"},
+			"second": {"second/model", "second/other"},
+		},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/provider second second/other")
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.provider != "second" || runner.model != "second/other" || !strings.Contains(model.View(), "model: second/other") {
+		t.Fatalf("explicit provider model failed: runner=%q/%q view=\n%s", runner.provider, runner.model, model.View())
+	}
+}
+
+func TestSlashProviderWithoutArgsListsCandidates(t *testing.T) {
+	runner := &scriptedRunner{
+		provider:  "first",
+		providers: []string{"first", "second"},
+		model:     "first/model",
+		models:    []string{"first/model"},
+		providerModels: map[string][]string{
+			"first":  {"first/model"},
+			"second": {"second/model"},
+		},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/provider")
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("slash provider returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := model.View()
+	for _, want := range []string{"select provider", "> first", "  second"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("provider picker missing %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = assertModel(t, updated)
+	if runner.provider != "second" || runner.model != "second/model" || !strings.Contains(model.View(), "model: second/model") {
+		t.Fatalf("provider picker selection failed: runner=%q/%q view=\n%s", runner.provider, runner.model, model.View())
+	}
+}
+
 func TestSlashEffortUpdatesRunner(t *testing.T) {
 	runner := &scriptedRunner{effort: "low", efforts: []string{"none", "low", "high"}}
 	model := NewModel(Options{Runner: runner, Model: "fake/model", Effort: runner.effort, Efforts: runner.efforts})
@@ -2115,6 +2200,9 @@ type scriptedRunner struct {
 	calls            int
 	compactCalls     int
 	prompts          []string
+	provider         string
+	providers        []string
+	providerModels   map[string][]string
 	model            string
 	models           []string
 	effort           string
@@ -2182,6 +2270,38 @@ func (r *scriptedRunner) ListWorkspaceFiles(_ context.Context, query string, lim
 func (r *scriptedRunner) SetModel(model string) error {
 	r.model = model
 	return nil
+}
+
+func (r *scriptedRunner) SetProvider(providerName, model string) (ProviderSelection, error) {
+	if len(r.providers) > 0 && !modelAllowed(r.providers, providerName) {
+		return ProviderSelection{}, fmt.Errorf("provider %q is not available", providerName)
+	}
+	r.provider = providerName
+	models := append([]string(nil), r.providerModels[providerName]...)
+	if model == "" && len(models) > 0 {
+		model = models[0]
+	}
+	if model != "" {
+		models = normalizeModels(models, model)
+	}
+	r.model = model
+	r.models = models
+	return ProviderSelection{
+		Provider:  r.provider,
+		Providers: r.Providers(),
+		Model:     r.model,
+		Models:    r.Models(),
+		Effort:    r.Effort(),
+		Efforts:   r.Efforts(),
+	}, nil
+}
+
+func (r *scriptedRunner) Provider() string {
+	return r.provider
+}
+
+func (r *scriptedRunner) Providers() []string {
+	return append([]string(nil), r.providers...)
 }
 
 func (r *scriptedRunner) SetMode(mode string) error {
