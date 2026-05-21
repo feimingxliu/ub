@@ -23,31 +23,9 @@
 
 ## 👀 看一眼
 
-<!-- TODO: 后期把 docs/img/demo.gif 录制好后替换掉下面的 ASCII -->
-
-```
-╭─ ub ──────────────────────────────────────────────────────────╮
-│                                                               │
-│  you                                                          │
-│  > 把 internal/agent/loop.go 里那个 TODO 改了,跑一遍测试       │
-│                                                               │
-│  ▾ ✓ Tools                                                    │
-│  └ ▾ ✓ read internal/agent/loop.go     (412 lines)            │
-│  └ ▾ ✓ edit internal/agent/loop.go     (12 + / 4 -)           │
-│  └ ▾ ✓ bash go test ./internal/agent   (ok 1.4s)              │
-│                                                               │
-│  assistant                                                    │
-│  在 dispatchTools() 里把并发上限改成 4,加了个回归测试断言任何   │
-│  时刻 goroutine 不会超过 4 个。测试已经过。                    │
-│                                                               │
-│ ─────────────────────────────────────────────────────────── │
-│ ⠋ Thinking · 3.2s · 3 tools                                   │
-│ › █                                                           │
-│ claude-sonnet-4 · mode: work · ctx 18%· cwd: ub               │
-╰───────────────────────────────────────────────────────────────╯
-```
-
-> **此处预留一段录屏 demo。** 把 asciinema/vhs 输出放到 `docs/img/demo.gif`，取消上面注释即可嵌入。
+<p align="center">
+  <img src="docs/img/demo.gif" alt="ub demo" width="900">
+</p>
 
 ## 🎯 这是干嘛的
 

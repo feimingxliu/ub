@@ -23,32 +23,9 @@
 
 ## 👀 See it
 
-<!-- TODO: replace with an asciinema/vhs recording at docs/img/demo.gif -->
-
-```
-╭─ ub ──────────────────────────────────────────────────────────╮
-│                                                               │
-│  you                                                          │
-│  > fix the TODO in internal/agent/loop.go and run the tests   │
-│                                                               │
-│  ▾ ✓ Tools                                                    │
-│  └ ▾ ✓ read internal/agent/loop.go     (412 lines)            │
-│  └ ▾ ✓ edit internal/agent/loop.go     (12 + / 4 -)           │
-│  └ ▾ ✓ bash go test ./internal/agent   (ok 1.4s)              │
-│                                                               │
-│  assistant                                                    │
-│  Capped concurrency at 4 in dispatchTools(), added a regress  │
-│  test that asserts no more than 4 goroutines ever run at once │
-│  Tests pass.                                                  │
-│                                                               │
-│ ─────────────────────────────────────────────────────────── │
-│ ⠋ Thinking · 3.2s · 3 tools                                   │
-│ › █                                                           │
-│ claude-sonnet-4 · mode: work · ctx 18%· cwd: ub               │
-╰───────────────────────────────────────────────────────────────╯
-```
-
-> **Slot reserved for an animated demo.** Drop a recording at `docs/img/demo.gif` and uncomment the embed above.
+<p align="center">
+  <img src="docs/img/demo.gif" alt="ub demo" width="900">
+</p>
 
 ## 🎯 What it's for
 
