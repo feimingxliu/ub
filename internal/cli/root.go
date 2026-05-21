@@ -358,6 +358,7 @@ type chatSessionState struct {
 	rollout   *rollout.SQLite
 	session   store.Session
 	history   []message.Message
+	mode      execution.Mode
 	nextTurn  int
 	sessionID string
 }
@@ -713,7 +714,7 @@ func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions
 			_ = st.Close()
 			return nil, err
 		}
-		history, nextTurn, err := readChatHistory(cmd, ro, sessionID)
+		history, nextTurn, restoredMode, err := readChatHistory(cmd, ro, sessionID)
 		if err != nil {
 			_ = st.Close()
 			return nil, err
@@ -723,6 +724,7 @@ func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions
 			rollout:   ro,
 			session:   *sess,
 			history:   history,
+			mode:      restoredMode,
 			nextTurn:  nextTurn,
 			sessionID: sessionID,
 		}, nil
@@ -751,12 +753,23 @@ func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions
 	}, nil
 }
 
-func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, error) {
+func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, execution.Mode, error) {
 	var history []message.Message
 	maxTurn := 0
+	var restoredMode execution.Mode
 	if err := ro.ForEach(cmd.Context(), sessionID, func(event rollout.Event) error {
 		if event.Turn > maxTurn {
 			maxTurn = event.Turn
+		}
+		if mode, ok, err := rollout.ModeFromEvent(event); err != nil {
+			return err
+		} else if ok {
+			parsed, err := execution.ParseMode(mode)
+			if err != nil {
+				return fmt.Errorf("restore mode from rollout event %s: %w", event.ID, err)
+			}
+			restoredMode = parsed
+			return nil
 		}
 		msg, ok, err := rollout.MessageFromEvent(event)
 		if err != nil {
@@ -773,9 +786,9 @@ func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) (
 		}
 		return nil
 	}); err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
-	return history, maxTurn + 1, nil
+	return history, maxTurn + 1, restoredMode, nil
 }
 
 func finishChatSession(cmd *cobra.Command, state *chatSessionState, prompt, model string) error {

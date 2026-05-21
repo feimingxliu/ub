@@ -21,6 +21,7 @@ import (
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/reasoning"
+	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/spf13/cobra"
@@ -65,6 +66,9 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 			return err
 		}
 	}
+	if selectSessionOnStart, err = shouldSelectSessionOnStart(cmd.Context(), resume, runner); err != nil {
+		logger.Warn("list sessions for startup picker", "err", err)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -94,6 +98,25 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		logger.Error("tui failed", "err", err)
 	}
 	return err
+}
+
+type sessionLister interface {
+	ListSessions(ctx context.Context) ([]tui.SessionInfo, error)
+}
+
+func shouldSelectSessionOnStart(ctx context.Context, resume string, lister sessionLister) (bool, error) {
+	resume = strings.TrimSpace(resume)
+	if resume == resumeSelectSentinel {
+		return true, nil
+	}
+	if resume != "" || lister == nil {
+		return false, nil
+	}
+	sessions, err := lister.ListSessions(ctx)
+	if err != nil {
+		return false, err
+	}
+	return len(sessions) > 0, nil
 }
 
 type tuiAgentRunner struct {
@@ -476,6 +499,11 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 		r.models = appendModelCandidate(r.models, state.session.Model)
 		r.refreshReasoning()
 	}
+	if state.mode != "" {
+		r.modeMu.Lock()
+		r.mode = state.mode
+		r.modeMu.Unlock()
+	}
 	return r.sessionState(), nil
 }
 
@@ -634,6 +662,19 @@ func (r *tuiAgentRunner) SetMode(mode string) error {
 	parsed, err := execution.ParseMode(mode)
 	if err != nil {
 		return err
+	}
+	if r != nil && r.state != nil && r.state.rollout != nil {
+		event, err := rollout.ModeSwitch(r.state.sessionID, r.state.nextTurn, string(parsed))
+		if err != nil {
+			return err
+		}
+		if err := r.state.rollout.Append(r.cmd.Context(), event); err != nil {
+			return err
+		}
+		r.state.session.UpdatedAt = time.Now().UTC()
+		if err := r.state.store.UpdateSession(r.cmd.Context(), r.state.session); err != nil {
+			return err
+		}
 	}
 	r.modeMu.Lock()
 	defer r.modeMu.Unlock()

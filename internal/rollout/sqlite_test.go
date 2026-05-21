@@ -157,6 +157,30 @@ func TestSummaryEventAndMessageFromEvent(t *testing.T) {
 	}
 }
 
+func TestModeSwitchEvent(t *testing.T) {
+	event, err := ModeSwitch("sess_mode", 3, "plan")
+	if err != nil {
+		t.Fatalf("ModeSwitch: %v", err)
+	}
+	if event.Type != TypeModeSwitch {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeModeSwitch)
+	}
+	mode, ok, err := ModeFromEvent(event)
+	if err != nil {
+		t.Fatalf("ModeFromEvent: %v", err)
+	}
+	if !ok || mode != "plan" {
+		t.Fatalf("mode = %q, ok=%v; want plan true", mode, ok)
+	}
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if ok || len(msg.Content) != 0 {
+		t.Fatalf("mode switch should not restore as message: msg=%#v ok=%v", msg, ok)
+	}
+}
+
 func TestAppendVisibleAfterReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "ub.db")

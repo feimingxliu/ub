@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tui"
 )
 
@@ -29,6 +31,39 @@ func TestResolveResumeSessionIDRequiresExplicitID(t *testing.T) {
 	if _, err := resolveResumeSessionID(resumeSelectSentinel); err == nil {
 		t.Fatalf("resume selector sentinel should not resolve to a session id")
 	}
+}
+
+func TestShouldSelectSessionOnStart(t *testing.T) {
+	cases := []struct {
+		name     string
+		resume   string
+		sessions []tui.SessionInfo
+		want     bool
+	}{
+		{name: "explicit resume flag", resume: resumeSelectSentinel, want: true},
+		{name: "explicit session id", resume: "sess_1", sessions: []tui.SessionInfo{{ID: "sess_2"}}, want: false},
+		{name: "plain start with sessions", sessions: []tui.SessionInfo{{ID: "sess_1"}}, want: true},
+		{name: "plain start without sessions", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := shouldSelectSessionOnStart(context.Background(), tc.resume, staticSessionLister{sessions: tc.sessions})
+			if err != nil {
+				t.Fatalf("shouldSelectSessionOnStart: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("shouldSelectSessionOnStart = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+type staticSessionLister struct {
+	sessions []tui.SessionInfo
+}
+
+func (l staticSessionLister) ListSessions(context.Context) ([]tui.SessionInfo, error) {
+	return l.sessions, nil
 }
 
 func TestTUIRunnerUsesProviderAndModelFlags(t *testing.T) {
@@ -126,6 +161,45 @@ func TestTUIRunnerNewSessionCreatesBlankSession(t *testing.T) {
 	sessions = readOnlySessions(t, temp)
 	if len(sessions) != 1 || sessions[0].Title != "first prompt" {
 		t.Fatalf("sessions after first prompt = %#v, want title from first prompt", sessions)
+	}
+}
+
+func TestTUIRunnerModeSwitchPersistsAndRestores(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner := &tuiAgentRunner{cmd: cmd, model: "fake/test", mode: execution.ModeWork}
+	defer runner.Close()
+
+	state, err := runner.NewSession(context.Background())
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if err := runner.SetMode("plan"); err != nil {
+		t.Fatalf("SetMode: %v", err)
+	}
+	events := readOnlySessionEvents(t, temp)
+	assertEventTypes(t, events, []rollout.Type{rollout.TypeModeSwitch})
+	mode, ok, err := rollout.ModeFromEvent(events[0])
+	if err != nil {
+		t.Fatalf("ModeFromEvent: %v", err)
+	}
+	if !ok || mode != "plan" {
+		t.Fatalf("persisted mode = %q ok=%v, want plan true", mode, ok)
+	}
+
+	runner.mode = execution.ModeWork
+	if _, err := runner.SwitchSession(context.Background(), state.ID); err != nil {
+		t.Fatalf("SwitchSession: %v", err)
+	}
+	if got := runner.currentMode(); got != execution.ModePlan {
+		t.Fatalf("restored mode = %q, want plan", got)
 	}
 }
 

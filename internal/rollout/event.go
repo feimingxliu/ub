@@ -22,6 +22,7 @@ const (
 	TypeAssistantMessage Type = "assistant_message"
 	TypeToolResult       Type = "tool_result"
 	TypeSummary          Type = "summary"
+	TypeModeSwitch       Type = "mode_switch"
 	TypeUsage            Type = "usage"
 	TypeError            Type = "error"
 )
@@ -74,6 +75,11 @@ type SummaryPayload struct {
 	CompressedMessages int    `json:"compressed_messages,omitempty"`
 	KeptMessages       int    `json:"kept_messages,omitempty"`
 	EstimatedTokens    int    `json:"estimated_tokens,omitempty"`
+}
+
+// ModeSwitchPayload stores the execution mode selected for subsequent turns.
+type ModeSwitchPayload struct {
+	Mode string `json:"mode"`
 }
 
 // MarshalPayload marshals a typed payload into raw JSON.
@@ -149,6 +155,11 @@ func SummaryMessage(text string) message.Message {
 	return message.Text(message.RoleSystem, "Conversation summary:\n"+text)
 }
 
+// ModeSwitch creates a mode_switch event.
+func ModeSwitch(sessionID string, turn int, mode string) (Event, error) {
+	return NewEvent(sessionID, turn, TypeModeSwitch, ModeSwitchPayload{Mode: mode})
+}
+
 // MessageFromEvent converts persisted message-like rollout events to internal messages.
 func MessageFromEvent(event Event) (message.Message, bool, error) {
 	switch event.Type {
@@ -188,6 +199,21 @@ func MessageFromEvent(event Event) (message.Message, bool, error) {
 	default:
 		return message.Message{}, false, nil
 	}
+}
+
+// ModeFromEvent extracts the mode from a mode_switch event.
+func ModeFromEvent(event Event) (string, bool, error) {
+	if event.Type != TypeModeSwitch {
+		return "", false, nil
+	}
+	var payload ModeSwitchPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return "", false, fmt.Errorf("decode rollout mode_switch event %s: %w", event.ID, err)
+	}
+	if payload.Mode == "" {
+		return "", false, nil
+	}
+	return payload.Mode, true, nil
 }
 
 // Usage creates a usage event.
