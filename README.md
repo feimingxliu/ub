@@ -1,14 +1,6 @@
 <div align="center">
 
-```
-            ██╗   ██╗██████╗
-            ██║   ██║██╔══██╗
-            ██║   ██║██████╔╝
-            ██║   ██║██╔══██╗
-            ╚██████╔╝██████╔╝
-             ╚═════╝ ╚═════╝
-        Ulimited Blade — coding agent
-```
+<img src="docs/img/banner.svg" alt="ub — Ulimited Blade — coding agent" width="600">
 
 **A lean, hackable terminal coding agent — written in Go, local-first, every byte on disk.**
 
