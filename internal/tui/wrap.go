@@ -6,13 +6,29 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-const defaultViewWidth = 80
+const (
+	defaultViewWidth = 80
+	tabWidth         = 4
+)
 
 func contentWidth(width int) int {
 	if width <= 0 {
 		return defaultViewWidth
 	}
 	return max(20, width)
+}
+
+// expandTabs replaces TAB characters with tabWidth spaces. The TUI renders
+// every wrapped line on its own line in the message buffer (each preceded by
+// our own prefix), so we don't need to honor terminal tab stops relative to
+// the original column — we just need runewidth measurements to match what
+// the terminal will actually draw. runewidth.RuneWidth('\t') is 0, which
+// silently breaks wrap math; expanding tabs up front removes that gap.
+func expandTabs(s string) string {
+	if !strings.ContainsRune(s, '\t') {
+		return s
+	}
+	return strings.ReplaceAll(s, "\t", strings.Repeat(" ", tabWidth))
 }
 
 func wrapText(text string, width int) []string {
@@ -28,6 +44,7 @@ func wrapText(text string, width int) []string {
 }
 
 func wrapLine(line string, width int) []string {
+	line = expandTabs(line)
 	if runewidth.StringWidth(line) <= width {
 		return []string{line}
 	}
