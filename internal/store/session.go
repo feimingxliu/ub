@@ -23,7 +23,8 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = sess.CreatedAt
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions
+	_, err := s.db.ExecContext(
+		ctx, `INSERT INTO sessions
 		(id, workspace, title, created_at, updated_at, summary, model)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
@@ -94,7 +95,8 @@ func (s *Store) UpdateSession(ctx context.Context, sess Session) error {
 	if sess.UpdatedAt.IsZero() {
 		sess.UpdatedAt = time.Now().UTC()
 	}
-	res, err := s.db.ExecContext(ctx, `UPDATE sessions
+	res, err := s.db.ExecContext(
+		ctx, `UPDATE sessions
 		SET workspace = ?, title = ?, created_at = ?, updated_at = ?, summary = ?, model = ?
 		WHERE id = ?`,
 		sess.Workspace,
@@ -177,7 +179,8 @@ func (s *Store) PruneSessions(ctx context.Context, opts PruneOptions) (PruneResu
 		now = time.Now().UTC()
 	}
 	cutoff := timeToMillis(now.Add(-opts.MaxAge))
-	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions
+	res, err := s.db.ExecContext(
+		ctx, `DELETE FROM sessions
 		WHERE updated_at < ?
 		  AND (
 		    SELECT COUNT(*)

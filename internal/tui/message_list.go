@@ -12,12 +12,14 @@ import (
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
-const userRole = "user"
-const assistantRole = "assistant"
-const activityRole = "activity"
-const toolRole = "tool"
-const systemRole = "system"
-const errorRole = "error"
+const (
+	userRole      = "user"
+	assistantRole = "assistant"
+	activityRole  = "activity"
+	toolRole      = "tool"
+	systemRole    = "system"
+	errorRole     = "error"
+)
 
 const maxThinkingSummaryRunes = 180
 

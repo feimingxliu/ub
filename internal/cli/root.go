@@ -928,7 +928,8 @@ func runSessionsLS(cmd *cobra.Command) error {
 		if model == "" {
 			model = "-"
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(
+			w, "%s\t%s\t%s\t%s\n",
 			sess.ID,
 			sess.UpdatedAt.Local().Format(time.RFC3339),
 			title,

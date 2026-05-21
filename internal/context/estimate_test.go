@@ -59,7 +59,8 @@ func TestEstimateCountsToolBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	withTools := Estimate([]message.Message{
-		message.New(message.RoleAssistant,
+		message.New(
+			message.RoleAssistant,
 			message.ToolUseBlock("call-1", "read", input),
 			message.ToolResultBlock("call-1", "package main", false),
 		),

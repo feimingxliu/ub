@@ -236,7 +236,8 @@ func TestAppendSurvivesProcessExit(t *testing.T) {
 	}
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestAppendSurvivesProcessExit$")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"UB_ROLLOUT_CRASH_CHILD=1",
 		"UB_ROLLOUT_CRASH_DB="+path,
 		"UB_ROLLOUT_CRASH_SESSION="+sessionID,

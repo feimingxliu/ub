@@ -58,6 +58,7 @@ func (t *diagnosticsTool) Name() string { return "diagnostics" }
 func (t *diagnosticsTool) Description() string {
 	return "Read LSP diagnostics for one file or all known files."
 }
+
 func (t *diagnosticsTool) Schema() *jsonschema.Schema {
 	return t.schema
 }
@@ -102,6 +103,7 @@ func (t *referencesTool) Name() string { return "references" }
 func (t *referencesTool) Description() string {
 	return "Find LSP references for a symbol name, or for the symbol at a 1-based file position."
 }
+
 func (t *referencesTool) Schema() *jsonschema.Schema {
 	return t.schema
 }
@@ -146,7 +148,8 @@ func formatDiagnostics(files []lspruntime.FileDiagnostics) string {
 			if b.Len() > 0 {
 				b.WriteByte('\n')
 			}
-			fmt.Fprintf(&b, "%s:%d:%d: %s: %s",
+			fmt.Fprintf(
+				&b, "%s:%d:%d: %s: %s",
 				displayPath(file.Path),
 				diag.Range.Start.Line+1,
 				diag.Range.Start.Character+1,
@@ -167,7 +170,8 @@ func formatLocations(locations []lspruntime.Location) string {
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
-		fmt.Fprintf(&b, "%s:%d:%d",
+		fmt.Fprintf(
+			&b, "%s:%d:%d",
 			displayPath(pathFromURI(loc.URI)),
 			loc.Range.Start.Line+1,
 			loc.Range.Start.Character+1,

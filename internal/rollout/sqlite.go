@@ -39,7 +39,8 @@ func (s *SQLite) Append(ctx context.Context, event Event) error {
 	if err := validateEvent(event); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO events
+	if _, err := s.db.ExecContext(
+		ctx, `INSERT INTO events
 		(id, session_id, turn, time, type, payload)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 		event.ID,

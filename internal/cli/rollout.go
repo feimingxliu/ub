@@ -197,7 +197,8 @@ func writeRolloutPretty(w io.Writer, sess store.Session, events []rollout.Event)
 		return err
 	}
 	for _, event := range events {
-		if _, err := fmt.Fprintf(w, "\n%s %d  %s  %s\n",
+		if _, err := fmt.Fprintf(
+			w, "\n%s %d  %s  %s\n",
 			style.header("turn"),
 			event.Turn,
 			style.eventType(string(event.Type)),

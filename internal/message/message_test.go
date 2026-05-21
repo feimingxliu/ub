@@ -107,7 +107,8 @@ func TestToolResultErrorJSON(t *testing.T) {
 }
 
 func TestMixedContentJSONRoundTrip(t *testing.T) {
-	msg := New(RoleAssistant,
+	msg := New(
+		RoleAssistant,
 		TextBlock("reading"),
 		ToolUseBlock("call-1", "fs.read", json.RawMessage(`{"path":"README.md"}`)),
 		ToolResultBlock("call-1", "contents", false),
@@ -143,7 +144,8 @@ func TestMessageText(t *testing.T) {
 		},
 		{
 			name: "mixed blocks",
-			msg: New(RoleAssistant,
+			msg: New(
+				RoleAssistant,
 				TextBlock("a"),
 				ToolUseBlock("call-1", "tool", json.RawMessage(`{}`)),
 				TextBlock("b"),
@@ -181,7 +183,8 @@ func TestAppendKeepsOrderAndOriginal(t *testing.T) {
 }
 
 func TestCloneDeepCopiesContentAndRawMessage(t *testing.T) {
-	original := New(RoleAssistant,
+	original := New(
+		RoleAssistant,
 		TextBlock("a"),
 		ToolUseBlock("call-1", "tool", json.RawMessage(`{"x":1}`)),
 	)

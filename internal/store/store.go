@@ -168,7 +168,8 @@ func (s *Store) applyMigration(ctx context.Context, version int, name, sqlText s
 	if _, err := tx.ExecContext(ctx, sqlText); err != nil {
 		return fmt.Errorf("apply migration %s: %w", name, err)
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(
+		ctx,
 		"INSERT INTO schema_version(version, name, applied_at) VALUES (?, ?, ?)",
 		version, name, time.Now().UnixMilli(),
 	); err != nil {

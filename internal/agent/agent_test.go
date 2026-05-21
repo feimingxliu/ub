@@ -1078,7 +1078,8 @@ func (w *recordingRollout) Close() error { return nil }
 func turnHistory(turns int) []message.Message {
 	out := make([]message.Message, 0, turns*2)
 	for i := 1; i <= turns; i++ {
-		out = append(out,
+		out = append(
+			out,
 			message.Text(message.RoleUser, fmt.Sprintf("user %d", i)),
 			message.Text(message.RoleAssistant, fmt.Sprintf("assistant %d", i)),
 		)

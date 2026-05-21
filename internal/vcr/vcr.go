@@ -210,7 +210,8 @@ func matchRequest(expected, actual cassetteRequest) error {
 	if len(mismatches) == 0 {
 		return nil
 	}
-	return fmt.Errorf("vcr request mismatch (%s): expected %s %s body_sha256=%s, actual %s %s body_sha256=%s",
+	return fmt.Errorf(
+		"vcr request mismatch (%s): expected %s %s body_sha256=%s, actual %s %s body_sha256=%s",
 		strings.Join(mismatches, ", "),
 		expected.Method, expected.URL, expected.BodySHA256,
 		actual.Method, actual.URL, actual.BodySHA256,
