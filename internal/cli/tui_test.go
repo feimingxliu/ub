@@ -35,35 +35,21 @@ func TestResolveResumeSessionIDRequiresExplicitID(t *testing.T) {
 
 func TestShouldSelectSessionOnStart(t *testing.T) {
 	cases := []struct {
-		name     string
-		resume   string
-		sessions []tui.SessionInfo
-		want     bool
+		name   string
+		resume string
+		want   bool
 	}{
-		{name: "explicit resume flag", resume: resumeSelectSentinel, want: true},
-		{name: "explicit session id", resume: "sess_1", sessions: []tui.SessionInfo{{ID: "sess_2"}}, want: false},
-		{name: "plain start with sessions", sessions: []tui.SessionInfo{{ID: "sess_1"}}, want: true},
-		{name: "plain start without sessions", want: false},
+		{name: "explicit resume flag opens picker", resume: resumeSelectSentinel, want: true},
+		{name: "explicit session id skips picker", resume: "sess_1", want: false},
+		{name: "plain start skips picker even with history", resume: "", want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := shouldSelectSessionOnStart(context.Background(), tc.resume, staticSessionLister{sessions: tc.sessions})
-			if err != nil {
-				t.Fatalf("shouldSelectSessionOnStart: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("shouldSelectSessionOnStart = %v, want %v", got, tc.want)
+			if got := shouldSelectSessionOnStart(tc.resume); got != tc.want {
+				t.Fatalf("shouldSelectSessionOnStart(%q) = %v, want %v", tc.resume, got, tc.want)
 			}
 		})
 	}
-}
-
-type staticSessionLister struct {
-	sessions []tui.SessionInfo
-}
-
-func (l staticSessionLister) ListSessions(context.Context) ([]tui.SessionInfo, error) {
-	return l.sessions, nil
 }
 
 func TestTUIRunnerUsesProviderAndModelFlags(t *testing.T) {

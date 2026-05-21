@@ -56,8 +56,8 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		}
 	}()
 
-	selectSessionOnStart := strings.TrimSpace(resume) == resumeSelectSentinel
-	if strings.TrimSpace(resume) != "" && !selectSessionOnStart {
+	selectSessionOnStart := shouldSelectSessionOnStart(resume)
+	if !selectSessionOnStart && strings.TrimSpace(resume) != "" {
 		sessionID, err := resolveResumeSessionID(resume)
 		if err != nil {
 			return err
@@ -65,9 +65,6 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		if _, err := runner.SwitchSession(cmd.Context(), sessionID); err != nil {
 			return err
 		}
-	}
-	if selectSessionOnStart, err = shouldSelectSessionOnStart(cmd.Context(), resume, runner); err != nil {
-		logger.Warn("list sessions for startup picker", "err", err)
 	}
 
 	cwd, err := os.Getwd()
@@ -100,23 +97,13 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 	return err
 }
 
-type sessionLister interface {
-	ListSessions(ctx context.Context) ([]tui.SessionInfo, error)
-}
-
-func shouldSelectSessionOnStart(ctx context.Context, resume string, lister sessionLister) (bool, error) {
-	resume = strings.TrimSpace(resume)
-	if resume == resumeSelectSentinel {
-		return true, nil
-	}
-	if resume != "" || lister == nil {
-		return false, nil
-	}
-	sessions, err := lister.ListSessions(ctx)
-	if err != nil {
-		return false, err
-	}
-	return len(sessions) > 0, nil
+// shouldSelectSessionOnStart returns true only when the user explicitly
+// asked for the session picker via the bare `--resume` flag. A plain `ub`
+// invocation never opens the picker, even if the workspace has history;
+// that interrupts the new-session flow people expect when they just want
+// to start typing.
+func shouldSelectSessionOnStart(resume string) bool {
+	return strings.TrimSpace(resume) == resumeSelectSentinel
 }
 
 type tuiAgentRunner struct {
