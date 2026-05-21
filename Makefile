@@ -1,9 +1,12 @@
-.PHONY: build test vet fmt lint schema tidy clean run version
+.PHONY: build install test vet fmt lint schema tidy clean run version
 
 BIN := ub
 
 build:
 	go build -o $(BIN) ./cmd/ub
+
+install: build
+	cp $(BIN) ~/.local/bin/
 
 test:
 	go test ./...
