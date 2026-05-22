@@ -963,7 +963,7 @@ func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessi
 		if activity, ok, err := rollout.ActivityFromEvent(event); err != nil {
 			return err
 		} else if ok {
-			out = append(out, activityMessageForTUI(activity))
+			out = append(out, activityMessageForTUI(activity, event.Turn))
 			return nil
 		}
 
@@ -974,12 +974,12 @@ func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessi
 		if event.Type == rollout.TypeSummary {
 			if ok {
 				toolUses = map[string]message.ContentBlock{}
-				out = appendMessagesForTUI(nil, toolUses, msg)
+				out = appendMessagesForTUI(nil, toolUses, msg, event.Turn)
 			}
 			return nil
 		}
 		if ok {
-			out = appendMessagesForTUI(out, toolUses, msg)
+			out = appendMessagesForTUI(out, toolUses, msg, event.Turn)
 		}
 		return nil
 	}); err != nil {
@@ -991,17 +991,25 @@ func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessi
 func messagesForTUI(history []message.Message) []tui.InitialMessage {
 	out := make([]tui.InitialMessage, 0, len(history))
 	toolUses := map[string]message.ContentBlock{}
+	// In-memory history has no per-message turn; approximate by counting user
+	// messages. Resume normally uses the rollout-backed path which carries
+	// the real Turn; this is only the fallback when the rollout is missing.
+	turn := 0
 	for _, msg := range history {
-		out = appendMessagesForTUI(out, toolUses, msg)
+		if msg.Role == message.RoleUser {
+			turn++
+		}
+		out = appendMessagesForTUI(out, toolUses, msg, turn)
 	}
 	return out
 }
 
-func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.ContentBlock, msg message.Message) []tui.InitialMessage {
+func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.ContentBlock, msg message.Message, turn int) []tui.InitialMessage {
 	text := strings.TrimSpace(msg.Text())
 	if text != "" {
 		out = append(out, tui.InitialMessage{
 			Role: string(msg.Role),
+			Turn: turn,
 			Text: text,
 		})
 	}
@@ -1013,6 +1021,7 @@ func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.
 			}
 			toolUses[block.ToolUseID] = block
 			out = append(out, tui.InitialMessage{
+				Turn:         turn,
 				ActivityKind: "tool",
 				ToolUseID:    block.ToolUseID,
 				ToolName:     block.ToolName,
@@ -1030,6 +1039,7 @@ func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.
 			}
 			toolName := fallbackString(toolUse.ToolName, "tool")
 			out = append(out, tui.InitialMessage{
+				Turn:         turn,
 				ActivityKind: "tool",
 				ToolUseID:    block.ToolUseID,
 				ToolName:     toolName,
@@ -1043,8 +1053,9 @@ func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.
 	return out
 }
 
-func activityMessageForTUI(activity rollout.ActivityPayload) tui.InitialMessage {
+func activityMessageForTUI(activity rollout.ActivityPayload, turn int) tui.InitialMessage {
 	return tui.InitialMessage{
+		Turn:         turn,
 		ActivityKind: activity.ActivityKind,
 		ToolUseID:    activity.ToolUseID,
 		ToolName:     activity.ToolName,

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/rollout"
+	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui"
 )
 
@@ -240,6 +242,44 @@ func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
 	}
 	if got[1].ActivityKind != "thinking" || got[1].Summary != "checking files" || got[1].Content != "checking files in repo" {
 		t.Fatalf("thinking activity = %#v", got[1])
+	}
+}
+
+func TestMessagesForTUIFromRolloutTagsTurnNumber(t *testing.T) {
+	events := []rollout.Event{}
+	for turn := 1; turn <= 2; turn++ {
+		userEvt, err := rollout.UserMessage("sess_1", turn, message.Text(message.RoleUser, "prompt"))
+		if err != nil {
+			t.Fatalf("UserMessage: %v", err)
+		}
+		toolUseEvt, err := rollout.AssistantMessage("sess_1", turn,
+			message.New(message.RoleAssistant, message.ToolUseBlock(fmt.Sprintf("call_%d", turn), "read", json.RawMessage(`{"path":"x"}`))))
+		if err != nil {
+			t.Fatalf("AssistantMessage: %v", err)
+		}
+		toolResultEvt, err := rollout.ToolResult("sess_1", turn, fmt.Sprintf("call_%d", turn), "read", tool.Result{Content: "ok"})
+		if err != nil {
+			t.Fatalf("ToolResult: %v", err)
+		}
+		events = append(events, userEvt, toolUseEvt, toolResultEvt)
+	}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{events: events}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+
+	// Each turn produces: user text, tool_use activity, tool_result activity.
+	// Tools from turn 1 and turn 2 must carry distinct Turn values so the TUI
+	// can namespace activity groups instead of collapsing them into one block.
+	turnByCall := map[string]int{}
+	for _, m := range got {
+		if m.ActivityKind == "tool" && m.ToolUseID != "" {
+			turnByCall[m.ToolUseID] = m.Turn
+		}
+	}
+	if turnByCall["call_1"] != 1 || turnByCall["call_2"] != 2 {
+		t.Fatalf("tool Turn assignments wrong: %#v", turnByCall)
 	}
 }
 

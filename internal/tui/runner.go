@@ -69,7 +69,11 @@ type ApprovalControlRunner interface {
 
 // InitialMessage is a persisted message rendered when a TUI session is loaded.
 type InitialMessage struct {
-	Role         string
+	Role string
+	// Turn is the agent loop turn this message belongs to. Used during resume
+	// to namespace activity groups so tools/thinking from different turns do
+	// not collapse into a single block.
+	Turn         int
 	Text         string
 	ToolUseID    string
 	ToolName     string

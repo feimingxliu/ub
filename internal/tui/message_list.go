@@ -333,8 +333,11 @@ func (l *messageList) load(messages []InitialMessage) {
 				IsError:      msg.IsError,
 			}
 			if groupName := activityGroupNameForEvent(event); groupName != "" {
-				l.appendOrUpdateActivityInGroup("history:"+groupName, groupName, event)
-				l.finishActivityGroup("history:"+groupName, "")
+				// Key by turn so tools/thinking from different user prompts
+				// land in their own group instead of collapsing into one.
+				groupKey := fmt.Sprintf("history:%s:turn-%d", groupName, msg.Turn)
+				l.appendOrUpdateActivityInGroup(groupKey, groupName, event)
+				l.finishActivityGroup(groupKey, "")
 			} else {
 				l.appendOrUpdateActivity(event)
 			}
