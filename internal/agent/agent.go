@@ -45,6 +45,7 @@ type Options struct {
 	Mode             execution.Mode
 	ModeFunc         func() execution.Mode
 	MaxTurns         int
+	LimitAsker       LimitAsker
 	Events           EventSink
 	Reasoning        *reasoning.Config
 	MaxContextTokens int
@@ -65,6 +66,7 @@ type Agent struct {
 	mode             execution.Mode
 	modeFunc         func() execution.Mode
 	maxTurns         int
+	limitAsker       LimitAsker
 	events           EventSink
 	reasoning        *reasoning.Config
 	maxContextTokens int
@@ -132,6 +134,7 @@ func New(opts Options) (*Agent, error) {
 		mode:             mode,
 		modeFunc:         opts.ModeFunc,
 		maxTurns:         maxTurns,
+		limitAsker:       opts.LimitAsker,
 		events:           opts.Events,
 		reasoning:        cloneReasoning(opts.Reasoning),
 		maxContextTokens: opts.MaxContextTokens,
@@ -162,50 +165,75 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	for turn := 0; turn < a.maxTurns; turn++ {
-		prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages, tools)
-		if err != nil {
-			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+	turn := 0
+	limit := a.maxTurns
+loop:
+	for {
+		for turn < limit {
+			prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages, tools)
+			if err != nil {
+				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+			}
+			messages = prepared.messages
+			stream, err := a.provider.Chat(ctx, provider.Request{
+				Model:     a.model,
+				Messages:  cloneMessages(prepared.requestMessages),
+				Tools:     tools,
+				Reasoning: cloneReasoning(a.reasoning),
+			})
+			if err != nil {
+				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+			}
+			consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
+			closeErr := stream.Close()
+			if err != nil {
+				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+			}
+			if closeErr != nil {
+				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, closeErr)
+			}
+			if len(consumed.message.Content) > 0 {
+				messages = append(messages, consumed.message)
+				if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
+					return rollout.AssistantMessage(req.SessionID, req.Turn, consumed.message)
+				}); err != nil {
+					return Result{}, err
+				}
+			}
+			if len(consumed.toolCalls) == 0 {
+				a.emit(Event{Type: EventDone, Text: consumed.text})
+				return Result{Text: consumed.text, Messages: messages}, nil
+			}
+			for _, call := range consumed.toolCalls {
+				result := a.runTool(ctx, req.SessionID, call)
+				messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
+				if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
+					return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
+				}); err != nil {
+					return Result{}, err
+				}
+			}
+			turn++
 		}
-		messages = prepared.messages
-		stream, err := a.provider.Chat(ctx, provider.Request{
-			Model:     a.model,
-			Messages:  cloneMessages(prepared.requestMessages),
-			Tools:     tools,
-			Reasoning: cloneReasoning(a.reasoning),
-		})
-		if err != nil {
-			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
-		}
-		consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
-		closeErr := stream.Close()
-		if err != nil {
-			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
-		}
-		if closeErr != nil {
-			return Result{}, a.recordError(ctx, req.SessionID, req.Turn, closeErr)
-		}
-		if len(consumed.message.Content) > 0 {
-			messages = append(messages, consumed.message)
-			if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
-				return rollout.AssistantMessage(req.SessionID, req.Turn, consumed.message)
-			}); err != nil {
-				return Result{}, err
+		// Hit the limit. Ask the host whether to keep going before falling
+		// through to finalizeWithoutTools — reasoning models often have more
+		// tool calls queued up and the no-tool path produces bad output for
+		// them (e.g. native tool-call syntax leaking into the text).
+		if a.limitAsker != nil {
+			resp, err := a.limitAsker.AskExtension(ctx, LimitExtensionRequest{
+				SessionID: req.SessionID,
+				UserTurn:  req.Turn,
+				UsedTurns: turn,
+			})
+			if err != nil {
+				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
+			}
+			if resp.ExtraTurns > 0 {
+				limit += resp.ExtraTurns
+				continue loop
 			}
 		}
-		if len(consumed.toolCalls) == 0 {
-			a.emit(Event{Type: EventDone, Text: consumed.text})
-			return Result{Text: consumed.text, Messages: messages}, nil
-		}
-		for _, call := range consumed.toolCalls {
-			result := a.runTool(ctx, req.SessionID, call)
-			messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
-			if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
-				return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
-			}); err != nil {
-				return Result{}, err
-			}
-		}
+		break
 	}
 	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages)
 }

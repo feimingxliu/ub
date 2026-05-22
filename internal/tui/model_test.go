@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 	xansi "github.com/charmbracelet/x/ansi"
 
+	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/tool"
@@ -2886,6 +2887,62 @@ func keyPress(code rune, mods ...tea.KeyMod) tea.KeyPressMsg {
 
 func runePress(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: r, Text: string(r)})
+}
+
+func TestLimitPromptYesSendsExtension(t *testing.T) {
+	resp := make(chan agent.LimitExtensionResponse, 1)
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(limitRequestMsg{
+		request: LimitRequest{
+			Request:  agent.LimitExtensionRequest{UsedTurns: 50},
+			Response: resp,
+		},
+		ok: true,
+	})
+	model = assertModel(t, updated)
+	if model.pendingLimit == nil {
+		t.Fatalf("pendingLimit should be set after limitRequestMsg")
+	}
+	if !strings.Contains(viewString(model), "reached the tool-loop cap") {
+		t.Fatalf("limit prompt not visible:\n%s", viewString(model))
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	model = assertModel(t, updated)
+	if model.pendingLimit != nil {
+		t.Fatalf("pendingLimit should clear after decision")
+	}
+	select {
+	case got := <-resp:
+		if got.ExtraTurns != defaultLimitExtension {
+			t.Fatalf("ExtraTurns = %d, want %d", got.ExtraTurns, defaultLimitExtension)
+		}
+	default:
+		t.Fatalf("y did not send response on channel")
+	}
+}
+
+func TestLimitPromptNoFallsThroughToFinalize(t *testing.T) {
+	resp := make(chan agent.LimitExtensionResponse, 1)
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(limitRequestMsg{
+		request: LimitRequest{Response: resp},
+		ok:      true,
+	})
+	model = assertModel(t, updated)
+	updated, _ = model.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	model = assertModel(t, updated)
+	select {
+	case got := <-resp:
+		if got.ExtraTurns != 0 {
+			t.Fatalf("ExtraTurns = %d, want 0 (declined)", got.ExtraTurns)
+		}
+	default:
+		t.Fatalf("n did not send response on channel")
+	}
 }
 
 func mouseClick(x, y int) tea.MouseClickMsg {

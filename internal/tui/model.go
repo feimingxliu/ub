@@ -17,6 +17,7 @@ import (
 	"github.com/mattn/go-runewidth"
 
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/permission"
 	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
 	"github.com/feimingxliu/ub/internal/tui/slash"
@@ -30,6 +31,7 @@ type Options struct {
 	Context        context.Context
 	Runner         Runner
 	Permissions    <-chan PermissionRequest
+	Limits         <-chan LimitRequest
 	Provider       string
 	Providers      []string
 	Model          string
@@ -79,6 +81,8 @@ type Model struct {
 	permReqs        <-chan PermissionRequest
 	pending         *PermissionRequest
 	modal           permissiondialog.Model
+	limitReqs       <-chan LimitRequest
+	pendingLimit    *LimitRequest
 	ctx             context.Context
 	cancel          context.CancelFunc
 	running         bool
@@ -169,6 +173,7 @@ func NewModel(opts Options) Model {
 		styles:         styles,
 		runner:         opts.Runner,
 		permReqs:       opts.Permissions,
+		limitReqs:      opts.Limits,
 		ctx:            ctx,
 		providers:      normalizeOptions(providers, providerName),
 		models:         normalizeModels(models, modelName),
@@ -203,7 +208,7 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs))
+	return tea.Batch(windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs))
 }
 
 // Update implements tea.Model.
@@ -213,8 +218,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStreamEvent(msg)
 	case permissionRequestMsg:
 		return m.handlePermissionRequest(msg)
+	case limitRequestMsg:
+		return m.handleLimitRequest(msg)
 	case spinnerTickMsg:
 		return m.handleSpinnerTick(msg)
+	}
+
+	if m.pendingLimit != nil {
+		if mouseMsg, ok := msg.(tea.MouseWheelMsg); ok {
+			switch mouseMsg.Mouse().Button {
+			case tea.MouseWheelUp:
+				m.scrollMessages(3)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollMessages(-3)
+				return m, nil
+			}
+		}
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch key.String() {
+			case "y", "Y", "enter":
+				return m.resolveLimit(defaultLimitExtension)
+			case "n", "N", "esc", "ctrl+c":
+				return m.resolveLimit(0)
+			}
+		}
+		return m, nil
 	}
 
 	if m.pending != nil {
@@ -531,6 +560,22 @@ func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea
 	m.pending = &msg.request
 	m.modal = permissiondialog.New(msg.request.Request)
 	return m, nil
+}
+
+func (m Model) handleLimitRequest(msg limitRequestMsg) (tea.Model, tea.Cmd) {
+	if !msg.ok {
+		return m, nil
+	}
+	m.pendingLimit = &msg.request
+	return m, nil
+}
+
+func (m Model) resolveLimit(extra int) (tea.Model, tea.Cmd) {
+	if m.pendingLimit != nil && m.pendingLimit.Response != nil {
+		m.pendingLimit.Response <- agent.LimitExtensionResponse{ExtraTurns: extra}
+	}
+	m.pendingLimit = nil
+	return m, waitForLimit(m.limitReqs)
 }
 
 func (m Model) handleSpinnerTick(_ spinnerTickMsg) (tea.Model, tea.Cmd) {

@@ -46,10 +46,12 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 	}
 
 	permBridge := tui.NewPermissionBridge()
+	limitBridge := tui.NewLimitBridge()
 	runner, err := newTUIAgentRunner(cmd, cfg, permBridge, providerFlag, modelFlag)
 	if err != nil {
 		return err
 	}
+	runner.limitAsker = limitBridge
 	defer func() {
 		if closeErr := runner.Close(); closeErr != nil {
 			logger.Error("close tui runner", "err", closeErr)
@@ -76,6 +78,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		Output:         cmd.OutOrStdout(),
 		Runner:         runner,
 		Permissions:    permBridge.Requests(),
+		Limits:         limitBridge.Requests(),
 		Provider:       runner.Provider(),
 		Providers:      runner.Providers(),
 		Model:          runner.model,
@@ -134,6 +137,7 @@ type tuiAgentRunner struct {
 	state                *chatSessionState
 	closedStore          bool
 	maxTurns             int
+	limitAsker           agent.LimitAsker
 
 	// cachedMessages holds the reconstructed InitialMessages for the loaded
 	// session. Populated lazily by Messages() so we only scan the rollout once
@@ -393,6 +397,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Mode:             r.currentMode(),
 		ModeFunc:         r.currentMode,
 		MaxTurns:         r.maxTurns,
+		LimitAsker:       r.limitAsker,
 		Reasoning:        cloneReasoningConfig(r.reasoning),
 		MaxContextTokens: modelinfo.Resolve(r.providerName, r.providerCfg, r.model).MaxContextTokens,
 		SummaryProvider:  r.summaryProvider,

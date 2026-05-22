@@ -330,6 +330,112 @@ func TestAgentFinalizesWithoutToolsAfterMaxTurns(t *testing.T) {
 	}
 }
 
+type fakeLimitAsker struct {
+	calls     int
+	extension int
+}
+
+func (f *fakeLimitAsker) AskExtension(_ context.Context, _ LimitExtensionRequest) (LimitExtensionResponse, error) {
+	f.calls++
+	if f.calls == 1 {
+		return LimitExtensionResponse{ExtraTurns: f.extension}, nil
+	}
+	return LimitExtensionResponse{}, nil
+}
+
+func TestAgentLimitAskerCanExtendLoop(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		// First turn: keep calling tools so we burn through the 1-turn cap.
+		{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+		// Extension granted: second turn answers without tools.
+		{fake.TextDelta("done after extension"), fake.Done()},
+	}}
+	asker := &fakeLimitAsker{extension: 1}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		MaxTurns:   1,
+		LimitAsker: asker,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_ext", Prompt: "go", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker called %d times, want 1", asker.calls)
+	}
+	if res.Text != "done after extension" {
+		t.Fatalf("text = %q, want extension stream output", res.Text)
+	}
+	// Two chat requests both with tools — no finalize fallback.
+	if len(p.requests) != 2 {
+		t.Fatalf("chat calls = %d, want 2", len(p.requests))
+	}
+	if len(p.requests[1].Tools) == 0 {
+		t.Fatalf("extended request should keep tools available")
+	}
+	if containsText(p.requests[1].Messages, "Do not call tools") {
+		t.Fatalf("extension path must not inject the no-tool instruction")
+	}
+}
+
+func TestAgentLimitAskerDecliningFallsThroughToFinalize(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+		{fake.TextDelta("finalize text"), fake.Done()},
+	}}
+	asker := &fakeLimitAsker{extension: 0}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		MaxTurns:   1,
+		LimitAsker: asker,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_no_ext", Prompt: "go", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker called %d times, want 1", asker.calls)
+	}
+	if len(p.requests) != 2 || len(p.requests[1].Tools) != 0 {
+		t.Fatalf("declined extension should still finalize without tools: tools=%v", p.requests[1].Tools)
+	}
+	if res.Text != "finalize text" {
+		t.Fatalf("text = %q, want finalize output", res.Text)
+	}
+}
+
 func TestAgentEmitsRuntimeEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {

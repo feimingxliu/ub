@@ -111,6 +111,10 @@ func (m Model) footerFrame(width int) footerFrame {
 		lines = append(lines, "")
 		lines = append(lines, splitFrameLines(m.modal.View())...)
 	}
+	if prompt := m.limitPromptView(width); prompt != "" {
+		lines = append(lines, "")
+		lines = append(lines, splitFrameLines(prompt)...)
+	}
 	if indicator := m.runIndicatorView(width); indicator != "" {
 		lines = append(lines, splitFrameLines(indicator)...)
 	}
