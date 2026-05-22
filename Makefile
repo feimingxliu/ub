@@ -36,9 +36,11 @@ lint: ensure-gofumpt vet
 
 # check mirrors what CI enforces — keep these two in lockstep with
 # .github/workflows/ci.yaml so a clean local `make check` predicts a
-# green CI run.
+# green CI run. CGO_ENABLED=1 is forced for the race-enabled test step
+# because `-race` requires cgo; some local environments (e.g.
+# cross-compile setups) default to CGO_ENABLED=0.
 check: lint
-	go test ./... -race -count=1
+	CGO_ENABLED=1 go test ./... -race -count=1
 	go build ./...
 
 # install-hooks points git at .githooks/ so the repo's pre-commit /
