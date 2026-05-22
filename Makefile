@@ -1,6 +1,7 @@
-.PHONY: build install test vet fmt lint schema tidy clean run version
+.PHONY: build install test vet fmt lint check schema tidy clean run version install-hooks ensure-gofumpt
 
 BIN := ub
+GOFUMPT_VERSION ?= mvdan.cc/gofumpt@latest
 
 build:
 	go build -o $(BIN) ./cmd/ub
@@ -14,23 +15,37 @@ test:
 vet:
 	go vet ./...
 
-fmt:
-	@if command -v gofumpt >/dev/null 2>&1; then \
-		gofumpt -w . ; \
-	else \
-		echo "gofumpt not installed, falling back to gofmt" >&2 ; \
-		gofmt -w . ; \
+# ensure-gofumpt installs gofumpt if it's not on PATH. CI uses gofumpt
+# strictly, so falling back to gofmt locally would let drift slip through.
+ensure-gofumpt:
+	@command -v gofumpt >/dev/null 2>&1 || { \
+		echo "installing $(GOFUMPT_VERSION)…" >&2 ; \
+		go install $(GOFUMPT_VERSION) ; \
+	}
+
+fmt: ensure-gofumpt
+	gofumpt -w .
+
+lint: ensure-gofumpt vet
+	@out=$$(gofumpt -l .) ; \
+	if [ -n "$$out" ]; then \
+		echo "unformatted files (run 'make fmt'):" >&2 ; \
+		echo "$$out" >&2 ; \
+		exit 1 ; \
 	fi
 
-lint: vet
-	@if command -v gofumpt >/dev/null 2>&1; then \
-		out=$$(gofumpt -l .) ; \
-	else \
-		out=$$(gofmt -l .) ; \
-	fi ; \
-	if [ -n "$$out" ]; then \
-		echo "unformatted files:" >&2 ; echo "$$out" >&2 ; exit 1 ; \
-	fi
+# check mirrors what CI enforces — keep these two in lockstep with
+# .github/workflows/ci.yaml so a clean local `make check` predicts a
+# green CI run.
+check: lint
+	go test ./... -race -count=1
+	go build ./...
+
+# install-hooks points git at .githooks/ so the repo's pre-commit /
+# pre-push scripts run automatically. Idempotent; safe to rerun.
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "git hooks installed (.githooks/ now active)"
 
 schema:
 	go run ./cmd/gen-schema

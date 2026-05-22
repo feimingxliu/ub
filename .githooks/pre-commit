@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fast pre-commit gate: format + vet. Heavy tests run in pre-push.
+# Bypass with `git commit --no-verify` when you know what you're doing.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "[pre-commit] make lint" >&2
+if ! make lint; then
+    cat >&2 <<'EOF'
+
+pre-commit hook failed.
+  - run 'make fmt' to auto-fix formatting
+  - run 'go vet ./...' to inspect the vet error
+  - bypass once with 'git commit --no-verify' (don't make a habit of it)
+EOF
+    exit 1
+fi

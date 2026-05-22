@@ -11,10 +11,13 @@ Use the checked-in `Makefile` targets as thin wrappers around Go commands:
 - `make build` or `go build -o ub ./cmd/ub` to build the CLI.
 - `make test` or `go test ./...` to run the full suite.
 - `make vet` or `go vet ./...` to catch common Go issues.
-- `make lint` to run vet plus formatting checks.
-- `make fmt` to format Go using `gofumpt` when installed, otherwise `gofmt`.
+- `make lint` to run vet plus the strict `gofumpt` formatting check (auto-installs gofumpt if missing).
+- `make fmt` to format Go using `gofumpt` (auto-installed on first run).
+- `make check` runs the exact set CI runs: lint + race tests + build. Use this before pushing.
 - `make schema` after changing `internal/config` types; commit `schema/config.schema.json`.
 - `./ub --version`, `./ub run --help`, and `./ub config show` for CLI smoke checks.
+
+Run `make install-hooks` once per clone to wire `.githooks/` into git. After that, `pre-commit` runs `make lint` (gofumpt + vet, ~1 s) and `pre-push` runs `make check` (lint + race tests + build, ~5–30 s). Both gates mirror `.github/workflows/ci.yaml`, so a clean local run predicts a green CI run. Bypass with `--no-verify` only when you genuinely need to.
 
 In restricted environments where the default Go cache is not writable, set `GOCACHE=/tmp/ub-go-build`. Some tests use local `httptest` sockets; if sandboxing blocks loopback binds, rerun the same `go test` command with the required local-socket permission. Do not claim validation until the command has actually run.
 

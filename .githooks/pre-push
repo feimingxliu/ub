@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Pre-push gate: mirror CI exactly. Slower than pre-commit (~5-30s)
+# but catches anything that would turn the GitHub run red.
+# Bypass with `git push --no-verify` if you really need to.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+echo "[pre-push] make check" >&2
+if ! make check; then
+    cat >&2 <<'EOF'
+
+pre-push hook failed (this mirrors CI; pushing now would turn it red).
+  - run 'make check' to reproduce
+  - run 'make fmt' for format fixes
+  - bypass once with 'git push --no-verify' if absolutely necessary
+EOF
+    exit 1
+fi
