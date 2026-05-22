@@ -16,7 +16,10 @@ const (
 )
 
 func (a *Agent) emitThinkingActivity(summary, detail string) (Event, bool) {
-	if strings.TrimSpace(summary) == "" && strings.TrimSpace(detail) == "" {
+	// Use raw equality rather than TrimSpace so paragraph-break deltas
+	// ("\n\n") still emit — they carry the only signal the TUI has to insert
+	// a paragraph break into the streamed thinking block.
+	if summary == "" && detail == "" {
 		return Event{}, false
 	}
 	event := Event{
@@ -208,7 +211,9 @@ func reasoningSummary(text, fallback string) string {
 }
 
 func reasoningDetail(text, fallback string) string {
-	if strings.TrimSpace(text) == "" {
+	// Preserve whitespace-only chunks (paragraph breaks) — trimming here would
+	// drop "\n\n" deltas and collapse the streamed thinking into one paragraph.
+	if text == "" {
 		text = fallback
 	}
 	return redactText("reasoning", text)

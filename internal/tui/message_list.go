@@ -1124,7 +1124,10 @@ func mergeThinkingMessage(existing, incoming message) message {
 }
 
 func thinkingDetail(item message) string {
-	if strings.TrimSpace(item.detail) != "" {
+	// Use raw non-empty check so whitespace-only deltas ("\n\n" paragraph
+	// breaks) survive the merge — TrimSpace would treat them as missing and
+	// fall through to the placeholder title path.
+	if item.detail != "" {
 		return item.detail
 	}
 	title := defaultString(item.title, item.text)
@@ -1135,10 +1138,13 @@ func thinkingDetail(item message) string {
 }
 
 func appendThinkingDetail(existing, incoming string) string {
-	if strings.TrimSpace(incoming) == "" {
+	// Use raw equality so whitespace-only chunks ("\n\n" paragraph breaks)
+	// concatenate normally — TrimSpace here would silently drop the only
+	// signal we have for paragraph boundaries in streamed reasoning.
+	if incoming == "" {
 		return existing
 	}
-	if strings.TrimSpace(existing) == "" {
+	if existing == "" {
 		return incoming
 	}
 	if incoming == existing || strings.HasPrefix(incoming, existing) {
@@ -1470,7 +1476,16 @@ func activityMessage(event Event) message {
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "thinking":
 		summary := defaultString(event.Summary, event.Text)
-		detail := defaultString(event.Content, defaultString(event.Text, summary))
+		// Preserve whitespace-only Content (e.g. "\n\n" paragraph breaks);
+		// defaultString would strip them via TrimSpace and we'd lose the
+		// only signal for paragraph boundaries in streamed reasoning.
+		detail := event.Content
+		if detail == "" {
+			detail = event.Text
+		}
+		if detail == "" {
+			detail = summary
+		}
 		return message{
 			role:      activityRole,
 			text:      activityEventText(event),

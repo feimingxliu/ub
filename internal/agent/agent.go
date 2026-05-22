@@ -282,15 +282,19 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			if chunk == "" {
 				chunk = event.Text
 			}
-			if strings.TrimSpace(chunk) == "" {
+			if chunk == "" {
 				continue
 			}
 			// Live-emit each delta so the TUI can stream thinking,
 			// but accumulate text and persist a single rollout row at end-of-stream
 			// — otherwise long reasoning bursts can produce hundreds of activity
 			// rows per turn and bloat the rollout database.
-			_, _ = a.emitThinkingActivity(reasoningSummary(chunk, ""), reasoningDetail(chunk, ""))
+			// Whitespace-only chunks (e.g. paragraph-break "\n\n" deltas from
+			// Anthropic / OpenAI reasoning streams) must NOT be dropped here:
+			// they are the only signal that separates paragraphs, and without
+			// them the live TUI renders the entire thought chain as one blob.
 			reasoningText.WriteString(chunk)
+			_, _ = a.emitThinkingActivity(reasoningSummary(chunk, ""), reasoningDetail(chunk, ""))
 		case provider.EventToolCall:
 			call := toolCall{
 				ID:    strings.TrimSpace(event.ToolUseID),

@@ -673,6 +673,53 @@ func TestThinkingActivityDeltasAccumulateInGroup(t *testing.T) {
 	}
 }
 
+func TestThinkingActivityPreservesParagraphBreaks(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
+	model.running = true
+	model.runID = 11
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "first paragraph", Content: "first paragraph"},
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "", Content: "\n\n"},
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "second paragraph", Content: "second paragraph"},
+	} {
+		updated, _ = model.Update(streamEventMsg{runID: 11, ok: true, event: event})
+		model = assertModel(t, updated)
+	}
+
+	if len(model.messages.items) != 1 || len(model.messages.items[0].entries) != 1 {
+		t.Fatalf("messages = %#v, want one thinking entry inside group", model.messages.items)
+	}
+	detail := model.messages.items[0].entries[0].detail
+	if !strings.Contains(detail, "first paragraph\n\nsecond paragraph") {
+		t.Fatalf("paragraph break lost in detail: %q", detail)
+	}
+	model.messages.items[0].collapsed = false
+	model.messages.items[0].entries[0].collapsed = false
+	view := viewString(model)
+	lines := strings.Split(view, "\n")
+	firstIdx, secondIdx := -1, -1
+	for i, line := range lines {
+		// Skip the title lines ("▾ … thinking: …" and "└   … thinking: …") so
+		// we measure the gap inside the rendered detail, not the header.
+		if strings.Contains(line, "thinking:") {
+			continue
+		}
+		if firstIdx < 0 && strings.Contains(line, "first paragraph") {
+			firstIdx = i
+		}
+		if firstIdx >= 0 && secondIdx < 0 && strings.Contains(line, "second paragraph") {
+			secondIdx = i
+		}
+	}
+	if firstIdx < 0 || secondIdx < 0 || secondIdx-firstIdx < 2 {
+		t.Fatalf("expected blank line between paragraphs (first=%d second=%d):\n%s", firstIdx, secondIdx, view)
+	}
+}
+
 func TestActivityGroupSummaryShowsLatestActiveTools(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true
