@@ -21,7 +21,14 @@ import (
 	"github.com/feimingxliu/ub/internal/tooloutput"
 )
 
-const defaultMaxTurns = 25
+// defaultMaxTurns caps how many tool-call iterations a single Run may take.
+// Bumped from 25 to 50 because realistic bug-fix / multi-file refactor
+// tasks routinely chew through 20-40 tool calls just exploring the
+// codebase before they can apply the patch; hitting the cap mid-task
+// forces finalizeWithoutTools, which is awkward and often produces
+// useless output (the model wants to call more tools and cannot).
+// Users can override via config (`max_turns`).
+const defaultMaxTurns = 50
 
 // ErrMaxTurns is returned when a run exceeds its provider/tool loop limit.
 var ErrMaxTurns = errors.New("agent: max turns reached")

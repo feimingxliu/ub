@@ -169,6 +169,7 @@ func (p ProfileConfig) toConfig() *Config {
 		DefaultProvider: p.DefaultProvider,
 		SmallModel:      p.SmallModel,
 		ExecutionMode:   p.ExecutionMode,
+		MaxTurns:        p.MaxTurns,
 		Reasoning:       p.Reasoning,
 		ApprovalAgent:   p.ApprovalAgent,
 		Providers:       p.Providers,

@@ -133,6 +133,7 @@ type tuiAgentRunner struct {
 	permission           *permission.Manager
 	state                *chatSessionState
 	closedStore          bool
+	maxTurns             int
 
 	// cachedMessages holds the reconstructed InitialMessages for the loaded
 	// session. Populated lazily by Messages() so we only scan the rollout once
@@ -206,6 +207,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		mode:                 mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
+		maxTurns:             cfg.MaxTurns,
 	}, nil
 }
 
@@ -390,6 +392,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Model:            r.model,
 		Mode:             r.currentMode(),
 		ModeFunc:         r.currentMode,
+		MaxTurns:         r.maxTurns,
 		Reasoning:        cloneReasoningConfig(r.reasoning),
 		MaxContextTokens: modelinfo.Resolve(r.providerName, r.providerCfg, r.model).MaxContextTokens,
 		SummaryProvider:  r.summaryProvider,

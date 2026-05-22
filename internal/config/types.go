@@ -33,6 +33,7 @@ type Config struct {
 	DefaultProvider string                     `yaml:"default_provider,omitempty" json:"default_provider,omitempty"`
 	SmallModel      string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
 	ExecutionMode   string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	MaxTurns        int                        `yaml:"max_turns,omitempty"     json:"max_turns,omitempty"`
 	Reasoning       reasoning.Config           `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
 	ApprovalAgent   ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
 	Providers       map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
@@ -55,6 +56,7 @@ type ProfileConfig struct {
 	DefaultProvider string                     `yaml:"default_provider,omitempty" json:"default_provider,omitempty"`
 	SmallModel      string                     `yaml:"small_model,omitempty"   json:"small_model,omitempty"`
 	ExecutionMode   string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	MaxTurns        int                        `yaml:"max_turns,omitempty"     json:"max_turns,omitempty"`
 	Reasoning       reasoning.Config           `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
 	ApprovalAgent   ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
 	Providers       map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`

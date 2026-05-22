@@ -425,6 +425,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		Rollout:          state.rollout,
 		Model:            model,
 		Mode:             mode,
+		MaxTurns:         cfg.MaxTurns,
 		Reasoning:        chatReasoningConfig(cfg, providerName, providerCfg, model),
 		MaxContextTokens: chatMaxContextTokens(providerName, providerCfg, model),
 		SummaryProvider:  summarySetup.Provider,

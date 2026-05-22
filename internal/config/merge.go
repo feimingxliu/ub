@@ -49,6 +49,9 @@ func mergeInto(dst, src *Config) {
 	if src.ExecutionMode != "" {
 		dst.ExecutionMode = src.ExecutionMode
 	}
+	if src.MaxTurns > 0 {
+		dst.MaxTurns = src.MaxTurns
+	}
 	mergeReasoning(&dst.Reasoning, src.Reasoning)
 	mergeApprovalAgent(&dst.ApprovalAgent, src.ApprovalAgent)
 	mergeProviderMap(&dst.Providers, src.Providers)
