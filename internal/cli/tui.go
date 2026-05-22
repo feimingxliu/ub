@@ -133,6 +133,12 @@ type tuiAgentRunner struct {
 	permission           *permission.Manager
 	state                *chatSessionState
 	closedStore          bool
+
+	// cachedMessages holds the reconstructed InitialMessages for the loaded
+	// session. Populated lazily by Messages() so we only scan the rollout once
+	// per session-load instead of on every sessionState() call.
+	cachedMessages        []tui.InitialMessage
+	cachedMessagesSession string
 }
 
 func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker, providerFlag, modelFlag string) (*tuiAgentRunner, error) {
@@ -455,6 +461,7 @@ func (r *tuiAgentRunner) NewSession(ctx context.Context) (tui.SessionState, erro
 	}
 	r.state = state
 	r.closedStore = false
+	r.invalidateMessageCache()
 	return r.sessionState(), nil
 }
 
@@ -481,6 +488,7 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 	}
 	r.state = state
 	r.closedStore = false
+	r.invalidateMessageCache()
 	if strings.TrimSpace(state.session.Model) != "" {
 		r.model = state.session.Model
 		r.models = appendModelCandidate(r.models, state.session.Model)
@@ -505,7 +513,27 @@ func (r *tuiAgentRunner) Messages() []tui.InitialMessage {
 	if r == nil || r.state == nil {
 		return nil
 	}
-	return messagesForTUI(r.state.history)
+	sessionID := r.state.sessionID
+	if sessionID != "" && r.cachedMessagesSession == sessionID && r.cachedMessages != nil {
+		return r.cachedMessages
+	}
+	var messages []tui.InitialMessage
+	if msgs, err := r.messagesForCurrentSession(); err == nil {
+		messages = msgs
+	} else {
+		messages = messagesForTUI(r.state.history)
+	}
+	r.cachedMessages = messages
+	r.cachedMessagesSession = sessionID
+	return messages
+}
+
+func (r *tuiAgentRunner) invalidateMessageCache() {
+	if r == nil {
+		return
+	}
+	r.cachedMessages = nil
+	r.cachedMessagesSession = ""
 }
 
 func (r *tuiAgentRunner) Turn() int {
@@ -523,7 +551,7 @@ func (r *tuiAgentRunner) sessionState() tui.SessionState {
 		ID:       r.state.sessionID,
 		Model:    r.model,
 		Turn:     r.Turn(),
-		Messages: messagesForTUI(r.state.history),
+		Messages: r.Messages(),
 	}
 }
 
@@ -911,29 +939,131 @@ func listCurrentWorkspaceSessions(ctx context.Context, limit int) ([]store.Sessi
 	return st.ListSessions(ctx, cwd, limit)
 }
 
-func firstLine(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return line
-		}
+func (r *tuiAgentRunner) messagesForCurrentSession() ([]tui.InitialMessage, error) {
+	if r == nil || r.state == nil || r.state.rollout == nil || strings.TrimSpace(r.state.sessionID) == "" {
+		return nil, fmt.Errorf("current session rollout is unavailable")
 	}
-	return strings.TrimSpace(text)
+	ctx := context.Background()
+	if r.cmd != nil && r.cmd.Context() != nil {
+		ctx = r.cmd.Context()
+	}
+	return messagesForTUIFromRollout(ctx, r.state.rollout, r.state.sessionID)
+}
+
+func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessionID string) ([]tui.InitialMessage, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if reader == nil {
+		return nil, fmt.Errorf("rollout reader is nil")
+	}
+	var out []tui.InitialMessage
+	toolUses := map[string]message.ContentBlock{}
+	if err := reader.ForEach(ctx, sessionID, func(event rollout.Event) error {
+		if activity, ok, err := rollout.ActivityFromEvent(event); err != nil {
+			return err
+		} else if ok {
+			out = append(out, activityMessageForTUI(activity))
+			return nil
+		}
+
+		msg, ok, err := rollout.MessageFromEvent(event)
+		if err != nil {
+			return err
+		}
+		if event.Type == rollout.TypeSummary {
+			if ok {
+				toolUses = map[string]message.ContentBlock{}
+				out = appendMessagesForTUI(nil, toolUses, msg)
+			}
+			return nil
+		}
+		if ok {
+			out = appendMessagesForTUI(out, toolUses, msg)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func messagesForTUI(history []message.Message) []tui.InitialMessage {
 	out := make([]tui.InitialMessage, 0, len(history))
+	toolUses := map[string]message.ContentBlock{}
 	for _, msg := range history {
-		text := strings.TrimSpace(msg.Text())
-		if text == "" {
-			continue
-		}
+		out = appendMessagesForTUI(out, toolUses, msg)
+	}
+	return out
+}
+
+func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.ContentBlock, msg message.Message) []tui.InitialMessage {
+	text := strings.TrimSpace(msg.Text())
+	if text != "" {
 		out = append(out, tui.InitialMessage{
 			Role: string(msg.Role),
 			Text: text,
 		})
 	}
+	for _, block := range msg.Content {
+		switch block.Type {
+		case message.BlockToolUse:
+			if strings.TrimSpace(block.ToolUseID) == "" {
+				continue
+			}
+			toolUses[block.ToolUseID] = block
+			out = append(out, tui.InitialMessage{
+				ActivityKind: "tool",
+				ToolUseID:    block.ToolUseID,
+				ToolName:     block.ToolName,
+				Status:       "queued",
+				Summary:      agent.SummarizeToolInput(block.ToolName, block.Input),
+			})
+		case message.BlockToolResult:
+			if strings.TrimSpace(block.ToolUseID) == "" {
+				continue
+			}
+			toolUse := toolUses[block.ToolUseID]
+			status := "done"
+			if block.IsError {
+				status = "failed"
+			}
+			toolName := fallbackString(toolUse.ToolName, "tool")
+			out = append(out, tui.InitialMessage{
+				ActivityKind: "tool",
+				ToolUseID:    block.ToolUseID,
+				ToolName:     toolName,
+				Status:       status,
+				Summary:      agent.SummarizeToolInput(toolName, toolUse.Input),
+				Content:      block.Output,
+				IsError:      block.IsError,
+			})
+		}
+	}
 	return out
+}
+
+func activityMessageForTUI(activity rollout.ActivityPayload) tui.InitialMessage {
+	return tui.InitialMessage{
+		ActivityKind: activity.ActivityKind,
+		ToolUseID:    activity.ToolUseID,
+		ToolName:     activity.ToolName,
+		Status:       activity.Status,
+		Summary:      activity.Summary,
+		Content:      activity.Content,
+		Decision:     activity.Decision,
+		Source:       activity.Source,
+		Reason:       activity.Reason,
+		Allowed:      activity.Allowed,
+		IsError:      activity.IsError,
+	}
+}
+
+func fallbackString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 func convertAgentEvent(event agent.Event) tui.Event {

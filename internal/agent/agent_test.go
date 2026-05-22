@@ -76,6 +76,43 @@ func TestAgentPassesReasoningConfig(t *testing.T) {
 	}
 }
 
+func TestAgentPersistsThinkingActivity(t *testing.T) {
+	reg := tool.New()
+	ro := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{{fake.ReasoningDelta("checking files"), fake.TextDelta("ok"), fake.Done()}}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Rollout:  ro,
+		Model:    "reasoner",
+		Mode:     execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_1", Prompt: "hi", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	var activity rollout.ActivityPayload
+	for _, event := range ro.events {
+		if event.Type != rollout.TypeActivity {
+			continue
+		}
+		payload, ok, err := rollout.ActivityFromEvent(event)
+		if err != nil {
+			t.Fatalf("ActivityFromEvent: %v", err)
+		}
+		if ok {
+			activity = payload
+			break
+		}
+	}
+	if activity.ActivityKind != string(ActivityThinking) || activity.Summary != "checking files" || activity.Content != "checking files" {
+		t.Fatalf("activity = %#v, want persisted thinking", activity)
+	}
+}
+
 func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
 	reg := tool.New()
 	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
@@ -254,6 +291,7 @@ func TestAgentFinalizesWithoutToolsAfterMaxTurns(t *testing.T) {
 		Model:      "fake/model",
 		Mode:       execution.ModeWork,
 		MaxTurns:   1,
+		Reasoning:  &reasoning.Config{Effort: reasoning.EffortHigh},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -272,8 +310,14 @@ func TestAgentFinalizesWithoutToolsAfterMaxTurns(t *testing.T) {
 	if len(p.requests[0].Tools) == 0 {
 		t.Fatalf("first request missing tools")
 	}
+	if p.requests[0].Reasoning == nil || p.requests[0].Reasoning.Effort != reasoning.EffortHigh {
+		t.Fatalf("first request reasoning = %#v, want high", p.requests[0].Reasoning)
+	}
 	if len(p.requests[1].Tools) != 0 {
 		t.Fatalf("final request tools = %#v, want none", p.requests[1].Tools)
+	}
+	if p.requests[1].Reasoning != nil {
+		t.Fatalf("final request reasoning = %#v, want omitted", p.requests[1].Reasoning)
 	}
 	if !containsText(p.requests[1].Messages, "Do not call tools") {
 		t.Fatalf("final request missing no-tool instruction: %#v", p.requests[1].Messages)
@@ -643,7 +687,7 @@ func TestAgentReadsModeAtToolPermissionTime(t *testing.T) {
 }
 
 func TestToolActivitySummaryRedactsSecretsAndTruncates(t *testing.T) {
-	summary := summarizeToolInput("bash", json.RawMessage(`{"command":"curl -H 'Authorization: Bearer secret-token' https://example.test\nsecond line","cwd":"/tmp"}`))
+	summary := SummarizeToolInput("bash", json.RawMessage(`{"command":"curl -H 'Authorization: Bearer secret-token' https://example.test\nsecond line","cwd":"/tmp"}`))
 	if strings.Contains(summary, "secret-token") || strings.Contains(summary, "Authorization") {
 		t.Fatalf("summary leaked secret: %q", summary)
 	}

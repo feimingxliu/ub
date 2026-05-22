@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -19,15 +20,13 @@ type footerFrame struct {
 
 func (m Model) renderFrame() tuiFrame {
 	width := contentWidth(m.width)
+	height := frameHeight(m.height)
 	footer := m.footerFrame(width)
 	footerText := strings.Join(footer.lines, "\n")
 	messageText := m.messages.view(width, m.messageViewHeight(footerText), m.clampedScroll(), m.styles)
 	messageLines := splitFrameLines(messageText)
 
-	blankLines := 2
-	if m.height > 0 {
-		blankLines = max(0, m.height-len(messageLines)-len(footer.lines))
-	}
+	blankLines := max(0, height-len(messageLines)-len(footer.lines))
 
 	lines := append([]string(nil), messageLines...)
 	for range blankLines {
@@ -37,10 +36,33 @@ func (m Model) renderFrame() tuiFrame {
 	lines = append(lines, footer.lines...)
 
 	inputY := footerTop + footer.inputLine
+	lines = padFrameLines(lines, width, height)
 	return tuiFrame{
 		content: strings.Join(lines, "\n"),
 		cursor:  m.frameCursor(inputY),
 	}
+}
+
+func padFrameLines(lines []string, width, height int) []string {
+	if width <= 0 {
+		return lines
+	}
+	padded := make([]string, len(lines))
+	for i, line := range lines {
+		padded[i] = padFrameLine(line, width)
+	}
+	for height > 0 && len(padded) < height {
+		padded = append(padded, strings.Repeat(" ", width))
+	}
+	return padded
+}
+
+func padFrameLine(line string, width int) string {
+	visualWidth := xansi.StringWidth(line)
+	if visualWidth >= width {
+		return line
+	}
+	return line + strings.Repeat(" ", width-visualWidth)
 }
 
 func (m Model) frameCursor(inputY int) *tea.Cursor {

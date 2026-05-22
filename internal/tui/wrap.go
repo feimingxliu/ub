@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	defaultViewWidth = 80
-	tabWidth         = 4
+	defaultViewWidth  = 80
+	defaultViewHeight = 24
+	tabWidth          = 4
 )
 
 func contentWidth(width int) int {
@@ -16,6 +17,13 @@ func contentWidth(width int) int {
 		return defaultViewWidth
 	}
 	return max(20, width)
+}
+
+func frameHeight(height int) int {
+	if height <= 0 {
+		return defaultViewHeight
+	}
+	return max(1, height)
 }
 
 // expandTabs replaces TAB characters with tabWidth spaces. The TUI renders

@@ -316,6 +316,30 @@ func (l *messageList) load(messages []InitialMessage) {
 	l.focus = -1
 	l.entryFocus = -1
 	for _, msg := range messages {
+		if strings.TrimSpace(msg.ActivityKind) != "" {
+			event := Event{
+				Type:         EventActivity,
+				Text:         msg.Text,
+				ToolUseID:    msg.ToolUseID,
+				ToolName:     msg.ToolName,
+				Content:      msg.Content,
+				ActivityKind: msg.ActivityKind,
+				Status:       msg.Status,
+				Summary:      msg.Summary,
+				Decision:     msg.Decision,
+				Source:       msg.Source,
+				Reason:       msg.Reason,
+				Allowed:      msg.Allowed,
+				IsError:      msg.IsError,
+			}
+			if groupName := activityGroupNameForEvent(event); groupName != "" {
+				l.appendOrUpdateActivityInGroup("history:"+groupName, groupName, event)
+				l.finishActivityGroup("history:"+groupName, "")
+			} else {
+				l.appendOrUpdateActivity(event)
+			}
+			continue
+		}
 		role := normalizeRole(msg.Role)
 		if strings.TrimSpace(msg.Text) == "" {
 			continue

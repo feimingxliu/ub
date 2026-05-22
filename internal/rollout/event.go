@@ -25,6 +25,7 @@ const (
 	TypeModeSwitch       Type = "mode_switch"
 	TypeUsage            Type = "usage"
 	TypeError            Type = "error"
+	TypeActivity         Type = "activity"
 )
 
 // Event is the persisted rollout event shape.
@@ -67,6 +68,21 @@ type ToolResultPayload struct {
 	Truncated      bool              `json:"truncated,omitempty"`
 	OriginalBytes  int               `json:"original_bytes,omitempty"`
 	FullOutputPath string            `json:"full_output_path,omitempty"`
+}
+
+// ActivityPayload stores a display-only activity event for TUI restoration.
+type ActivityPayload struct {
+	ActivityKind string `json:"activity_kind,omitempty"`
+	ToolUseID    string `json:"tool_use_id,omitempty"`
+	ToolName     string `json:"tool_name,omitempty"`
+	Status       string `json:"status,omitempty"`
+	Summary      string `json:"summary,omitempty"`
+	Content      string `json:"content,omitempty"`
+	Decision     string `json:"decision,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Allowed      bool   `json:"allowed,omitempty"`
+	IsError      bool   `json:"is_error,omitempty"`
 }
 
 // SummaryPayload stores an automatic context summary.
@@ -140,6 +156,11 @@ func ToolResult(sessionID string, turn int, toolUseID, toolName string, result t
 	})
 }
 
+// Activity creates a display-only activity event.
+func Activity(sessionID string, turn int, payload ActivityPayload) (Event, error) {
+	return NewEvent(sessionID, turn, TypeActivity, payload)
+}
+
 // Summary creates a summary event.
 func Summary(sessionID string, turn int, text string, compressedMessages, keptMessages, estimatedTokens int) (Event, error) {
 	return NewEvent(sessionID, turn, TypeSummary, SummaryPayload{
@@ -199,6 +220,21 @@ func MessageFromEvent(event Event) (message.Message, bool, error) {
 	default:
 		return message.Message{}, false, nil
 	}
+}
+
+// ActivityFromEvent extracts a display-only activity payload.
+func ActivityFromEvent(event Event) (ActivityPayload, bool, error) {
+	if event.Type != TypeActivity {
+		return ActivityPayload{}, false, nil
+	}
+	var payload ActivityPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return ActivityPayload{}, false, fmt.Errorf("decode rollout activity event %s: %w", event.ID, err)
+	}
+	if payload.ActivityKind == "" {
+		return ActivityPayload{}, false, nil
+	}
+	return payload, true, nil
 }
 
 // ModeFromEvent extracts the mode from a mode_switch event.

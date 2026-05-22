@@ -5,12 +5,15 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-runewidth"
 
 	"github.com/feimingxliu/ub/internal/execution"
@@ -41,6 +44,8 @@ type Options struct {
 	Cwd            string
 	EventTimeout   time.Duration
 	SelectSession  bool
+	initialWidth   int
+	initialHeight  int
 }
 
 // Run starts the terminal UI and blocks until it exits.
@@ -48,7 +53,11 @@ func Run(ctx context.Context, opts Options) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	width, height := detectInitialWindowSize(opts.Output)
+	opts.initialWidth = width
+	opts.initialHeight = height
 	programOpts := []tea.ProgramOption{tea.WithContext(ctx)}
+	programOpts = append(programOpts, tea.WithWindowSize(width, height))
 	if opts.Input != nil {
 		programOpts = append(programOpts, tea.WithInput(opts.Input))
 	}
@@ -103,12 +112,13 @@ type Model struct {
 // NewModel creates the root TUI model.
 func NewModel(opts Options) Model {
 	styles := tuitheme.Default()
+	width, height := normalizedWindowSize(opts.initialWidth, opts.initialHeight)
 	input := textinput.New()
 	input.Placeholder = "Type a message or /help"
 	input.Prompt = "› "
 	input.SetStyles(inputTextStyles())
 	input.SetVirtualCursor(false)
-	input.SetWidth(inputWidthForTerminal(defaultViewWidth, input.Prompt))
+	input.SetWidth(inputWidthForTerminal(width, input.Prompt))
 	_ = input.Focus()
 	ctx := opts.Context
 	if ctx == nil {
@@ -169,6 +179,8 @@ func NewModel(opts Options) Model {
 		histIdx:        -1,
 		queueIdx:       -1,
 		timeout:        opts.EventTimeout,
+		width:          width,
+		height:         height,
 		status: statusBar{
 			provider:      defaultString(providerName, "unknown"),
 			model:         modelName,
@@ -191,7 +203,7 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return waitForPermission(m.permReqs)
+	return tea.Batch(windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs))
 }
 
 // Update implements tea.Model.
@@ -557,6 +569,61 @@ func inputWidthForTerminal(width int, prompt string) int {
 	return max(1, available)
 }
 
+func detectInitialWindowSize(output io.Writer) (int, int) {
+	// Precedence follows the standard Unix convention: COLUMNS/LINES override
+	// auto-detection. This lets users opt into a fixed window (e.g. for tests
+	// or recordings) without the auto-detect path silently clamping it back
+	// to the real terminal size.
+	if envWidth, envHeight, ok := envWindowSize(); ok {
+		return normalizedWindowSize(envWidth, envHeight)
+	}
+	if width, height, ok := terminalWindowSize(output); ok {
+		return normalizedWindowSize(width, height)
+	}
+	return normalizedWindowSize(defaultViewWidth, defaultViewHeight)
+}
+
+func terminalWindowSize(output io.Writer) (int, int, bool) {
+	if output == nil {
+		output = os.Stdout
+	}
+	file, ok := output.(interface{ Fd() uintptr })
+	if !ok {
+		return 0, 0, false
+	}
+	width, height, err := term.GetSize(file.Fd())
+	if err != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+func envWindowSize() (int, int, bool) {
+	width, errWidth := strconv.Atoi(strings.TrimSpace(os.Getenv("COLUMNS")))
+	height, errHeight := strconv.Atoi(strings.TrimSpace(os.Getenv("LINES")))
+	if errWidth != nil || errHeight != nil || width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
+}
+
+func normalizedWindowSize(width, height int) (int, int) {
+	return contentWidth(width), frameHeight(height)
+}
+
+func windowSizeCmd(width, height int) tea.Cmd {
+	width, height = normalizedWindowSize(width, height)
+	return func() tea.Msg {
+		return tea.WindowSizeMsg{Width: width, Height: height}
+	}
+}
+
+func requestWindowSize() tea.Cmd {
+	return func() tea.Msg {
+		return tea.RequestWindowSize()
+	}
+}
+
 func inputTextStyles() textinput.Styles {
 	styles := textinput.DefaultDarkStyles()
 	prompt := lipgloss.NewStyle().Foreground(lipgloss.Color("43")).Bold(true)
@@ -815,7 +882,7 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 			m.messages.appendOrUpdateActivity(event)
 		}
 		m.status.state = statusForActivity(event)
-		if summary := strings.TrimSpace(event.Summary); summary != "" {
+		if summary := strings.TrimSpace(event.Summary); summary != "" && strings.TrimSpace(event.ActivityKind) != "thinking" {
 			m.activitySummary = summary
 		}
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
@@ -1993,10 +2060,7 @@ func (m Model) pageScrollLines() int {
 }
 
 func (m Model) messageViewHeight(footer string) int {
-	if m.height <= 0 {
-		return 0
-	}
-	return max(1, m.height-lineCount(footer)-2)
+	return max(1, frameHeight(m.height)-lineCount(footer)-2)
 }
 
 func lineCount(text string) int {

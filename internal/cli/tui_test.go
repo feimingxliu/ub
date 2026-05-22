@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tui"
 )
@@ -189,6 +191,58 @@ func TestTUIRunnerModeSwitchPersistsAndRestores(t *testing.T) {
 	}
 }
 
+func TestMessagesForTUIRestoresToolActivity(t *testing.T) {
+	messages := []message.Message{
+		message.Text(message.RoleUser, "inspect"),
+		message.New(message.RoleAssistant, message.ToolUseBlock("call_read", "read", json.RawMessage(`{"path":"README.md"}`))),
+		message.New(message.RoleTool, message.ToolResultBlock("call_read", "file content", false)),
+		message.Text(message.RoleAssistant, "done"),
+	}
+
+	got := messagesForTUI(messages)
+	if len(got) != 4 {
+		t.Fatalf("messagesForTUI len = %d, want 4: %#v", len(got), got)
+	}
+	if got[1].ActivityKind != "tool" || got[1].Status != "queued" || got[1].ToolName != "read" || got[1].Summary != "path=README.md" {
+		t.Fatalf("queued tool activity = %#v", got[1])
+	}
+	if got[2].ActivityKind != "tool" || got[2].Status != "done" || got[2].Content != "file content" {
+		t.Fatalf("done tool activity = %#v", got[2])
+	}
+}
+
+func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
+	userEvent, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "inspect"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	thinkingEvent, err := rollout.Activity("sess_1", 1, rollout.ActivityPayload{
+		ActivityKind: "thinking",
+		Summary:      "checking files",
+		Content:      "checking files in repo",
+	})
+	if err != nil {
+		t.Fatalf("Activity: %v", err)
+	}
+	assistantEvent, err := rollout.AssistantMessage("sess_1", 1, message.Text(message.RoleAssistant, "done"))
+	if err != nil {
+		t.Fatalf("AssistantMessage: %v", err)
+	}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{
+		events: []rollout.Event{userEvent, thinkingEvent, assistantEvent},
+	}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("messages len = %d, want 3: %#v", len(got), got)
+	}
+	if got[1].ActivityKind != "thinking" || got[1].Summary != "checking files" || got[1].Content != "checking files in repo" {
+		t.Fatalf("thinking activity = %#v", got[1])
+	}
+}
+
 func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
 	temp := t.TempDir()
 	t.Chdir(temp)
@@ -275,4 +329,20 @@ func TestListWorkspaceFilesFiltersAndExcludesHeavyDirs(t *testing.T) {
 			t.Fatalf("excluded path surfaced: %#v", got)
 		}
 	}
+}
+
+type staticRolloutReader struct {
+	events []rollout.Event
+}
+
+func (r staticRolloutReader) ForEach(_ context.Context, sessionID string, fn func(rollout.Event) error) error {
+	for _, event := range r.events {
+		if event.SessionID != sessionID {
+			continue
+		}
+		if err := fn(event); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
@@ -14,16 +15,18 @@ const (
 	maxActivityDetailRunes  = 4000
 )
 
-func (a *Agent) emitThinkingActivity(summary, detail string) {
+func (a *Agent) emitThinkingActivity(summary, detail string) (Event, bool) {
 	if strings.TrimSpace(summary) == "" && strings.TrimSpace(detail) == "" {
-		return
+		return Event{}, false
 	}
-	a.emit(Event{
+	event := Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityThinking,
 		Summary:      truncateActivitySummary(summary),
-		Content:      detail,
-	})
+		Content:      truncateActivityDetail(detail),
+	}
+	a.emit(event)
+	return event, true
 }
 
 func (a *Agent) emitToolActivity(call toolCall, status, summary, content string, isError bool) {
@@ -55,7 +58,23 @@ func (a *Agent) emitPermissionActivity(toolName, source, decision, reason string
 	})
 }
 
-func summarizeToolInput(name string, raw json.RawMessage) string {
+func rolloutActivityPayload(event Event) rollout.ActivityPayload {
+	return rollout.ActivityPayload{
+		ActivityKind: string(event.ActivityKind),
+		ToolUseID:    event.ToolUseID,
+		ToolName:     event.ToolName,
+		Status:       event.Status,
+		Summary:      event.Summary,
+		Content:      event.Content,
+		Decision:     event.Decision,
+		Source:       event.Source,
+		Reason:       event.Reason,
+		Allowed:      event.Allowed,
+		IsError:      event.IsError,
+	}
+}
+
+func SummarizeToolInput(name string, raw json.RawMessage) string {
 	var body map[string]any
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &body); err != nil {

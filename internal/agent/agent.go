@@ -216,10 +216,14 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 	providerMessages := a.withRuntimeContext(requestMessages)
 	estimated := contextmgr.EstimateRequest(providerMessages, nil, a.model)
 	a.emitContextUsage(estimated, false)
+	// Reasoning is deliberately omitted from this final no-tool request.
+	// Reasoning models (e.g. OpenAI o-series) frequently return an empty stream
+	// when reasoning is configured but the prompt forbids tool calls,
+	// surfacing to the user as `max turns reached: final no-tool response was empty`.
+	// Without Reasoning the recovery path produces a normal text response.
 	stream, err := a.provider.Chat(ctx, provider.Request{
-		Model:     a.model,
-		Messages:  cloneMessages(providerMessages),
-		Reasoning: cloneReasoning(a.reasoning),
+		Model:    a.model,
+		Messages: cloneMessages(providerMessages),
 	})
 	if err != nil {
 		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool request failed: %v", ErrMaxTurns, err))
@@ -258,6 +262,7 @@ func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {
 
 func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, stream provider.Stream, estimatedTokens int) (streamResult, error) {
 	var text strings.Builder
+	var reasoningText strings.Builder
 	var blocks []message.ContentBlock
 	var calls []toolCall
 	for {
@@ -273,7 +278,19 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			text.WriteString(event.Text)
 			a.emit(Event{Type: EventDeltaText, Text: event.Text})
 		case provider.EventReasoningDelta:
-			a.emitThinkingActivity(reasoningSummary(event.Reasoning, event.Text), reasoningDetail(event.Reasoning, event.Text))
+			chunk := event.Reasoning
+			if chunk == "" {
+				chunk = event.Text
+			}
+			if strings.TrimSpace(chunk) == "" {
+				continue
+			}
+			// Live-emit each delta so the TUI can stream thinking,
+			// but accumulate text and persist a single rollout row at end-of-stream
+			// — otherwise long reasoning bursts can produce hundreds of activity
+			// rows per turn and bloat the rollout database.
+			_, _ = a.emitThinkingActivity(reasoningSummary(chunk, ""), reasoningDetail(chunk, ""))
+			reasoningText.WriteString(chunk)
 		case provider.EventToolCall:
 			call := toolCall{
 				ID:    strings.TrimSpace(event.ToolUseID),
@@ -285,7 +302,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			}
 			calls = append(calls, call)
 			blocks = append(blocks, message.ToolUseBlock(call.ID, call.Name, call.Input))
-			a.emitToolActivity(call, "queued", summarizeToolInput(call.Name, call.Input), "", false)
+			a.emitToolActivity(call, "queued", SummarizeToolInput(call.Name, call.Input), "", false)
 		case provider.EventUsage:
 			if event.Usage != nil {
 				observeInputUsage(a.model, estimatedTokens, event.Usage.InputTokens)
@@ -308,6 +325,9 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 		}
 	}
 done:
+	if err := a.persistAccumulatedThinking(ctx, sessionID, turn, reasoningText.String()); err != nil {
+		return streamResult{}, err
+	}
 	if text.Len() > 0 {
 		blocks = append([]message.ContentBlock{message.TextBlock(text.String())}, blocks...)
 	}
@@ -316,6 +336,24 @@ done:
 		message:   message.New(message.RoleAssistant, blocks...),
 		toolCalls: calls,
 	}, nil
+}
+
+// persistAccumulatedThinking writes a single rollout activity row capturing the
+// full reasoning chain for the turn. Called once at end-of-stream; see the
+// EventReasoningDelta case for the rationale.
+func (a *Agent) persistAccumulatedThinking(ctx context.Context, sessionID string, turn int, full string) error {
+	if strings.TrimSpace(full) == "" {
+		return nil
+	}
+	activity := Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityThinking,
+		Summary:      reasoningSummary(full, ""),
+		Content:      truncateActivityDetail(reasoningDetail(full, "")),
+	}
+	return a.append(ctx, sessionID, func() (rollout.Event, error) {
+		return rollout.Activity(sessionID, turn, rolloutActivityPayload(activity))
+	})
 }
 
 func usagePayload(usage *provider.Usage) rollout.UsagePayload {
@@ -335,7 +373,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
-		a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
 		return result
 	}
 	var preview *tool.Preview
@@ -343,12 +381,12 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		pv, err := previewable.Preview(ctx, call.Input)
 		if err != nil {
 			result := tool.Result{Content: fmt.Sprintf("preview %q: %v", call.Name, err), IsError: true}
-			a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
 			return result
 		}
 		preview = &pv
 	}
-	a.emitToolActivity(call, "running", summarizeToolInput(call.Name, call.Input), "", false)
+	a.emitToolActivity(call, "running", SummarizeToolInput(call.Name, call.Input), "", false)
 	if a.permission != nil {
 		approvalObserved := false
 		result, err := a.permission.Ask(ctx, permission.Request{
@@ -362,7 +400,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		if err != nil {
 			a.emitPermissionActivity(call.Name, "permission", "error", err.Error(), false)
 			result := tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
-			a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
 			return result
 		}
 		if (t.Risk() == tool.RiskExec || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
@@ -374,14 +412,14 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 				reason = string(result.Decision)
 			}
 			result := tool.Result{Content: fmt.Sprintf("permission denied for %q: %s", call.Name, reason), IsError: true}
-			a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
 			return result
 		}
 	}
 	result, err := t.Execute(ctx, call.Input)
 	if err != nil {
 		result := tool.Result{Content: err.Error(), IsError: true}
-		a.emitToolActivity(call, "failed", summarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
 		return a.limitToolResult(sessionID, call, result)
 	}
 	result = a.limitToolResult(sessionID, call, result)
@@ -389,7 +427,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 	if result.IsError {
 		status = "failed"
 	}
-	summary := summarizeToolInput(call.Name, call.Input)
+	summary := SummarizeToolInput(call.Name, call.Input)
 	content := summarizeToolResult(result)
 	if len(result.Files) > 0 {
 		summary = summarizeToolResult(result)

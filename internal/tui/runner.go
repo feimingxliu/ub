@@ -69,8 +69,19 @@ type ApprovalControlRunner interface {
 
 // InitialMessage is a persisted message rendered when a TUI session is loaded.
 type InitialMessage struct {
-	Role string
-	Text string
+	Role         string
+	Text         string
+	ToolUseID    string
+	ToolName     string
+	Content      string
+	ActivityKind string
+	Status       string
+	Summary      string
+	Decision     string
+	Source       string
+	Reason       string
+	Allowed      bool
+	IsError      bool
 }
 
 // SessionInfo is one selectable persisted session.

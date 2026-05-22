@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -40,9 +41,22 @@ func TestInputUsesRealCursorForIMERendering(t *testing.T) {
 	if cur.Blink {
 		t.Fatalf("input cursor should not schedule virtual blink redraws")
 	}
-	if cmd := model.Init(); cmd != nil {
-		t.Fatalf("Init returned a command without permission channel; cursor blink should not be scheduled")
+	assertInitRequestsWindowSizes(t, model, defaultViewWidth, defaultViewHeight)
+}
+
+func TestDetectInitialWindowSizeUsesEnvironmentWhenLarger(t *testing.T) {
+	t.Setenv("COLUMNS", "160")
+	t.Setenv("LINES", "48")
+
+	width, height := detectInitialWindowSize(&bytes.Buffer{})
+	if width != 160 || height != 48 {
+		t.Fatalf("detectInitialWindowSize = %dx%d, want 160x48", width, height)
 	}
+}
+
+func TestInitRequestsDetectedWindowSize(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test", initialWidth: 132, initialHeight: 37})
+	assertInitRequestsWindowSizes(t, model, 132, 37)
 }
 
 func TestInputViewFitsTerminalWidth(t *testing.T) {
@@ -859,6 +873,67 @@ func TestMouseTogglesActivityBlocks(t *testing.T) {
 	model = assertModel(t, updated)
 	if !strings.Contains(viewString(model), "└ full reasoning summary") {
 		t.Fatalf("mouse release should not collapse activity:\n%s", viewString(model))
+	}
+}
+
+func TestMouseTogglesGroupedThinkingBlock(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.startActivityGroup(thinkingActivityGroupKey(1), "Thinking...")
+	model.messages.appendOrUpdateActivityInGroup(thinkingActivityGroupKey(1), thinkingGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		Summary:      "checking context",
+		Content:      "full grouped reasoning",
+	})
+	if strings.Contains(viewString(model), "└") {
+		t.Fatalf("grouped thinking detail should default collapsed:\n%s", viewString(model))
+	}
+
+	updated, cmd := model.Update(mouseClick(0, 0))
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "└   … thinking: full grouped reasoning") || !strings.Contains(view, "  full grouped reasoning") {
+		t.Fatalf("mouse click did not expand grouped thinking:\n%s", view)
+	}
+}
+
+func TestThinkingActivityDoesNotReplaceRunIndicatorSummary(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
+	model.running = true
+	model.status.state = statusThinking
+	model.runStartedAt = time.Now()
+	model.runID = 5
+	model.events = make(chan Event)
+
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 5,
+		ok:    true,
+		event: Event{Type: EventActivity, ActivityKind: "thinking", Summary: "private reasoning stream"},
+	})
+	if cmd == nil {
+		t.Fatal("thinking event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	if strings.Contains(viewString(model), " · private reasoning stream") {
+		t.Fatalf("run indicator leaked thinking summary:\n%s", viewString(model))
+	}
+
+	updated, _ = model.Update(streamEventMsg{
+		runID: 5,
+		ok:    true,
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "running", Summary: "path=main.go"},
+	})
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "Tool ·") || !strings.Contains(view, " · path=main.go") {
+		t.Fatalf("run indicator should still show tool summary:\n%s", viewString(model))
 	}
 }
 
@@ -2055,6 +2130,42 @@ func TestMessageAreaScrollsWithinWindow(t *testing.T) {
 	}
 }
 
+func TestFramePadsToTerminalSize(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{{Role: assistantRole, Text: "short"}}})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 72, Height: 16})
+	model = assertModel(t, updated)
+
+	lines := strings.Split(model.View().Content, "\n")
+	if len(lines) != 16 {
+		t.Fatalf("frame lines = %d, want 16:\n%s", len(lines), model.View().Content)
+	}
+	for i, line := range lines {
+		if got := xansi.StringWidth(line); got != 72 {
+			t.Fatalf("line %d width = %d, want 72: %q", i, got, xansi.Strip(line))
+		}
+	}
+}
+
+func TestInitialViewUsesFallbackTerminalSize(t *testing.T) {
+	var messages []InitialMessage
+	for i := 1; i <= 40; i++ {
+		messages = append(messages, InitialMessage{Role: assistantRole, Text: fmt.Sprintf("message-%02d", i)})
+	}
+	model := NewModel(Options{Messages: messages})
+
+	view := viewString(model)
+	lines := strings.Split(view, "\n")
+	if len(lines) != defaultViewHeight {
+		t.Fatalf("initial frame lines = %d, want fallback height %d:\n%s", len(lines), defaultViewHeight, view)
+	}
+	if !strings.Contains(view, "state: idle") {
+		t.Fatalf("fallback frame should keep the status footer visible:\n%s", view)
+	}
+	if !strings.Contains(view, "message-40") || strings.Contains(view, "message-01") {
+		t.Fatalf("fallback frame should constrain the message pane to the bottom:\n%s", view)
+	}
+}
+
 func TestActivityMessagesScrollWithinWindow(t *testing.T) {
 	model := NewModel(Options{})
 	for _, text := range []string{"activity-01", "activity-02", "activity-03", "activity-04", "activity-05", "activity-06"} {
@@ -2749,4 +2860,41 @@ func assertModel(t *testing.T, model tea.Model) Model {
 		t.Fatalf("model = %T, want tui.Model", model)
 	}
 	return m
+}
+
+func assertInitRequestsWindowSizes(t *testing.T, model Model, wantWidth, wantHeight int) {
+	t.Helper()
+	cmd := model.Init()
+	if cmd == nil {
+		t.Fatalf("Init returned nil")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init returned %T, want tea.BatchMsg", cmd())
+	}
+	if len(batch) != 2 {
+		t.Fatalf("Init batch len = %d, want 2", len(batch))
+	}
+	var gotSynthetic, gotRequest bool
+	for _, cmd := range batch {
+		msg := cmd()
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			gotSynthetic = true
+			if msg.Width != wantWidth || msg.Height != wantHeight {
+				t.Fatalf("synthetic WindowSizeMsg = %dx%d, want %dx%d", msg.Width, msg.Height, wantWidth, wantHeight)
+			}
+		default:
+			// tea.RequestWindowSize() returns an unexported tea.windowSizeMsg
+			// (lowercase) that the runtime intercepts to fire a real size query.
+			// We can't type-assert on it, so we match by name. Brittle to
+			// upstream renames — revisit if Bubble Tea exports a public marker.
+			if fmt.Sprintf("%T", msg) == "tea.windowSizeMsg" {
+				gotRequest = true
+			}
+		}
+	}
+	if !gotSynthetic || !gotRequest {
+		t.Fatalf("Init batch synthetic=%v request=%v, want both", gotSynthetic, gotRequest)
+	}
 }
