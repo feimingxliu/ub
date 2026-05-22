@@ -16,8 +16,8 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-runewidth"
 
-	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/agent"
+	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
 	"github.com/feimingxliu/ub/internal/tui/slash"
