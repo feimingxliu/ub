@@ -108,7 +108,8 @@ See [`docs/design.md`](docs/design.md) for the long version.
 | [`docs/install.md`](docs/install.md) | Install, configure, upgrade, uninstall |
 | [`docs/usage.md`](docs/usage.md) | TUI keymap · slash commands · execution modes · permission flow · workflows |
 | [`docs/design.md`](docs/design.md) | Architecture, module boundaries, data flow |
-| [`docs/roadmap.md`](docs/roadmap.md) | Six-sprint iteration plan |
+| [`docs/roadmap.md`](docs/roadmap.md) | V1 six-sprint iteration plan (historical) |
+| [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 roadmap — features, architecture, ecosystem |
 | [`README.zh-CN.md`](README.zh-CN.md) | 中文文档 |
 | [`AGENTS.md`](AGENTS.md) | Repository conventions (commit style, testing, etc.) |
 

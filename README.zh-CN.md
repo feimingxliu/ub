@@ -108,7 +108,8 @@ ub doctor --plain                   # 体检
 | [`docs/install.md`](docs/install.md) | 安装、配置、升级、卸载 |
 | [`docs/usage.md`](docs/usage.md) | TUI 键位 · Slash 命令 · 执行模式 · 权限审批 · 常见工作流 |
 | [`docs/design.md`](docs/design.md) | 架构、模块边界、数据流 |
-| [`docs/roadmap.md`](docs/roadmap.md) | 6 个 Sprint 35 个迭代的开发计划 |
+| [`docs/roadmap.md`](docs/roadmap.md) | V1 路线图：6 个 Sprint 35 个迭代（历史档案）|
+| [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 路线图：功能、架构、生态演进 |
 | [`README.md`](README.md) | English version |
 | [`AGENTS.md`](AGENTS.md) | 仓库协作规范（commit 风格、测试要求） |
 

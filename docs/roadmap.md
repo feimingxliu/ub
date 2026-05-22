@@ -1,6 +1,8 @@
 # ub — 开发路线图（AI 友好的小步迭代）
 
 > 状态：v0.2 — 与 `requirements.md`、`design.md` 配套。每个迭代都是一次可独立完成、可验证的开发会话。
+>
+> 📌 **V1 路线图（本文档）已 feature-complete，作为历史档案保留。** 后续演进规划请见 [`roadmap-v2.md`](roadmap-v2.md)。
 
 ## 编排原则
 
