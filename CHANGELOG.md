@@ -7,6 +7,7 @@ All notable changes to this project are documented here.
 ### Added
 
 - Add `CONTRIBUTING.md` with contributor build, test, formatting, commit, PR, documentation, and security guidance.
+- Add Syft SBOM generation, Cosign keyless release signatures, and documented release verification steps.
 
 ### Fixed
 

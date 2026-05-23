@@ -37,6 +37,7 @@
 ### 2.1 从 Release 归档安装（推荐）
 
 发布版本由 [GoReleaser](https://goreleaser.com/) 构建，覆盖 Linux / macOS / Windows × amd64 / arm64。每次发布包含 `.tar.gz`（Unix）/ `.zip`（Windows）+ `checksums.txt`。
+Release workflow 同时生成 Syft SBOM，并用 Cosign keyless 为归档和 `checksums.txt` 生成 `.sig` / `.pem`。
 
 **Linux / macOS**：
 
@@ -44,9 +45,25 @@
 # 自动取最新版本（替换 PLATFORM 为目标平台，例如 linux_amd64 / darwin_arm64 / linux_arm64）
 PLATFORM=linux_amd64
 curl -LO "https://github.com/feimingxliu/ub/releases/latest/download/ub_${PLATFORM}.tar.gz"
+curl -LO "https://github.com/feimingxliu/ub/releases/latest/download/ub_${PLATFORM}.tar.gz.sig"
+curl -LO "https://github.com/feimingxliu/ub/releases/latest/download/ub_${PLATFORM}.tar.gz.pem"
 curl -LO https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt
+curl -LO https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt.sig
+curl -LO https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt.pem
 
-# 校验（建议）
+# 签名与校验（建议）
+cosign verify-blob \
+  --certificate "ub_${PLATFORM}.tar.gz.pem" \
+  --signature "ub_${PLATFORM}.tar.gz.sig" \
+  --certificate-identity-regexp 'https://github.com/feimingxliu/ub/.github/workflows/release.yaml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "ub_${PLATFORM}.tar.gz"
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp 'https://github.com/feimingxliu/ub/.github/workflows/release.yaml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
 sha256sum -c --ignore-missing checksums.txt
 
 # 解压并安装
@@ -70,6 +87,7 @@ xattr -d com.apple.quarantine $(which ub)
 ```powershell
 # 下载最新版本
 Invoke-WebRequest -Uri https://github.com/feimingxliu/ub/releases/latest/download/ub_windows_amd64.zip -OutFile ub.zip
+Invoke-WebRequest -Uri https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt -OutFile checksums.txt
 Expand-Archive .\ub.zip -DestinationPath .
 
 # 放到可执行路径
