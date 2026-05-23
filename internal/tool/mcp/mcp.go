@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/invopop/jsonschema"
 
@@ -31,6 +33,46 @@ func (w Warning) Error() string {
 	return fmt.Sprintf("mcp server %q: %v", w.Server, w.Err)
 }
 
+// ServerStatus reports a point-in-time MCP connectivity check.
+type ServerStatus struct {
+	Name      string
+	Type      string
+	Status    string
+	ToolCount int
+	Err       error
+}
+
+// CheckConfigured probes configured MCP servers without registering tools.
+func CheckConfigured(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
+	if len(servers) == 0 {
+		return nil
+	}
+	statuses := make([]ServerStatus, 0, len(servers))
+	for _, name := range sortedServerNames(servers) {
+		cfg := servers[name]
+		status := ServerStatus{Name: name, Type: strings.TrimSpace(cfg.Type)}
+		if status.Type == "" {
+			status.Type = "stdio"
+		}
+		client, specs, err := connectMCPServer(ctx, cfg)
+		if err != nil {
+			status.Status = "error"
+			status.Err = err
+			statuses = append(statuses, status)
+			continue
+		}
+		_ = client.Close()
+		status.ToolCount = len(specs)
+		if len(specs) == 0 {
+			status.Status = "no_tools"
+		} else {
+			status.Status = "connected"
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
+}
+
 // RegisterConfigured starts configured MCP servers and registers their tools.
 // Individual server failures are returned as warnings and do not stop other
 // servers from being registered.
@@ -38,29 +80,19 @@ func RegisterConfigured(ctx context.Context, reg *tool.Registry, servers map[str
 	if len(servers) == 0 {
 		return func() error { return nil }, nil
 	}
-	var clients []*coremcp.Client
+	var connections []*serverConnection
 	var warnings []error
 	for _, name := range sortedServerNames(servers) {
 		cfg := servers[name]
-		client, err := clientForConfig(ctx, cfg)
+		conn := newServerConnection(name, cfg, connectMCPServer)
+		specs, err := conn.Connect(ctx)
 		if err != nil {
-			warnings = append(warnings, Warning{Server: name, Err: err})
-			continue
-		}
-		if _, err := client.Initialize(ctx); err != nil {
-			_ = client.Close()
-			warnings = append(warnings, Warning{Server: name, Err: err})
-			continue
-		}
-		specs, err := client.ListTools(ctx)
-		if err != nil {
-			_ = client.Close()
 			warnings = append(warnings, Warning{Server: name, Err: err})
 			continue
 		}
 		registered := false
 		for _, spec := range specs {
-			t := NewTool(name, client, spec)
+			t := NewTool(name, conn, spec)
 			if err := reg.Register(t); err != nil {
 				warnings = append(warnings, Warning{Server: name, Err: err})
 				continue
@@ -68,20 +100,39 @@ func RegisterConfigured(ctx context.Context, reg *tool.Registry, servers map[str
 			registered = true
 		}
 		if registered {
-			clients = append(clients, client)
+			connections = append(connections, conn)
 		} else {
-			_ = client.Close()
+			_ = conn.Close()
 		}
 	}
 	return func() error {
 		var err error
-		for _, client := range clients {
-			if closeErr := client.Close(); closeErr != nil && err == nil {
+		for _, conn := range connections {
+			if closeErr := conn.Close(); closeErr != nil && err == nil {
 				err = closeErr
 			}
 		}
 		return err
 	}, warnings
+}
+
+type connector func(context.Context, config.MCPServerConfig) (*coremcp.Client, []coremcp.ToolSpec, error)
+
+func connectMCPServer(ctx context.Context, cfg config.MCPServerConfig) (*coremcp.Client, []coremcp.ToolSpec, error) {
+	client, err := clientForConfig(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err := client.Initialize(ctx); err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	specs, err := client.ListTools(ctx)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	return client, specs, nil
 }
 
 func clientForConfig(ctx context.Context, cfg config.MCPServerConfig) (*coremcp.Client, error) {
@@ -110,6 +161,151 @@ func sortedServerNames(servers map[string]config.MCPServerConfig) []string {
 	return names
 }
 
+const (
+	reconnectInitialBackoff = 500 * time.Millisecond
+	reconnectMaxBackoff     = 30 * time.Second
+)
+
+type serverConnection struct {
+	name    string
+	cfg     config.MCPServerConfig
+	connect connector
+
+	mu          sync.Mutex
+	client      *coremcp.Client
+	backoff     time.Duration
+	nextAttempt time.Time
+	lastErr     error
+}
+
+func newServerConnection(name string, cfg config.MCPServerConfig, connect connector) *serverConnection {
+	return &serverConnection{
+		name:    name,
+		cfg:     cfg,
+		connect: connect,
+		backoff: reconnectInitialBackoff,
+	}
+}
+
+func (c *serverConnection) Connect(ctx context.Context) ([]coremcp.ToolSpec, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	specs, err := c.connectLocked(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	return specs, nil
+}
+
+func (c *serverConnection) CallTool(ctx context.Context, name string, args json.RawMessage) (coremcp.CallResult, error) {
+	client, err := c.clientForCall(ctx)
+	if err != nil {
+		return coremcp.CallResult{}, err
+	}
+	res, err := client.CallTool(ctx, name, args)
+	if err == nil {
+		c.markHealthy()
+		return res, nil
+	}
+	c.markDisconnected(err)
+
+	client, reconnectErr := c.reconnectNow(ctx)
+	if reconnectErr != nil {
+		return coremcp.CallResult{}, fmt.Errorf("%w; reconnect failed: %v", err, reconnectErr)
+	}
+	res, err = client.CallTool(ctx, name, args)
+	if err != nil {
+		c.markDisconnected(err)
+		return coremcp.CallResult{}, err
+	}
+	c.markHealthy()
+	return res, nil
+}
+
+func (c *serverConnection) Close() error {
+	c.mu.Lock()
+	client := c.client
+	c.client = nil
+	c.mu.Unlock()
+	if client == nil {
+		return nil
+	}
+	return client.Close()
+}
+
+func (c *serverConnection) clientForCall(ctx context.Context) (*coremcp.Client, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.client != nil {
+		return c.client, nil
+	}
+	if !c.nextAttempt.IsZero() && time.Now().Before(c.nextAttempt) {
+		return nil, fmt.Errorf("mcp server %q is disconnected; reconnect backoff active: %v", c.name, c.lastErr)
+	}
+	if _, err := c.connectLocked(ctx, false); err != nil {
+		return nil, err
+	}
+	return c.client, nil
+}
+
+func (c *serverConnection) reconnectNow(ctx context.Context) (*coremcp.Client, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, err := c.connectLocked(ctx, true); err != nil {
+		return nil, err
+	}
+	return c.client, nil
+}
+
+func (c *serverConnection) connectLocked(ctx context.Context, ignoreBackoff bool) ([]coremcp.ToolSpec, error) {
+	if c.connect == nil {
+		return nil, fmt.Errorf("mcp server %q has no connector", c.name)
+	}
+	if !ignoreBackoff && !c.nextAttempt.IsZero() && time.Now().Before(c.nextAttempt) {
+		return nil, fmt.Errorf("mcp server %q reconnect backoff active: %v", c.name, c.lastErr)
+	}
+	client, specs, err := c.connect(ctx, c.cfg)
+	if err != nil {
+		c.recordConnectFailure(err)
+		return nil, err
+	}
+	if c.client != nil {
+		_ = c.client.Close()
+	}
+	c.client = client
+	c.lastErr = nil
+	c.nextAttempt = time.Time{}
+	c.backoff = reconnectInitialBackoff
+	return specs, nil
+}
+
+func (c *serverConnection) markHealthy() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastErr = nil
+	c.nextAttempt = time.Time{}
+	c.backoff = reconnectInitialBackoff
+}
+
+func (c *serverConnection) markDisconnected(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.client != nil {
+		_ = c.client.Close()
+		c.client = nil
+	}
+	c.recordConnectFailure(err)
+}
+
+func (c *serverConnection) recordConnectFailure(err error) {
+	c.lastErr = err
+	c.nextAttempt = time.Now().Add(c.backoff)
+	c.backoff *= 2
+	if c.backoff > reconnectMaxBackoff {
+		c.backoff = reconnectMaxBackoff
+	}
+}
+
 // Tool is a local tool backed by one remote MCP tool.
 type Tool struct {
 	serverName string
@@ -117,11 +313,16 @@ type Tool struct {
 	name       string
 	desc       string
 	schema     *jsonschema.Schema
-	client     *coremcp.Client
+	client     interface {
+		CallTool(context.Context, string, json.RawMessage) (coremcp.CallResult, error)
+	}
 }
 
 // NewTool wraps one remote MCP tool definition.
-func NewTool(serverName string, client *coremcp.Client, spec coremcp.ToolSpec) *Tool {
+func NewTool(serverName string, client interface {
+	CallTool(context.Context, string, json.RawMessage) (coremcp.CallResult, error)
+}, spec coremcp.ToolSpec,
+) *Tool {
 	return &Tool{
 		serverName: serverName,
 		remoteName: spec.Name,

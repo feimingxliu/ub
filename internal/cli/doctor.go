@@ -14,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/provider/anthropic"
 	"github.com/feimingxliu/ub/internal/provider/openai"
+	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
 	"github.com/spf13/cobra"
 )
 
@@ -61,6 +62,32 @@ func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
 		}
 	}
 
+	if _, err := fmt.Fprintln(out, style.header("mcp:")); err != nil {
+		return err
+	}
+	mcpStatuses := mcptool.CheckConfigured(ctx, cfg.MCPServers)
+	if len(mcpStatuses) == 0 {
+		if _, err := fmt.Fprintln(out, "  none\t-\tnot_configured"); err != nil {
+			return err
+		}
+	} else {
+		for _, result := range mcpStatuses {
+			if _, err := fmt.Fprintf(out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
+				return err
+			}
+			if result.ToolCount > 0 {
+				if _, err := fmt.Fprintf(out, "    tools\t%d\n", result.ToolCount); err != nil {
+					return err
+				}
+			}
+			if result.Err != nil {
+				if _, err := fmt.Fprintf(out, "    note\t%s\n", result.Err); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
 	if _, err := fmt.Fprintln(out, style.header("commands:")); err != nil {
 		return err
 	}
@@ -98,11 +125,11 @@ func (s doctorStyle) status(text string) string {
 	}
 	lower := strings.ToLower(text)
 	switch {
-	case lower == "reachable", lower == "configured", strings.HasPrefix(lower, "found "):
+	case lower == "reachable", lower == "configured", lower == "connected", strings.HasPrefix(lower, "found "):
 		return "\x1b[32m" + text + "\x1b[0m"
 	case lower == "offline":
 		return "\x1b[36m" + text + "\x1b[0m"
-	case strings.HasPrefix(lower, "no_"), lower == "missing":
+	case strings.HasPrefix(lower, "no_"), lower == "missing", lower == "not_configured":
 		return "\x1b[33m" + text + "\x1b[0m"
 	case lower == "error", lower == "unknown_provider_type":
 		return "\x1b[31m" + text + "\x1b[0m"
