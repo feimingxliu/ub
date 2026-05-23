@@ -79,6 +79,15 @@ func matchRule(rules []Rule, req Request, command string) (Rule, bool) {
 	return Rule{}, false
 }
 
+// isBlacklisted is a defense-in-depth guard against obviously catastrophic
+// commands ("rm -rf /", "mkfs.*", "dd of=/dev/*"). It is intended as a
+// shallow safety net for fat-fingered input, not as a sandbox: it does not
+// parse shell syntax, so it can be bypassed by indirection like
+// `x=rm; $x -rf /`, busybox/exec wrappers, command substitution, or
+// alternative deleters such as `find / -delete`. Treat the permission
+// allowlist (and the host OS) as the real authority on what a tool is
+// allowed to do; this check exists so that obvious mistakes do not turn
+// into a recoverable outage.
 func isBlacklisted(command string) bool {
 	command = normalizeCommandForBlacklist(command)
 	if isDangerousRecursiveRemove(command) {
