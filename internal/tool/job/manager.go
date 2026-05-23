@@ -52,9 +52,8 @@ type ManagerOptions struct {
 }
 
 const (
-	defaultMaxConcurrent   = 50
-	defaultRetention       = 8 * time.Hour
-	defaultCleanupInterval = 5 * time.Minute
+	defaultMaxConcurrent = 50
+	defaultRetention     = 8 * time.Hour
 )
 
 // NewManager constructs a Manager bound to the given (already-cleaned)
@@ -179,8 +178,8 @@ func (m *Manager) Start(cwd, command string) (*job, error) {
 	m.mu.Lock()
 	m.starting--
 	m.jobs[j.id] = j
-	m.mu.Unlock()
 	releaseSlot = false
+	m.mu.Unlock()
 
 	go func() {
 		defer devNull.Close()

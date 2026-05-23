@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -30,7 +31,7 @@ func RegisterWithOptions(reg *tool.Registry, root string, opts ManagerOptions) (
 		newKillTool(mgr),
 	} {
 		if err := reg.Register(t); err != nil {
-			_ = mgr.Shutdown(nil)
+			_ = mgr.Shutdown(context.Background())
 			return nil, err
 		}
 	}
