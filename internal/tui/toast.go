@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -18,23 +19,41 @@ const (
 	toastNotice  toastTone = "notice"
 )
 
+// toastTTL bounds how long a toast stays on screen without further input.
+const toastTTL = 3 * time.Second
+
 type toastState struct {
-	text string
-	tone toastTone
+	text       string
+	tone       toastTone
+	generation int
 }
 
-func (m *Model) showToast(tone toastTone, text string) {
+type toastExpireMsg struct {
+	generation int
+}
+
+func (m *Model) showToast(tone toastTone, text string) tea.Cmd {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return
+		return nil
 	}
-	m.toast = toastState{text: text, tone: tone}
+	gen := m.toast.generation + 1
+	m.toast = toastState{text: text, tone: tone, generation: gen}
+	return tea.Tick(toastTTL, func(time.Time) tea.Msg {
+		return toastExpireMsg{generation: gen}
+	})
+}
+
+func (m *Model) handleToastExpire(msg toastExpireMsg) {
+	if msg.generation == m.toast.generation {
+		m.toast = toastState{generation: m.toast.generation}
+	}
 }
 
 func (m *Model) clearToastForInteraction(msg tea.Msg) {
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg:
-		m.toast = toastState{}
+		m.toast = toastState{generation: m.toast.generation}
 	}
 }
 
@@ -43,7 +62,18 @@ func (m Model) toastView(width int) string {
 		return ""
 	}
 	style := m.toastStyle()
-	return m.styles.Render(style, truncateText("notice: "+m.toast.text, width))
+	return m.styles.Render(style, truncateText(toastPrefix(m.toast.tone)+m.toast.text, width))
+}
+
+func toastPrefix(tone toastTone) string {
+	switch tone {
+	case toastSuccess:
+		return "ok: "
+	case toastFailure:
+		return "error: "
+	default:
+		return "notice: "
+	}
 }
 
 func (m Model) toastStyle() lipgloss.Style {
@@ -57,39 +87,38 @@ func (m Model) toastStyle() lipgloss.Style {
 	}
 }
 
-func (m *Model) showToastForEvent(event Event) {
+// showToastForEvent surfaces a transient toast for tool completions and
+// permission grants. Tool completions are emitted as both EventActivity
+// and EventToolCallEnd; we only react to EventActivity here so the same
+// completion does not double-toast.
+func (m *Model) showToastForEvent(event Event) tea.Cmd {
 	switch event.Type {
 	case EventActivity:
-		m.showToastForActivity(event)
-	case EventToolCallEnd:
-		name := defaultString(event.ToolName, "tool")
-		if event.IsError {
-			m.showToast(toastFailure, fmt.Sprintf("tool %s failed", name))
-			return
-		}
-		m.showToast(toastSuccess, fmt.Sprintf("tool %s succeeded", name))
+		return m.showToastForActivity(event)
 	case EventPermission:
 		if event.Allowed {
-			m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(event.ToolName, "tool")))
+			return m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(event.ToolName, "tool")))
 		}
 	}
+	return nil
 }
 
-func (m *Model) showToastForActivity(event Event) {
+func (m *Model) showToastForActivity(event Event) tea.Cmd {
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "tool":
 		name := defaultString(event.ToolName, "tool")
 		switch strings.ToLower(strings.TrimSpace(event.Status)) {
 		case "done":
-			m.showToast(toastSuccess, fmt.Sprintf("tool %s succeeded", name))
+			return m.showToast(toastSuccess, fmt.Sprintf("tool %s succeeded", name))
 		case "failed":
-			m.showToast(toastFailure, fmt.Sprintf("tool %s failed", name))
+			return m.showToast(toastFailure, fmt.Sprintf("tool %s failed", name))
 		}
 	case "permission":
 		if event.Allowed {
-			m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(event.ToolName, "tool")))
+			return m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(event.ToolName, "tool")))
 		}
 	}
+	return nil
 }
 
 func permissionDecisionAllows(decision permission.Decision) bool {

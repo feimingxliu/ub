@@ -13,7 +13,6 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-runewidth"
 
@@ -235,6 +234,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLimitRequest(msg)
 	case spinnerTickMsg:
 		return m.handleSpinnerTick(msg)
+	case toastExpireMsg:
+		m.handleToastExpire(msg)
+		return m, nil
+	case doctorResultMsg:
+		return m.handleDoctorResult(msg)
+	case copyResultMsg:
+		return m.handleCopyResult(msg)
 	}
 	m.clearToastForInteraction(msg)
 
@@ -632,11 +638,12 @@ func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.C
 	if m.pending != nil && m.pending.Response != nil {
 		m.pending.Response <- decision
 	}
+	var toastCmd tea.Cmd
 	if m.pending != nil && permissionDecisionAllows(decision) {
-		m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(m.pending.Request.Tool, "tool")))
+		toastCmd = m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(m.pending.Request.Tool, "tool")))
 	}
 	m.pending = nil
-	return m, waitForPermission(m.permReqs)
+	return m, tea.Batch(toastCmd, waitForPermission(m.permReqs))
 }
 
 func (m Model) footerView(width int) string {
@@ -653,13 +660,7 @@ func (m Model) statusHelpHit(x, y int) bool {
 	if y != frameHeight(m.height)-1 {
 		return false
 	}
-	line := xansi.Strip(m.status.view(contentWidth(m.width), m.styles))
-	idx := strings.LastIndex(line, "?")
-	if idx < 0 {
-		return false
-	}
-	col := runewidth.StringWidth(line[:idx])
-	return x >= col && x < col+1
+	return m.status.helpHit(contentWidth(m.width), m.styles, x)
 }
 
 func inputWidthForTerminal(width int, prompt string) int {
@@ -843,18 +844,38 @@ func (m Model) retryLastTurn() (tea.Model, tea.Cmd) {
 	return m.startPrompt(text, false)
 }
 
+type doctorResultMsg struct {
+	report string
+	err    error
+}
+
+type copyResultMsg struct {
+	n   int
+	err error
+}
+
 func (m Model) runDoctor() (tea.Model, tea.Cmd) {
 	runner, ok := m.runner.(DoctorRunner)
 	if !ok {
 		m.messages.append(systemRole, "doctor is unavailable in this runner")
 		return m, nil
 	}
-	report, err := runner.Doctor(m.ctx)
-	if err != nil {
-		m.messages.append(systemRole, err.Error())
+	m.messages.append(systemRole, "running doctor…")
+	m.scrollToBottom()
+	ctx := m.ctx
+	return m, func() tea.Msg {
+		report, err := runner.Doctor(ctx)
+		return doctorResultMsg{report: report, err: err}
+	}
+}
+
+func (m Model) handleDoctorResult(msg doctorResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.messages.append(systemRole, msg.err.Error())
+		m.scrollToBottom()
 		return m, nil
 	}
-	report = strings.TrimSpace(report)
+	report := strings.TrimSpace(msg.report)
 	if report == "" {
 		report = "doctor completed with no output"
 	}
@@ -878,12 +899,23 @@ func (m Model) copyMessage(args []string) (tea.Model, tea.Cmd) {
 		m.messages.append(errorRole, fmt.Sprintf("message %d not found", n))
 		return m, nil
 	}
-	if err := m.clipboard.WriteText(m.ctx, text); err != nil {
-		m.messages.append(errorRole, "copy failed: "+err.Error())
+	clipboard := m.clipboard
+	ctx := m.ctx
+	return m, func() tea.Msg {
+		if err := clipboard.WriteText(ctx, text); err != nil {
+			return copyResultMsg{n: n, err: err}
+		}
+		return copyResultMsg{n: n}
+	}
+}
+
+func (m Model) handleCopyResult(msg copyResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.messages.append(errorRole, "copy failed: "+msg.err.Error())
+		m.scrollToBottom()
 		return m, nil
 	}
-	m.showToast(toastSuccess, fmt.Sprintf("copied message %d", n))
-	return m, nil
+	return m, m.showToast(toastSuccess, fmt.Sprintf("copied message %d", msg.n))
 }
 
 func (m Model) lastUserTurn() (string, bool) {
@@ -1036,7 +1068,18 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	m.updateContextUsage(event)
-	m.showToastForEvent(event)
+	toastCmd := m.showToastForEvent(event)
+	next := waitForEventFromUpdateInner(event, m)
+	if toastCmd == nil {
+		return next
+	}
+	// Stream cmd goes first so callers stepping through the batch sequentially
+	// (notably drainBatch in tests) can take the head without blocking on the
+	// toast tick.
+	return tea.Batch(next, toastCmd)
+}
+
+func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 	switch event.Type {
 	case EventContext:
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)

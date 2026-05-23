@@ -71,7 +71,7 @@ func (p *sessionPicker) refilter() {
 	if p == nil {
 		return
 	}
-	p.sessions = p.sessions[:0]
+	p.sessions = nil
 	query := strings.TrimSpace(p.query)
 	for _, sess := range p.all {
 		if query == "" || sessionMatchesQuery(sess, query) {

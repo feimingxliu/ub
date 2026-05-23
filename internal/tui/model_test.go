@@ -541,23 +541,43 @@ func TestModelRendersToolEvents(t *testing.T) {
 func TestToastShowsToolResultFeedback(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(streamEventMsg{
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolName: "read", Status: "done"},
+		ok:    true,
+		runID: model.runID,
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "ok: tool read succeeded") {
+		t.Fatalf("view missing success toast:\n%s", viewString(model))
+	}
+
+	updated, _ = model.Update(streamEventMsg{
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolName: "write", Status: "failed", IsError: true},
+		ok:    true,
+		runID: model.runID,
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "error: tool write failed") {
+		t.Fatalf("view missing failure toast:\n%s", viewString(model))
+	}
+}
+
+func TestToolCallEndDoesNotDoubleToast(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(streamEventMsg{
+		event: Event{Type: EventActivity, ActivityKind: "tool", ToolName: "read", Status: "done"},
+		ok:    true,
+		runID: model.runID,
+	})
+	model = assertModel(t, updated)
+	beforeGen := model.toast.generation
+	updated, _ = model.Update(streamEventMsg{
 		event: Event{Type: EventToolCallEnd, ToolName: "read"},
 		ok:    true,
 		runID: model.runID,
 	})
 	model = assertModel(t, updated)
-	if !strings.Contains(viewString(model), "notice: tool read succeeded") {
-		t.Fatalf("view missing success toast:\n%s", viewString(model))
-	}
-
-	updated, _ = model.Update(streamEventMsg{
-		event: Event{Type: EventToolCallEnd, ToolName: "write", IsError: true},
-		ok:    true,
-		runID: model.runID,
-	})
-	model = assertModel(t, updated)
-	if !strings.Contains(viewString(model), "notice: tool write failed") {
-		t.Fatalf("view missing failure toast:\n%s", viewString(model))
+	if model.toast.generation != beforeGen {
+		t.Fatalf("EventToolCallEnd should not push a second toast (generation %d -> %d)", beforeGen, model.toast.generation)
 	}
 }
 
@@ -575,13 +595,13 @@ func TestToastShowsApprovalFeedbackAndClearsOnInput(t *testing.T) {
 
 	updated, _ = model.Update(keyPress(tea.KeyEnter))
 	model = assertModel(t, updated)
-	if !strings.Contains(viewString(model), "notice: approval allowed bash") {
+	if !strings.Contains(viewString(model), "ok: approval allowed bash") {
 		t.Fatalf("view missing approval toast:\n%s", viewString(model))
 	}
 
 	updated, _ = model.Update(runePress('x'))
 	model = assertModel(t, updated)
-	if strings.Contains(viewString(model), "notice: approval allowed bash") {
+	if strings.Contains(viewString(model), "ok: approval allowed bash") {
 		t.Fatalf("toast did not clear on input:\n%s", viewString(model))
 	}
 }
@@ -1608,15 +1628,20 @@ func TestSlashDoctorAppendsHealthCheckReport(t *testing.T) {
 	model = sendText(t, model, "/doctor")
 
 	updated, cmd := model.Update(keyPress(tea.KeyEnter))
-	if cmd != nil {
-		t.Fatalf("slash doctor returned unexpected command")
-	}
 	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("slash doctor should kick off an async runner command")
+	}
+	updated, next := model.Update(cmd())
+	model = assertModel(t, updated)
+	if next != nil {
+		t.Fatalf("doctor result handler returned unexpected command")
+	}
 
 	if runner.doctorCalls != 1 {
 		t.Fatalf("doctor calls = %d, want 1", runner.doctorCalls)
 	}
-	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"providers:\n  fake\tfake\toffline"}) {
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"running doctor…", "providers:\n  fake\tfake\toffline"}) {
 		t.Fatalf("messages = %#v", got)
 	}
 }
@@ -1647,9 +1672,11 @@ func TestSlashCopyCopiesNthMessage(t *testing.T) {
 	model = sendText(t, model, "/copy 2")
 
 	updated, cmd := model.Update(keyPress(tea.KeyEnter))
-	if cmd != nil {
-		t.Fatalf("slash copy returned unexpected command")
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("slash copy should issue an async clipboard command")
 	}
+	updated, _ = model.Update(cmd())
 	model = assertModel(t, updated)
 
 	if clipboard.calls != 1 || clipboard.text != "second answer" {
@@ -1658,7 +1685,7 @@ func TestSlashCopyCopiesNthMessage(t *testing.T) {
 	if got, want := model.MessageTexts(), []string{"first prompt", "second answer"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("messages = %#v, want %#v", got, want)
 	}
-	if !strings.Contains(viewString(model), "notice: copied message 2") {
+	if !strings.Contains(viewString(model), "ok: copied message 2") {
 		t.Fatalf("view missing copy toast:\n%s", viewString(model))
 	}
 }
@@ -3086,6 +3113,20 @@ func (c *recordingClipboard) WriteText(_ context.Context, stringValue string) er
 	return c.err
 }
 
+// pickStreamMsg unwraps a tea.BatchMsg by evaluating only the head sub-cmd.
+// waitForEventFromUpdate puts the next-stream cmd first when it also batches a
+// toast tick, so this avoids blocking on tea.Tick(toastTTL).
+func pickStreamMsg(msg tea.Msg) tea.Msg {
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return msg
+	}
+	if len(batch) == 0 {
+		return nil
+	}
+	return batch[0]()
+}
+
 func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 	t.Helper()
 	batch, ok := cmd().(tea.BatchMsg)
@@ -3099,6 +3140,10 @@ func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 	msg := batch[1]()
 	// batch[2] is the spinner tick (tea.Tick) — skip; calling it would block 80ms
 	for steps := 0; steps < 32; steps++ {
+		msg = pickStreamMsg(msg)
+		if msg == nil {
+			return model
+		}
 		updated, next := model.Update(msg)
 		model = assertModel(t, updated)
 		if next == nil {

@@ -37,6 +37,29 @@ const (
 )
 
 func (s statusBar) view(width int, styles tuitheme.Styles) string {
+	rendered, _ := s.render(width, styles)
+	return rendered
+}
+
+// helpHit reports whether display column x falls on the help "?" segment
+// in the rendered status bar. Returns false when the segment is dropped
+// at the given width. Hit-testing uses the same render pass the status
+// bar uses on screen, so it stays in sync with how the segment is laid
+// out (including per-segment padding).
+func (s statusBar) helpHit(width int, styles tuitheme.Styles, x int) bool {
+	_, span := s.render(width, styles)
+	if span.width <= 0 {
+		return false
+	}
+	return x >= span.start && x < span.start+span.width
+}
+
+type helpSpan struct {
+	start int
+	width int
+}
+
+func (s statusBar) render(width int, styles tuitheme.Styles) (string, helpSpan) {
 	state := defaultString(s.state, statusIdle)
 	effort := defaultString(s.effort, "none")
 	segments := []statusSegment{
@@ -56,11 +79,22 @@ func (s statusBar) view(width int, styles tuitheme.Styles) string {
 	segments = fitStatusSegments(segments, width, styles)
 
 	rendered := make([]string, len(segments))
-	for i, segment := range segments {
-		rendered[i] = styles.Render(statusSegmentStyle(segment, styles), statusSegmentText(segment))
-	}
+	help := helpSpan{}
 	separator := styles.Render(styles.SubtleLine, statusSeparatorText(styles))
-	return styles.Render(styles.Status.Bar, strings.Join(rendered, separator))
+	col := 0
+	for i, segment := range segments {
+		if i > 0 {
+			col += lipgloss.Width(separator)
+		}
+		piece := styles.Render(statusSegmentStyle(segment, styles), statusSegmentText(segment))
+		w := lipgloss.Width(piece)
+		if segment.semantic == "help" {
+			help = helpSpan{start: col, width: w}
+		}
+		rendered[i] = piece
+		col += w
+	}
+	return styles.Render(styles.Status.Bar, strings.Join(rendered, separator)), help
 }
 
 type statusSegment struct {
