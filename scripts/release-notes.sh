@@ -11,9 +11,9 @@ fi
 
 version="${version#v}"
 
-awk -v version="$version" '
+extract_section() {
+	awk -v heading="$1" '
 BEGIN {
-	heading = "## [" version "]";
 	in_section = 0;
 	found = 0;
 }
@@ -36,3 +36,11 @@ END {
 	}
 }
 ' "$changelog"
+}
+
+if extract_section "## [$version]"; then
+	exit 0
+fi
+
+echo "warning: $changelog has no [$version] section; using [Unreleased]" >&2
+extract_section "## [Unreleased]"
