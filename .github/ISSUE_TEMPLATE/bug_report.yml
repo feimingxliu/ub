@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a reproducible problem in ub.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail for someone else to reproduce it.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: ub did X, but I expected Y.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Commands, config, and inputs needed to reproduce the issue.
+      placeholder: |
+        1. Configure ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include terminal output, logs, screenshots, or rollout ids when relevant.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ub version
+      placeholder: Output of `ub --version`
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      placeholder: OS, architecture, terminal, shell
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: Paste redacted config from `ub config show` if it matters. Never include API keys.
+      render: yaml

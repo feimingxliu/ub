@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a small improvement or new capability.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user pain or research question does this address?
+      placeholder: I want ub to support ... because ...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, CLI/TUI surface, or config shape you expect.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What can users do today, and why is it insufficient?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - UX polish
+        - Tool/provider/runtime behavior
+        - Architecture or research direction
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Link related issues, docs, prior art, or roadmap sections.

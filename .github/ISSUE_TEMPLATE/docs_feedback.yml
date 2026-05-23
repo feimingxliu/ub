@@ -1,0 +1,29 @@
+name: Documentation feedback
+description: Report unclear, missing, or outdated docs.
+title: "docs: "
+labels: ["documentation"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page or section
+      placeholder: README.md, docs/install.md#section, docs/design.md
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is confusing or incorrect?
+      description: Quote a short phrase or describe the missing information.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested change
+      description: If you know the fix, describe the wording or example that would help.
+  - type: input
+    id: context
+    attributes:
+      label: Context
+      placeholder: OS, install method, provider, or workflow if relevant
