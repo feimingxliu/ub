@@ -700,10 +700,10 @@ func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions
 		_ = st.Close()
 		return nil, err
 	}
-	cwd, err := os.Getwd()
+	cwd, err := currentWorkspace()
 	if err != nil {
 		_ = st.Close()
-		return nil, fmt.Errorf("get cwd: %w", err)
+		return nil, err
 	}
 
 	if sessionID := strings.TrimSpace(opts.SessionID); sessionID != "" {
@@ -903,9 +903,9 @@ func runSessionsLS(cmd *cobra.Command) error {
 	}
 	defer st.Close()
 
-	cwd, err := os.Getwd()
+	cwd, err := currentWorkspace()
 	if err != nil {
-		return fmt.Errorf("get cwd: %w", err)
+		return err
 	}
 	sessions, err := st.ListSessions(cmd.Context(), cwd, 20)
 	if err != nil {
@@ -985,9 +985,9 @@ func runSessionsClear(cmd *cobra.Command, yes bool) error {
 	}
 	defer st.Close()
 
-	cwd, err := os.Getwd()
+	cwd, err := currentWorkspace()
 	if err != nil {
-		return fmt.Errorf("get cwd: %w", err)
+		return err
 	}
 	deleted, err := st.DeleteWorkspaceSessions(cmd.Context(), cwd)
 	if err != nil {

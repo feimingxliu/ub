@@ -482,10 +482,10 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 	if err != nil {
 		return tui.SessionState{}, err
 	}
-	cwd, err := os.Getwd()
+	cwd, err := currentWorkspace()
 	if err != nil {
 		_ = state.store.Close()
-		return tui.SessionState{}, fmt.Errorf("get cwd: %w", err)
+		return tui.SessionState{}, err
 	}
 	if state.session.Workspace != cwd {
 		_ = state.store.Close()
@@ -940,9 +940,9 @@ func listCurrentWorkspaceSessions(ctx context.Context, limit int) ([]store.Sessi
 		return nil, err
 	}
 	defer st.Close()
-	cwd, err := os.Getwd()
+	cwd, err := currentWorkspace()
 	if err != nil {
-		return nil, fmt.Errorf("get cwd: %w", err)
+		return nil, err
 	}
 	return st.ListSessions(ctx, cwd, limit)
 }

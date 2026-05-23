@@ -253,3 +253,56 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 		t.Fatalf("sessions ls leaked other workspace:\n%s", got)
 	}
 }
+
+func TestSessionsListUsesGitRootWorkspace(t *testing.T) {
+	temp := t.TempDir()
+	repo := filepath.Join(temp, "repo")
+	subdir := filepath.Join(repo, "pkg")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+`)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := st.CreateSession(context.Background(), store.Session{
+		ID:        "root-session",
+		Workspace: repo,
+		Title:     "Root Session",
+		Model:     "fake/model",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	t.Chdir(subdir)
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"sessions", "ls"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sessions ls: %v", err)
+	}
+	if !strings.Contains(out.String(), "root-session") {
+		t.Fatalf("sessions ls missing root workspace session:\n%s", out.String())
+	}
+}
