@@ -113,36 +113,86 @@ func TestAgentPersistsThinkingActivity(t *testing.T) {
 	}
 }
 
-func TestAgentReportsReasoningOnlyEmptyResponse(t *testing.T) {
+func TestAgentRecoversOutputTokenLimitViaRecoveryMessage(t *testing.T) {
 	reg := tool.New()
 	ro := &recordingRollout{}
-	p := &scriptProvider{scripts: []fake.Script{{fake.ReasoningDelta("thinking..."), fake.Done()}}}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ReasoningDelta("thinking..."), fake.Done()},
+		{fake.TextDelta("recovered"), fake.Done()},
+	}}
 	a, err := New(Options{
-		Provider: p,
-		Tools:    reg,
-		Rollout:  ro,
-		Model:    "reasoner",
-		Mode:     execution.ModeWork,
+		Provider:  p,
+		Tools:     reg,
+		Rollout:   ro,
+		Model:     "reasoner",
+		Mode:      execution.ModeWork,
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortHigh},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_1", Prompt: "hi", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "recovered" {
+		t.Fatalf("text = %q", res.Text)
+	}
+	if len(p.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(p.requests))
+	}
+	// First request carries the original reasoning config.
+	if p.requests[0].Reasoning == nil || p.requests[0].Reasoning.Effort != reasoning.EffortHigh {
+		t.Fatalf("first request reasoning = %#v", p.requests[0].Reasoning)
+	}
+	// Recovery request also keeps reasoning (claude-code style: don't disable it).
+	if p.requests[1].Reasoning == nil || p.requests[1].Reasoning.Effort != reasoning.EffortHigh {
+		t.Fatalf("recovery reasoning = %#v, want preserved EffortHigh", p.requests[1].Reasoning)
+	}
+	// Recovery user message ("Output token limit hit...") must be the last
+	// non-system message in the second request.
+	last := lastMessage(t, p.requests[1].Messages)
+	if last.Role != message.RoleUser || !strings.Contains(last.Text(), "Output token limit hit") {
+		t.Fatalf("recovery last user message = %#v", last)
+	}
+	for _, event := range ro.events {
+		if event.Type == rollout.TypeError {
+			t.Fatalf("rollout should not record error after recovery; got %+v", ro.events)
+		}
+	}
+}
+
+func TestAgentReportsErrorAfterMaxOutputTokenRecoveries(t *testing.T) {
+	reg := tool.New()
+	ro := &recordingRollout{}
+	// Every chat call returns reasoning-only — recovery will exhaust the limit.
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ReasoningDelta("thinking 1"), fake.Done()},
+		{fake.ReasoningDelta("thinking 2"), fake.Done()},
+		{fake.ReasoningDelta("thinking 3"), fake.Done()},
+		{fake.ReasoningDelta("thinking 4"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:  p,
+		Tools:     reg,
+		Rollout:   ro,
+		Model:     "reasoner",
+		Mode:      execution.ModeWork,
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortHigh},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	_, runErr := a.Run(context.Background(), Request{SessionID: "sess_1", Prompt: "hi", Turn: 1})
 	if runErr == nil {
-		t.Fatal("Run should fail when model returns only reasoning")
+		t.Fatal("Run should fail after recovery limit exhausted")
 	}
 	if !strings.Contains(runErr.Error(), "max_output_tokens") {
-		t.Fatalf("error = %v, want hint about max_output_tokens", runErr)
+		t.Fatalf("error = %v, want max_output_tokens hint", runErr)
 	}
-	var sawError bool
-	for _, event := range ro.events {
-		if event.Type == rollout.TypeError {
-			sawError = true
-			break
-		}
-	}
-	if !sawError {
-		t.Fatalf("rollout missing error event; got %+v", ro.events)
+	// 1 initial + 3 recovery attempts = 4 chat calls.
+	if len(p.requests) != 1+maxOutputTokensRecoveryLimit {
+		t.Fatalf("requests = %d, want %d", len(p.requests), 1+maxOutputTokensRecoveryLimit)
 	}
 }
 

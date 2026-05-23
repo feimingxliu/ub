@@ -35,6 +35,14 @@ var ErrMaxTurns = errors.New("agent: max turns reached")
 
 const maxTurnsFinalInstruction = "Tool iteration limit reached for this turn. Do not call tools. Answer the user's request now using the information already gathered. If the available information is incomplete, say what is missing concisely."
 
+// maxOutputTokensRecoveryLimit caps how many recovery attempts are made when
+// the model exhausts its output budget on reasoning and produces no visible
+// reply or tool call. Each attempt injects a meta user message asking the
+// model to pick up where it was cut off.
+const maxOutputTokensRecoveryLimit = 3
+
+const outputTokensRecoveryInstruction = "Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces."
+
 // Options configures an Agent.
 type Options struct {
 	Provider         provider.Provider
@@ -168,6 +176,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 
 	turn := 0
 	limit := a.maxTurns
+	outputTokensRecoveryCount := 0
 loop:
 	for {
 		for turn < limit {
@@ -192,6 +201,18 @@ loop:
 			}
 			if closeErr != nil {
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, closeErr)
+			}
+			if len(consumed.toolCalls) == 0 && len(consumed.message.Content) == 0 && consumed.reasoningLen > 0 && outputTokensRecoveryCount < maxOutputTokensRecoveryLimit {
+				outputTokensRecoveryCount++
+				a.emit(Event{
+					Type:         EventActivity,
+					ActivityKind: ActivityNotice,
+					Status:       "running",
+					Summary:      fmt.Sprintf("output token limit hit during reasoning; recovery attempt %d/%d", outputTokensRecoveryCount, maxOutputTokensRecoveryLimit),
+				})
+				recoveryMsg := message.Text(message.RoleUser, outputTokensRecoveryInstruction)
+				messages = append(messages, recoveryMsg)
+				continue
 			}
 			if len(consumed.message.Content) > 0 {
 				messages = append(messages, consumed.message)

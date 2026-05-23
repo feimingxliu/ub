@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Automatically retry (up to 3 times) with a recovery prompt when a model exhausts its output budget on reasoning and produces no visible reply or tool call. A notice activity is emitted on each attempt; if all retries still produce no output, the original `max_output_tokens` error is surfaced.
 - Surface an explicit error when a model returns a stream with no text and no tool calls — previously these turns ended silently and the TUI looked frozen. The most common cause is a reasoning model consuming the entire output budget on chain-of-thought tokens and hitting `finish_reason=length`; the error message now suggests lowering reasoning effort or raising the model's output limit.
 - TUI footer/input no longer disappears after collapsing a long thinking activity on resume. Persisted thinking summaries that contained embedded newlines were being placed verbatim into the collapsed-chip title, which inflated the message viewport beyond its allotted height and pushed the input row off-screen. Summaries are now normalized to a single line at both persistence and TUI-render time.
 - Detect truncated tool-call arguments in the OpenAI and Anthropic streams. When the model is cut off mid-`tool_use` (e.g. `{"path":"mai` then stream ends), the provider now emits a clear error instead of letting partial JSON propagate into rollout persistence, which previously crashed with `marshal rollout payload: json: error calling MarshalJSON for type json.RawMessage: unexpected end of JSON input`.
