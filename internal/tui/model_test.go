@@ -2334,6 +2334,41 @@ func TestSlashSessionsPickerSwitchesSession(t *testing.T) {
 	}
 }
 
+func TestSlashSessionsPickerFiltersAndSwitchesSession(t *testing.T) {
+	runner := &scriptedRunner{
+		sessions: []SessionInfo{
+			{ID: "s1", Title: "Planning", Model: "fake/one", Current: true},
+			{ID: "s2", Title: "Release Notes", Model: "fake/two"},
+		},
+		sessionStates: map[string]SessionState{
+			"s2": {
+				ID:    "s2",
+				Model: "fake/two",
+			},
+		},
+	}
+	model := NewModel(Options{Runner: runner, Model: "fake/one"})
+	model = sendText(t, model, "/sessions")
+
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(runePress('r'))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(runePress('n'))
+	model = assertModel(t, updated)
+
+	view := viewString(model)
+	if !strings.Contains(view, "filter: rn") || !strings.Contains(view, "Release Notes") || strings.Contains(view, "Planning") {
+		t.Fatalf("sessions picker did not filter by typed query:\n%s", view)
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.currentSessionID != "s2" {
+		t.Fatalf("current session = %q, want s2", runner.currentSessionID)
+	}
+}
+
 func TestSelectSessionOnStartOpensPicker(t *testing.T) {
 	runner := &scriptedRunner{
 		sessions: []SessionInfo{

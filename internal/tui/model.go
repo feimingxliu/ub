@@ -366,10 +366,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "down", "j", "tab":
 				m.sessions.next()
 				return m, nil
+			case "backspace", "delete":
+				m.sessions.backspace()
+				return m, nil
+			case "ctrl+u":
+				m.sessions.clearQuery()
+				return m, nil
 			case "enter":
 				selected := m.sessions.selected()
+				if selected.ID == "" {
+					return m, nil
+				}
 				m.sessions = nil
 				return m.switchSession(selected.ID)
+			}
+			for _, r := range key.Text {
+				m.sessions.appendRune(r)
 			}
 		}
 		return m, nil
