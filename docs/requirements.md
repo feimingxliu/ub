@@ -33,7 +33,7 @@
 | 模块 | 内容 |
 |---|---|
 | 对话 | 多轮、流式输出、可中断 |
-| Provider | Anthropic Claude（官方 SDK）、OpenAI（官方 SDK）、OpenAI 兼容协议、Ollama |
+| Provider | Anthropic Claude（官方 SDK）、OpenAI（官方 SDK）、OpenAI 兼容协议（含 Ollama `/v1`） |
 | Tools | read / write / edit（含 diff 预览）、bash（权限审批）、grep / glob / ls、job_run / job_output / job_kill |
 | 权限 | 交互式 allow / deny；支持 always-allow 规则 |
 | 执行模式 | `work` / `plan` / `auto` 三种模式，控制文件写入与命令审批路径 |
@@ -74,7 +74,7 @@
 
 ### 4.2 Provider
 
-- F-PROV-1：默认实现四种 provider：`anthropic`、`openai`、`openai-compat`、`ollama`
+- F-PROV-1：默认实现三种 provider：`anthropic`、`openai`、`openai-compat`（Ollama 通过 `/v1` 端点走 `openai-compat`）
 - F-PROV-2：每个 provider 实现统一接口：`Chat(ctx, request) -> stream`、`SupportsTools()`、`Caps() ProviderCaps`（含 max context、是否支持 prompt cache 等）
 - F-PROV-3：运行时可通过命令（如 `/model openai gpt-4o`）切换，会话上下文保留
 - F-PROV-4：API key 从环境变量或配置读取，配置文件支持 `${ENV_VAR}` 引用

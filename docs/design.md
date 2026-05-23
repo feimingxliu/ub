@@ -20,7 +20,7 @@
 ┌───────▼────────┐    ┌─────────▼─────────┐    ┌─────────────▼──────┐
 │  Agent Loop    │    │  Tool Registry    │    │  Provider Layer    │
 │  prompt 构造    │◄──►│ local + MCP tools │    │ anthropic / openai │
-│  tool 调度     │    │ schema / risk     │    │ compat / ollama    │
+│  tool 调度     │    │ schema / risk     │    │ openai-compat      │
 │  ctx 管理      │    └─────────┬─────────┘    └────────────────────┘
 └───────┬────────┘              │
         │                       │
@@ -53,8 +53,7 @@ ub/
 │   │   ├── provider.go                # Provider 接口、ProviderCaps、ModelInfo
 │   │   ├── anthropic/                 # 包 anthropic-sdk-go
 │   │   ├── openai/                    # 包 openai-go
-│   │   ├── compat/                    # OpenAI 兼容（DeepSeek / Together / vLLM …）
-│   │   ├── ollama/                    # 本地 Ollama
+│   │   ├── compat/                    # OpenAI 兼容（DeepSeek / Together / vLLM / Ollama /v1 …）
 │   │   └── fake/                      # 单测用：脚本驱动，无 IO
 │   ├── tool/
 │   │   ├── tool.go                    # Tool 接口、Risk、Registry
@@ -264,11 +263,11 @@ type Stream interface {
 
 ```go
 type ProviderConfig struct {
-    Type    string            // anthropic / openai / openai-compat / ollama
+    Type    string            // anthropic / openai / openai-compat
     APIKey  string            // 支持 ${ENV} 替换
     BaseURL string            // 可选，覆盖 SDK 默认 endpoint
     Headers map[string]string // 可选，额外 HTTP header（鉴权 / 路由）
-    Timeout time.Duration     // 可选
+    Timeout time.Duration     // 可选；等待响应头的超时（默认 120s）。不限制流式 body 总长
     Models  map[string]ModelConfig // 可选，覆盖模型能力
 }
 
@@ -399,9 +398,10 @@ providers:
     headers:
       api-version: "2024-08-01-preview"
 
-  local:
-    type: ollama
-    base_url: http://localhost:11434   # 远端 Ollama 也可改这里
+  local-ollama:
+    type: openai-compat
+    base_url: http://localhost:11434/v1   # Ollama /v1 OpenAI 兼容端点；远端 Ollama 改这里
+    api_key: ollama
 
   company-anthropic-proxy:
     type: anthropic        # 走自家 Anthropic 反代

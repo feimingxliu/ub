@@ -25,7 +25,7 @@ func selectProviderModel(ctx context.Context, providerName string, providerCfg c
 
 func providerRequiresModel(providerType string) bool {
 	switch strings.TrimSpace(providerType) {
-	case "anthropic", "openai", "openai-compat", "ollama":
+	case "anthropic", "openai", "openai-compat":
 		return true
 	default:
 		return false

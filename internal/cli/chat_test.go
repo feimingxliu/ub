@@ -715,36 +715,6 @@ func TestChatSelectsFirstProviderModelWhenModelUnset(t *testing.T) {
 	}
 }
 
-func TestChatWithOllamaProvider(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		writeOllamaChatLine(t, w, `{"model":"qwen-test","message":{"role":"assistant","content":"ollama-ok"},"done":false}`)
-		writeOllamaChatLine(t, w, `{"model":"qwen-test","done":true,"prompt_eval_count":1,"eval_count":1}`)
-	}))
-	defer server.Close()
-
-	temp := t.TempDir()
-	writeChatConfig(t, temp, `providers:
-  ollama:
-    type: ollama
-    base_url: `+server.URL+`
-`)
-	t.Chdir(temp)
-
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "ollama", "--model", "qwen-test", "hello"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("chat ollama: %v", err)
-	}
-	if got := out.String(); got != "ollama-ok" {
-		t.Fatalf("stdout = %q, want ollama-ok", got)
-	}
-}
-
 func TestChatWritesSessionAndRolloutEvents(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `providers:
@@ -988,13 +958,6 @@ func writeSSE(t *testing.T, w io.Writer, event, data string) {
 func writeOpenAIChatSSE(t *testing.T, w io.Writer, data string) {
 	t.Helper()
 	if _, err := io.WriteString(w, "data: "+data+"\n\n"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func writeOllamaChatLine(t *testing.T, w io.Writer, data string) {
-	t.Helper()
-	if _, err := io.WriteString(w, data+"\n"); err != nil {
 		t.Fatal(err)
 	}
 }

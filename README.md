@@ -23,7 +23,7 @@
 
 ub is a coding agent that lives entirely in your terminal. It speaks to your favorite LLM provider, runs tools in *this* directory, and persists every keystroke as a replayable event log. You can read the whole thing end-to-end — agent loop, provider adapters, TUI, MCP, LSP — and bend it to your workflow.
 
-- 🧠 **Multi-provider.** Anthropic · OpenAI · OpenAI-compat (DeepSeek / Together / vLLM / LiteLLM) · Ollama · plus a script-driven Fake provider that runs CI offline.
+- 🧠 **Multi-provider.** Anthropic · OpenAI · OpenAI-compat (DeepSeek / Together / vLLM / LiteLLM / Ollama `/v1`) · plus a script-driven Fake provider that runs CI offline.
 - 🛠️ **Local tools.** Filesystem, search, shell, background jobs, LSP diagnostics, and any MCP server.
 - 🛡️ **Permission-first.** Three execution modes (`work` / `plan` / `auto`), five-way approval modal, persistent allow-rules, hard-coded blocklist for `rm -rf /` and friends.
 - 📜 **Every session replayable.** SQLite-backed append-only rollout log; inspect with `ub rollout show <id>`.
@@ -74,7 +74,7 @@ No API key? Drop in the [Fake provider](docs/install.md#45-fake-provider-离线�
 | License                  | **MIT**                         | MIT                       | Proprietary                              | Apache-2.0               |
 | Language                 | **Go** (~26k LoC)               | TypeScript                | closed-source                            | Rust                     |
 | Terminal interface       | TUI + headless                  | TUI                       | TUI (+ IDE / Web / Desktop / Mobile)     | TUI                      |
-| Provider count           | 5 (incl. Ollama + vLLM-compat)  | 75+ via AI SDK            | Anthropic + Bedrock / Vertex / Foundry   | OpenAI / ChatGPT only    |
+| Provider count           | 4 (incl. vLLM / Ollama compat)  | 75+ via AI SDK            | Anthropic + Bedrock / Vertex / Foundry   | OpenAI / ChatGPT only    |
 | Session storage          | local SQLite                    | local                     | cloud-synced (account-bound)             | not publicly documented  |
 | Replayable event log     | ✅ JSONL + `rollout show`       | `/undo` · `/redo`         | —                                        | not publicly documented  |
 | MCP                      | stdio · http · sse              | ✅                        | ✅                                       | ✅                       |

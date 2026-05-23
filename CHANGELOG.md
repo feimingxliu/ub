@@ -2,11 +2,13 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.2.0] - 2026-05-23
 
 ### Breaking
 
+- Remove the native `ollama` provider type. Ollama is still reachable via `type: openai-compat` against its `/v1` endpoint (e.g. `base_url: http://localhost:11434/v1`, any non-empty `api_key`); existing configs that set `type: ollama` will fail with `unknown_provider_type`.
 - Sessions are now keyed by the resolved Git root rather than the literal working directory. Running `ub` from any subdirectory of a repository shares one workspace; previously each subdirectory was tracked separately. Existing sessions persisted from subdirectories will still be visible via `ub sessions ls --all` but no longer surface in the default `ub sessions ls` output for that subdirectory.
+- Provider `timeout` config now bounds only the wait for the response headers, not the streamed body. Previously it bounded the entire HTTP request including the streaming chat body, which silently killed long conversation turns. Existing configs continue to work; values like `timeout: 30s` no longer abort streaming responses partway through. Set a value generous enough for time-to-first-byte (default 120s).
 
 ### Added
 

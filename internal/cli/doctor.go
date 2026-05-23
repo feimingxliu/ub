@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os/exec"
 	"sort"
 	"strings"
@@ -231,12 +230,6 @@ func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) 
 			return result
 		}
 		fillOpenAIModels(ctx, &result, cfg)
-	case "ollama":
-		baseURL := strings.TrimSpace(cfg.BaseURL)
-		if baseURL == "" {
-			baseURL = "http://localhost:11434"
-		}
-		fillOllamaModels(ctx, &result, baseURL, cfg)
 	case "anthropic":
 		if strings.TrimSpace(cfg.APIKey) == "" {
 			result.Status = "NO_API_KEY"
@@ -295,59 +288,6 @@ func fillAnthropicModels(ctx context.Context, result *providerCheck, cfg config.
 	sort.Strings(result.Models)
 }
 
-func fillOllamaModels(ctx context.Context, result *providerCheck, baseURL string, cfg config.ProviderConfig) {
-	req, err := newDoctorRequest(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/tags", cfg)
-	if err != nil {
-		result.Status = "error"
-		result.Message = err.Error()
-		return
-	}
-	var body struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-	if err := doDoctorJSON(req, &body, cfg.Timeout); err != nil {
-		result.Status = "error"
-		result.Message = err.Error()
-		return
-	}
-	result.Status = "reachable"
-	for _, item := range body.Models {
-		if item.Name != "" {
-			result.Models = append(result.Models, item.Name)
-		}
-	}
-	sort.Strings(result.Models)
-}
-
-func newDoctorRequest(ctx context.Context, method, url string, cfg config.ProviderConfig) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range cfg.Headers {
-		req.Header.Set(key, value)
-	}
-	return req, nil
-}
-
-func doDoctorJSON(req *http.Request, out any, timeout time.Duration) error {
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	client := &http.Client{Timeout: timeout}
-	res, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("status %d", res.StatusCode)
-	}
-	return json.NewDecoder(res.Body).Decode(out)
-}
-
 func sortedProviderNames(providers map[string]config.ProviderConfig) []string {
 	names := make([]string, 0, len(providers))
 	for name := range providers {
@@ -371,7 +311,7 @@ func suggestedDevProfile(cfg *config.Config) string {
 	provider := "vllm-local"
 	model := "Qwen2.5-Coder-7B-Instruct"
 	for name, providerCfg := range cfg.Providers {
-		if providerCfg.Type == "openai-compat" || providerCfg.Type == "ollama" {
+		if providerCfg.Type == "openai-compat" {
 			provider = name
 			break
 		}

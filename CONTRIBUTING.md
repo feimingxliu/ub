@@ -52,7 +52,7 @@ binds.
 - Keep production packages under `internal/`; avoid public `pkg/` APIs unless
   the design changes.
 - Name provider implementations after config types: `anthropic`, `openai`,
-  `compat`, `ollama`, `fake`.
+  `compat`, `fake`.
 - Put unit tests beside code as `*_test.go`.
 - Prefer table-driven tests for config, tools, provider conversion, rollout
   storage, and permission decisions.

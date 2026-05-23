@@ -81,7 +81,7 @@ func BuildClient(cfg config.ProviderConfig) sdk.Client {
 	}
 	requestOpts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
-		option.WithHTTPClient(&http.Client{Timeout: effectiveTimeout(cfg.Timeout)}),
+		option.WithHTTPClient(buildHTTPClient(cfg.Timeout)),
 	}
 	if base := strings.TrimSpace(cfg.BaseURL); base != "" {
 		requestOpts = append(requestOpts, option.WithBaseURL(base))
@@ -257,6 +257,18 @@ func effectiveTimeout(timeout time.Duration) time.Duration {
 		return timeout
 	}
 	return 120 * time.Second
+}
+
+// buildHTTPClient returns an *http.Client whose timeout bounds only the wait
+// for the response headers, not the body. Streaming chat completions keep the
+// body open for the entire conversation turn, so using http.Client.Timeout
+// (which covers headers + body) would cut the SSE stream after that duration.
+// ResponseHeaderTimeout on a cloned default transport gives us "first byte"
+// semantics while leaving the streamed body uncapped.
+func buildHTTPClient(timeout time.Duration) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = effectiveTimeout(timeout)
+	return &http.Client{Transport: transport}
 }
 
 type sdkStream struct {

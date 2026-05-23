@@ -23,7 +23,7 @@
 
 ub 是一个完全活在终端里的编程 Agent。它接你喜欢的 LLM provider,在 *当前* 工作区里跑工具,把每一次按键持久化成可回放的事件流。整个项目 — agent loop、provider 适配、TUI、MCP、LSP — 都能从头读到尾,也能按你的工作流改造。
 
-- 🧠 **多 Provider。** Anthropic · OpenAI · OpenAI 兼容（DeepSeek / Together / vLLM / LiteLLM）· Ollama,外加脚本驱动的 Fake provider 让 CI 完全离线。
+- 🧠 **多 Provider。** Anthropic · OpenAI · OpenAI 兼容（DeepSeek / Together / vLLM / LiteLLM / Ollama `/v1`），外加脚本驱动的 Fake provider 让 CI 完全离线。
 - 🛠️ **本地工具。** 文件系统 / 搜索 / Shell / 后台任务 / LSP diagnostics / 任意 MCP server。
 - 🛡️ **权限优先。** 三种执行模式（`work` / `plan` / `auto`）、5 种审批 Decision、可持久化的 allow 规则、硬编码黑名单拦截 `rm -rf /` 类危险命令。
 - 📜 **每次会话都可回放。** SQLite 上的 append-only rollout 日志,`ub rollout show <id>` 一行查看。
@@ -72,7 +72,7 @@ ub doctor --plain                   # 体检
 | License                  | **MIT**                         | MIT                       | 闭源                                     | Apache-2.0               |
 | 实现语言                 | **Go**（~26k 行）                | TypeScript                | 闭源                                     | Rust                     |
 | 终端形态                 | TUI + 无头                       | TUI                       | TUI（+ IDE / Web / Desktop / 手机）       | TUI                      |
-| Provider 数              | 5（含 Ollama 与 vLLM 兼容）       | 75+（via AI SDK）          | Anthropic + Bedrock / Vertex / Foundry   | OpenAI / ChatGPT 限定    |
+| Provider 数              | 4（含 vLLM / Ollama 兼容）        | 75+（via AI SDK）          | Anthropic + Bedrock / Vertex / Foundry   | OpenAI / ChatGPT 限定    |
 | Session 存储             | 本地 SQLite                      | 本地                      | 云同步（与账号绑定）                       | 文档未公开                |
 | 可回放事件日志           | ✅ JSONL + `rollout show`        | `/undo` · `/redo`         | —                                        | 文档未公开                |
 | MCP                      | stdio · http · sse              | ✅                        | ✅                                       | ✅                       |

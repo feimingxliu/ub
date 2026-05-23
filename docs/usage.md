@@ -317,7 +317,7 @@ ub 在 write / edit 工具执行后会主动给 LSP 发 `didChange`，保证 dia
 |---|---|
 | `provider "xxx" not configured` | `ub config show` 看合并后的 providers 是否包含 xxx；`default_provider` 必须与某个 provider key 匹配 |
 | 401 Unauthorized | 环境变量未注入；`echo $OPENAI_API_KEY` 看是否为空；YAML 里写 `${OPENAI_API_KEY}` 而不是硬编码 key 字面值 |
-| Ollama / vLLM 连不上 | `ub doctor --plain` 看探测结果；`curl <base_url>/api/tags`（Ollama）或 `curl <base_url>/models`（OpenAI 兼容） |
+| 本地 vLLM / Ollama 连不上 | `ub doctor --plain` 看探测结果；`curl <base_url>/models`（OpenAI 兼容；Ollama 用 `/v1/models`） |
 | 模型不支持 tool calling | `ub doctor` 会标注；本地小模型常见，换支持 tool calling 的模型，或改用 `ub chat` 单轮模式 |
 | TUI 内 Enter 没反应 | 检查是不是停在中文输入法候选状态；权限弹窗里需要先方向键选 / 直接按数字键 |
 | 鼠标点击不响应 / 块没法展开 | 确认没有 modal / 选择器开着（按 `Esc` 关掉）；如终端不支持鼠标，用 `Ctrl+O` / `Ctrl+N` / `Ctrl+P` + `Enter` 替代 |
