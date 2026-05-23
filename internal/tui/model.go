@@ -25,6 +25,8 @@ import (
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
+const minRecommendedWidth = 80
+
 // Options configures the initial TUI shell.
 type Options struct {
 	Input          io.Reader
@@ -205,6 +207,9 @@ func NewModel(opts Options) Model {
 		m.clipboard = systemClipboard{}
 	}
 	m.messages.load(opts.Messages)
+	if opts.initialWidth > 0 && opts.initialWidth < minRecommendedWidth {
+		m.messages.append(systemRole, fmt.Sprintf("terminal width is %d columns; ub works best at %d columns or wider", opts.initialWidth, minRecommendedWidth))
+	}
 	if opts.SelectSession {
 		updated, _ := m.openSessionPicker()
 		if selected, ok := updated.(Model); ok {

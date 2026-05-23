@@ -60,6 +60,13 @@ func TestInitRequestsDetectedWindowSize(t *testing.T) {
 	assertInitRequestsWindowSizes(t, model, 132, 37)
 }
 
+func TestNarrowStartupWidthShowsWarning(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test", initialWidth: 72, initialHeight: 20})
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "terminal width is 72 columns") {
+		t.Fatalf("messages = %#v, want narrow terminal warning", got)
+	}
+}
+
 func TestInputViewFitsTerminalWidth(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test"})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 24, Height: 12})
