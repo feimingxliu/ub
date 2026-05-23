@@ -36,22 +36,12 @@ ub is a coding agent that lives entirely in your terminal. It speaks to your fav
 ```sh
 # pick the archive that matches your platform
 curl -LO https://github.com/feimingxliu/ub/releases/latest/download/ub_linux_amd64.tar.gz
-curl -LO https://github.com/feimingxliu/ub/releases/latest/download/ub_linux_amd64.tar.gz.sig
-curl -LO https://github.com/feimingxliu/ub/releases/latest/download/ub_linux_amd64.tar.gz.pem
-curl -LO https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt
-curl -LO https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt.sig
-curl -LO https://github.com/feimingxliu/ub/releases/latest/download/checksums.txt.pem
-cosign verify-blob --certificate ub_linux_amd64.tar.gz.pem --signature ub_linux_amd64.tar.gz.sig \
-  --certificate-identity-regexp 'https://github.com/feimingxliu/ub/.github/workflows/release.yaml@refs/tags/v.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com ub_linux_amd64.tar.gz
-cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig \
-  --certificate-identity-regexp 'https://github.com/feimingxliu/ub/.github/workflows/release.yaml@refs/tags/v.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
-sha256sum -c --ignore-missing checksums.txt
 tar -xzf ub_linux_amd64.tar.gz
 install -m 0755 ub ~/.local/bin/ub
 ub --version
 ```
+
+Optional checksum, signature, and SBOM verification steps are in [`docs/install.md`](docs/install.md#可选校验签名和-checksum).
 
 > Prefer Go? `go install github.com/feimingxliu/ub/cmd/ub@latest` works too. Or `go build` from source.
 
