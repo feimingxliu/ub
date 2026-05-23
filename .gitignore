@@ -5,6 +5,7 @@
 
 # Go binary (matches the project's main artifact)
 /ub
+/dist/
 *.exe
 
 # Go test / coverage artifacts

@@ -20,10 +20,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+      - name: Build release notes from changelog
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: make release-notes VERSION="${RELEASE_VERSION#v}"
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes dist/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

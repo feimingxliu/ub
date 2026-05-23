@@ -1,7 +1,8 @@
-.PHONY: build install test vet fmt lint check schema tidy clean run version install-hooks ensure-gofumpt
+.PHONY: build install test vet fmt lint check schema tidy clean run version install-hooks ensure-gofumpt changelog release-notes
 
 BIN := ub
 GOFUMPT_VERSION ?= mvdan.cc/gofumpt@latest
+VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 
 build:
 	go build -o $(BIN) ./cmd/ub
@@ -51,6 +52,13 @@ install-hooks:
 
 schema:
 	go run ./cmd/gen-schema
+
+changelog:
+	git cliff --output CHANGELOG.md
+
+release-notes:
+	mkdir -p dist
+	./scripts/release-notes.sh "$(VERSION)" CHANGELOG.md > dist/release-notes.md
 
 tidy:
 	go mod tidy
