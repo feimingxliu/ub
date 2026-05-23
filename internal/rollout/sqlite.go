@@ -66,7 +66,7 @@ func (s *SQLite) ForEach(ctx context.Context, sessionID string, fn func(Event) e
 	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, turn, time, type, payload
 		FROM events
 		WHERE session_id = ?
-		ORDER BY turn ASC, time ASC, id ASC`, sessionID)
+		ORDER BY turn ASC, time ASC, rowid ASC`, sessionID)
 	if err != nil {
 		return fmt.Errorf("read rollout events: %w", err)
 	}

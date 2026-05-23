@@ -2,6 +2,8 @@ package job
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -75,7 +77,7 @@ func TestManager_KillIdempotent(t *testing.T) {
 
 func TestManager_RingTotalAndTail(t *testing.T) {
 	mgr := NewManager(t.TempDir())
-	j, err := mgr.Start("", largeOutputCommand())
+	j, err := mgr.Start("", largeOutputCommand(t, mgr.root))
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -210,9 +212,15 @@ func runningOutputCommand() string {
 	return "for i in 1 2 3; do echo line$i; done; sleep 30"
 }
 
-func largeOutputCommand() string {
+func largeOutputCommand(t *testing.T, root string) string {
+	t.Helper()
 	if runtime.GOOS == "windows" {
-		return `powershell -NoProfile -Command "[Console]::Out.Write(('x' * 40000))"`
+		path := filepath.Join(root, "large-output.cmd")
+		content := "@echo off\r\nfor /L %%i in (1,1,40000) do <nul set /p \"=x\"\r\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write large-output script: %v", err)
+		}
+		return `"` + path + `"`
 	}
 	return "awk 'BEGIN{for(i=0;i<40000;i++)printf \"x\"}'"
 }
