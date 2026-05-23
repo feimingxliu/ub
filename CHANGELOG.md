@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Surface an explicit error when a model returns a stream with no text and no tool calls — previously these turns ended silently and the TUI looked frozen. The most common cause is a reasoning model consuming the entire output budget on chain-of-thought tokens and hitting `finish_reason=length`; the error message now suggests lowering reasoning effort or raising the model's output limit.
+
 ## [0.2.0] - 2026-05-23
 
 ### Breaking

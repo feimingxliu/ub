@@ -98,9 +98,10 @@ type toolCall struct {
 }
 
 type streamResult struct {
-	text      string
-	message   message.Message
-	toolCalls []toolCall
+	text         string
+	message      message.Message
+	toolCalls    []toolCall
+	reasoningLen int
 }
 
 // New constructs an Agent.
@@ -201,6 +202,9 @@ loop:
 				}
 			}
 			if len(consumed.toolCalls) == 0 {
+				if len(consumed.message.Content) == 0 {
+					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, emptyResponseError(consumed.reasoningLen))
+				}
 				a.emit(Event{Type: EventDone, Text: consumed.text})
 				return Result{Text: consumed.text, Messages: messages}, nil
 			}
@@ -371,9 +375,10 @@ done:
 		blocks = append([]message.ContentBlock{message.TextBlock(text.String())}, blocks...)
 	}
 	return streamResult{
-		text:      text.String(),
-		message:   message.New(message.RoleAssistant, blocks...),
-		toolCalls: calls,
+		text:         text.String(),
+		message:      message.New(message.RoleAssistant, blocks...),
+		toolCalls:    calls,
+		reasoningLen: reasoningText.Len(),
 	}, nil
 }
 
@@ -542,6 +547,18 @@ func (a *Agent) emit(event Event) {
 	if a.events != nil {
 		a.events(event)
 	}
+}
+
+// emptyResponseError builds the error returned when a provider stream
+// completes with neither a text/tool-use reply nor a usable assistant message.
+// The common cause is a reasoning model consuming its entire output budget on
+// chain-of-thought tokens and hitting finish_reason=length before any reply.
+// Without surfacing it, the TUI silently goes idle and looks crashed.
+func emptyResponseError(reasoningLen int) error {
+	if reasoningLen > 0 {
+		return fmt.Errorf("model produced %d chars of reasoning but no reply or tool call (likely hit max_output_tokens during reasoning — lower reasoning effort or raise the model's output limit)", reasoningLen)
+	}
+	return errors.New("model produced no reply (empty stream — no text, no tool calls, no reasoning)")
 }
 
 func (a *Agent) recordError(ctx context.Context, sessionID string, turn int, err error) error {

@@ -113,6 +113,62 @@ func TestAgentPersistsThinkingActivity(t *testing.T) {
 	}
 }
 
+func TestAgentReportsReasoningOnlyEmptyResponse(t *testing.T) {
+	reg := tool.New()
+	ro := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{{fake.ReasoningDelta("thinking..."), fake.Done()}}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Rollout:  ro,
+		Model:    "reasoner",
+		Mode:     execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runErr := a.Run(context.Background(), Request{SessionID: "sess_1", Prompt: "hi", Turn: 1})
+	if runErr == nil {
+		t.Fatal("Run should fail when model returns only reasoning")
+	}
+	if !strings.Contains(runErr.Error(), "max_output_tokens") {
+		t.Fatalf("error = %v, want hint about max_output_tokens", runErr)
+	}
+	var sawError bool
+	for _, event := range ro.events {
+		if event.Type == rollout.TypeError {
+			sawError = true
+			break
+		}
+	}
+	if !sawError {
+		t.Fatalf("rollout missing error event; got %+v", ro.events)
+	}
+}
+
+func TestAgentReportsFullyEmptyResponse(t *testing.T) {
+	reg := tool.New()
+	ro := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{{fake.Done()}}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Rollout:  ro,
+		Model:    "reasoner",
+		Mode:     execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, runErr := a.Run(context.Background(), Request{SessionID: "sess_1", Prompt: "hi", Turn: 1})
+	if runErr == nil {
+		t.Fatal("Run should fail when model returns nothing")
+	}
+	if !strings.Contains(runErr.Error(), "empty stream") {
+		t.Fatalf("error = %v, want empty stream description", runErr)
+	}
+}
+
 func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
 	reg := tool.New()
 	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
