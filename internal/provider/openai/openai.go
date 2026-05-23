@@ -412,6 +412,12 @@ func (s *sdkStream) enqueueToolCalls() {
 		input := json.RawMessage(call.arguments.String())
 		if len(input) == 0 {
 			input = json.RawMessage(`{}`)
+		} else if !json.Valid(input) {
+			s.queue = append(s.queue, provider.Event{
+				Type: provider.EventError,
+				Err:  fmt.Errorf("tool call %q arguments truncated mid-stream (likely hit max_output_tokens before tool call completed): %s", call.name, string(input)),
+			})
+			continue
 		}
 		s.queue = append(s.queue, provider.Event{
 			Type:      provider.EventToolCall,

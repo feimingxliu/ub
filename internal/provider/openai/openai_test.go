@@ -299,6 +299,47 @@ func TestChatStreamsToolCall(t *testing.T) {
 	}
 }
 
+func TestChatToolCallTruncatedArgsEmitsError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		// First chunk delivers a partial JSON fragment; stream then ends with
+		// finish_reason="length" (max_output_tokens) before the args complete.
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"mai"}}]},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{},"finish_reason":"length"}]}`)
+		writeOpenAISSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("openai", config.ProviderConfig{
+		Type:    "openai",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model:    "gpt-test",
+		Messages: []message.Message{message.Text(message.RoleUser, "read")},
+		Tools:    []provider.ToolDefinition{{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	event, err := stream.Next(context.Background())
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if event.Type != provider.EventError {
+		t.Fatalf("event = %#v, want EventError", event)
+	}
+	if event.Err == nil || !strings.Contains(event.Err.Error(), "truncated") {
+		t.Fatalf("err = %v, want truncated marker", event.Err)
+	}
+}
+
 func TestChatRejectsUnsupportedBlocks(t *testing.T) {
 	p, err := NewFromConfig("openai", config.ProviderConfig{
 		Type:   "openai",
