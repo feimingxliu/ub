@@ -802,6 +802,26 @@ func (m Model) retryLastTurn() (tea.Model, tea.Cmd) {
 	return m.startPrompt(text, false)
 }
 
+func (m Model) runDoctor() (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(DoctorRunner)
+	if !ok {
+		m.messages.append(systemRole, "doctor is unavailable in this runner")
+		return m, nil
+	}
+	report, err := runner.Doctor(m.ctx)
+	if err != nil {
+		m.messages.append(systemRole, err.Error())
+		return m, nil
+	}
+	report = strings.TrimSpace(report)
+	if report == "" {
+		report = "doctor completed with no output"
+	}
+	m.messages.append(systemRole, report)
+	m.scrollToBottom()
+	return m, nil
+}
+
 func (m Model) lastUserTurn() (string, bool) {
 	for i := len(m.messages.items) - 1; i >= 0; i-- {
 		item := m.messages.items[i]
@@ -839,6 +859,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "compact":
 		return m.startCompact()
+	case "doctor":
+		return m.runDoctor()
 	case "retry":
 		return m.retryLastTurn()
 	case "quit", "exit":

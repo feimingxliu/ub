@@ -1511,6 +1511,39 @@ func TestSlashRetryWithoutUserTurnReportsMessage(t *testing.T) {
 	}
 }
 
+func TestSlashDoctorAppendsHealthCheckReport(t *testing.T) {
+	runner := &scriptedRunner{doctorReport: "providers:\n  fake\tfake\toffline\n"}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/doctor")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash doctor returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	if runner.doctorCalls != 1 {
+		t.Fatalf("doctor calls = %d, want 1", runner.doctorCalls)
+	}
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"providers:\n  fake\tfake\toffline"}) {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashDoctorUnavailable(t *testing.T) {
+	model := NewModel(Options{Runner: &promptOnlyRunner{}})
+	model = sendText(t, model, "/doctor")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash doctor returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "doctor is unavailable") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestSlashClear(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "hello")
@@ -2732,6 +2765,9 @@ type scriptedRunner struct {
 	shellCalls       int
 	shellCommands    []string
 	workspaceFiles   []string
+	doctorReport     string
+	doctorErr        error
+	doctorCalls      int
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -2749,6 +2785,11 @@ func (r *scriptedRunner) Compact(_ context.Context, events chan<- Event) error {
 		events <- event
 	}
 	return nil
+}
+
+func (r *scriptedRunner) Doctor(context.Context) (string, error) {
+	r.doctorCalls++
+	return r.doctorReport, r.doctorErr
 }
 
 func (r *scriptedRunner) RunShell(_ context.Context, command string, events chan<- Event) error {

@@ -28,6 +28,11 @@ type CompactRunner interface {
 	Compact(ctx context.Context, events chan<- Event) error
 }
 
+// DoctorRunner optionally lets slash commands run a local health check.
+type DoctorRunner interface {
+	Doctor(ctx context.Context) (string, error)
+}
+
 // ControlRunner optionally lets slash commands update future runs.
 type ControlRunner interface {
 	SetModel(model string) error

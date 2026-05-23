@@ -454,6 +454,10 @@ func (r *tuiAgentRunner) ListSessions(ctx context.Context) ([]tui.SessionInfo, e
 	return out, nil
 }
 
+func (r *tuiAgentRunner) Doctor(ctx context.Context) (string, error) {
+	return renderDoctorText(ctx, r.cfg, true, false)
+}
+
 func (r *tuiAgentRunner) NewSession(ctx context.Context) (tui.SessionState, error) {
 	state, err := startChatRollout(r.cmd, "", r.model, chatOptions{})
 	if err != nil {

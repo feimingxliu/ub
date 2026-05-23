@@ -38,74 +38,83 @@ func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
 	if err != nil {
 		return err
 	}
-	out := cmd.OutOrStdout()
-	ctx := cmd.Context()
+	report, err := renderDoctorText(cmd.Context(), cfg, plain, suggest)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprint(cmd.OutOrStdout(), report)
+	return err
+}
+
+func renderDoctorText(ctx context.Context, cfg *config.Config, plain, suggest bool) (string, error) {
+	var out strings.Builder
 	style := doctorStyle{plain: plain}
 
-	if _, err := fmt.Fprintln(out, style.header("providers:")); err != nil {
-		return err
+	if _, err := fmt.Fprintln(&out, style.header("providers:")); err != nil {
+		return "", err
 	}
 	for _, name := range sortedProviderNames(cfg.Providers) {
 		result := checkProvider(ctx, name, cfg.Providers[name])
-		if _, err := fmt.Fprintf(out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
-			return err
+		if _, err := fmt.Fprintf(&out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
+			return "", err
 		}
 		for _, model := range result.Models {
-			if _, err := fmt.Fprintf(out, "    model\t%s\t%s\n", model, toolSupport(model)); err != nil {
-				return err
+			if _, err := fmt.Fprintf(&out, "    model\t%s\t%s\n", model, toolSupport(model)); err != nil {
+				return "", err
 			}
 		}
 		if result.Message != "" {
-			if _, err := fmt.Fprintf(out, "    note\t%s\n", result.Message); err != nil {
-				return err
+			if _, err := fmt.Fprintf(&out, "    note\t%s\n", result.Message); err != nil {
+				return "", err
 			}
 		}
 	}
 
-	if _, err := fmt.Fprintln(out, style.header("mcp:")); err != nil {
-		return err
+	if _, err := fmt.Fprintln(&out, style.header("mcp:")); err != nil {
+		return "", err
 	}
 	mcpStatuses := mcptool.CheckConfigured(ctx, cfg.MCPServers)
 	if len(mcpStatuses) == 0 {
-		if _, err := fmt.Fprintln(out, "  none\t-\tnot_configured"); err != nil {
-			return err
+		if _, err := fmt.Fprintln(&out, "  none\t-\tnot_configured"); err != nil {
+			return "", err
 		}
 	} else {
 		for _, result := range mcpStatuses {
-			if _, err := fmt.Fprintf(out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
-				return err
+			if _, err := fmt.Fprintf(&out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
+				return "", err
 			}
 			if result.ToolCount > 0 {
-				if _, err := fmt.Fprintf(out, "    tools\t%d\n", result.ToolCount); err != nil {
-					return err
+				if _, err := fmt.Fprintf(&out, "    tools\t%d\n", result.ToolCount); err != nil {
+					return "", err
 				}
 			}
 			if result.Err != nil {
-				if _, err := fmt.Fprintf(out, "    note\t%s\n", result.Err); err != nil {
-					return err
+				if _, err := fmt.Fprintf(&out, "    note\t%s\n", result.Err); err != nil {
+					return "", err
 				}
 			}
 		}
 	}
 
-	if _, err := fmt.Fprintln(out, style.header("commands:")); err != nil {
-		return err
+	if _, err := fmt.Fprintln(&out, style.header("commands:")); err != nil {
+		return "", err
 	}
 	for _, name := range []string{"rg", "gopls", "typescript-language-server", "npx"} {
 		status := "missing"
 		if path, err := exec.LookPath(name); err == nil {
 			status = "found " + path
 		}
-		if _, err := fmt.Fprintf(out, "  %s\t%s\n", name, style.status(status)); err != nil {
-			return err
+		if _, err := fmt.Fprintf(&out, "  %s\t%s\n", name, style.status(status)); err != nil {
+			return "", err
 		}
 	}
 
 	if suggest {
-		_, err := fmt.Fprint(out, suggestedDevProfile(cfg))
-		return err
+		if _, err := fmt.Fprint(&out, suggestedDevProfile(cfg)); err != nil {
+			return "", err
+		}
 	}
-	return nil
+	return out.String(), nil
 }
 
 type doctorStyle struct {
