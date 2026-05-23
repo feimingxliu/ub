@@ -28,6 +28,7 @@ var specs = []Spec{
 	{Name: "approval-model", Usage: "/approval-model [model]", Description: "show or switch the auto approval model"},
 	{Name: "mode", Usage: "/mode <work|plan|auto>", Description: "switch execution mode"},
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
+	{Name: "retry", Usage: "/retry", Description: "rerun the last user turn"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
 	{Name: "new", Usage: "/new", Description: "start a new empty session"},
 	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},

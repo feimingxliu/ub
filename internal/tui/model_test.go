@@ -1469,6 +1469,48 @@ func TestSlashCompactUnavailable(t *testing.T) {
 	}
 }
 
+func TestSlashRetryRunsLastUserTurn(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{{Type: EventDone}}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "first prompt")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("initial prompt returned nil command")
+	}
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	model = sendText(t, model, "/retry")
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("slash retry returned nil command")
+	}
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	if got, want := runner.prompts, []string{"first prompt", "first prompt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("runner prompts = %#v, want %#v", got, want)
+	}
+	if got, want := model.MessageTexts(), []string{"first prompt", "first prompt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+}
+
+func TestSlashRetryWithoutUserTurnReportsMessage(t *testing.T) {
+	model := NewModel(Options{})
+	model = sendText(t, model, "/retry")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash retry returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "no user turn to retry") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestSlashClear(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "hello")

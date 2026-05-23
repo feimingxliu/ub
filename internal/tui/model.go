@@ -790,6 +790,33 @@ func (m Model) startShell(input string, clearInput bool) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(runShell(ctx, runner, command, events), waitForEventWithTimeout(events, runID, m.timeout), spinnerTickCmd())
 }
 
+func (m Model) retryLastTurn() (tea.Model, tea.Cmd) {
+	text, ok := m.lastUserTurn()
+	if !ok {
+		m.messages.append(systemRole, "no user turn to retry")
+		return m, nil
+	}
+	if isShellInput(text) {
+		return m.startShell(text, false)
+	}
+	return m.startPrompt(text, false)
+}
+
+func (m Model) lastUserTurn() (string, bool) {
+	for i := len(m.messages.items) - 1; i >= 0; i-- {
+		item := m.messages.items[i]
+		if item.role != userRole {
+			continue
+		}
+		text := strings.TrimSpace(item.text)
+		if text == "" {
+			continue
+		}
+		return text, true
+	}
+	return "", false
+}
+
 func isShellInput(value string) bool {
 	return strings.HasPrefix(strings.TrimSpace(value), "!")
 }
@@ -812,6 +839,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "compact":
 		return m.startCompact()
+	case "retry":
+		return m.retryLastTurn()
 	case "quit", "exit":
 		if m.cancel != nil {
 			m.cancel()
