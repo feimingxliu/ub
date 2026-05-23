@@ -254,11 +254,76 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 	}
 }
 
+func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
+	temp := t.TempDir()
+	workspace := filepath.Join(temp, "repo")
+	other := filepath.Join(temp, "other")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(workspace)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.UnixMilli(1_700_000_000_000).UTC()
+	for _, sess := range []store.Session{
+		{ID: "current-old", Workspace: workspace, Title: "Current Old", Model: "fake/old", CreatedAt: now, UpdatedAt: now},
+		{ID: "current-new", Workspace: workspace, Title: "Current New", Model: "fake/new", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+		{ID: "elsewhere", Workspace: other, Title: "Other Session", Model: "other/model", CreatedAt: now, UpdatedAt: now.Add(2 * time.Hour)},
+	} {
+		if err := st.CreateSession(context.Background(), sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"sessions", "ls", "--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sessions ls --all: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"WORKSPACE " + workspace,
+		"WORKSPACE " + other,
+		"current-new",
+		"current-old",
+		"elsewhere",
+		"Other Session",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sessions ls --all output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Index(got, "current-new") > strings.Index(got, "current-old") {
+		t.Fatalf("workspace sessions are not ordered newest first:\n%s", got)
+	}
+}
+
 func TestSessionsListUsesGitRootWorkspace(t *testing.T) {
 	temp := t.TempDir()
 	repo := filepath.Join(temp, "repo")
 	subdir := filepath.Join(repo, "pkg")
 	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(subdir, 0o755); err != nil {

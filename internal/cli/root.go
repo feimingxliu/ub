@@ -320,13 +320,16 @@ func newSessionsCmd() *cobra.Command {
 		Use:   "sessions",
 		Short: "Manage agent sessions",
 	}
-	cmd.AddCommand(&cobra.Command{
+	var all bool
+	lsCmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List sessions in the current workspace",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSessionsLS(cmd)
+			return runSessionsLS(cmd, all)
 		},
-	})
+	}
+	lsCmd.Flags().BoolVar(&all, "all", false, "list sessions across all workspaces")
+	cmd.AddCommand(lsCmd)
 	cmd.AddCommand(&cobra.Command{
 		Use:     "rm <session-id> [session-id...]",
 		Aliases: []string{"delete", "del"},
@@ -916,7 +919,7 @@ func firstConfiguredProvider(providers map[string]config.ProviderConfig) string 
 	return ""
 }
 
-func runSessionsLS(cmd *cobra.Command) error {
+func runSessionsLS(cmd *cobra.Command, all bool) error {
 	path, err := store.DefaultPath()
 	if err != nil {
 		return fmt.Errorf("locate session store: %w", err)
@@ -926,6 +929,14 @@ func runSessionsLS(cmd *cobra.Command) error {
 		return err
 	}
 	defer st.Close()
+
+	if all {
+		sessions, err := st.ListAllSessions(cmd.Context())
+		if err != nil {
+			return err
+		}
+		return printAllSessions(cmd.OutOrStdout(), sessions)
+	}
 
 	cwd, err := currentWorkspace()
 	if err != nil {
@@ -940,7 +951,41 @@ func runSessionsLS(cmd *cobra.Command) error {
 		return err
 	}
 
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	return printSessionTable(cmd.OutOrStdout(), sessions)
+}
+
+func printAllSessions(out io.Writer, sessions []store.Session) error {
+	if len(sessions) == 0 {
+		_, err := fmt.Fprintln(out, "no sessions")
+		return err
+	}
+	currentWorkspace := ""
+	for i, sess := range sessions {
+		if sess.Workspace == currentWorkspace {
+			continue
+		}
+		if currentWorkspace != "" {
+			if _, err := fmt.Fprintln(out); err != nil {
+				return err
+			}
+		}
+		currentWorkspace = sess.Workspace
+		if _, err := fmt.Fprintf(out, "WORKSPACE %s\n", currentWorkspace); err != nil {
+			return err
+		}
+		groupEnd := i + 1
+		for groupEnd < len(sessions) && sessions[groupEnd].Workspace == currentWorkspace {
+			groupEnd++
+		}
+		if err := printSessionTable(out, sessions[i:groupEnd]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func printSessionTable(out io.Writer, sessions []store.Session) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	if _, err := fmt.Fprintln(w, "ID\tUPDATED\tTITLE\tMODEL"); err != nil {
 		return err
 	}

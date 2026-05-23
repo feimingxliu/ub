@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,38 @@ func TestListSessionsFiltersSortsAndLimits(t *testing.T) {
 		if sess.Workspace != "/repo/a" {
 			t.Fatalf("returned other workspace: %+v", sess)
 		}
+	}
+}
+
+func TestListAllSessionsOrdersByWorkspaceThenUpdated(t *testing.T) {
+	ctx := context.Background()
+	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
+	defer st.Close()
+
+	base := time.UnixMilli(1_700_000_000_000).UTC()
+	sessions := []Session{
+		{ID: "b-old", Workspace: "/repo/b", Title: "old", CreatedAt: base, UpdatedAt: base},
+		{ID: "a-new", Workspace: "/repo/a", Title: "new", CreatedAt: base, UpdatedAt: base.Add(2 * time.Hour)},
+		{ID: "a-old", Workspace: "/repo/a", Title: "old", CreatedAt: base, UpdatedAt: base.Add(time.Hour)},
+		{ID: "b-new", Workspace: "/repo/b", Title: "new", CreatedAt: base, UpdatedAt: base.Add(3 * time.Hour)},
+	}
+	for _, sess := range sessions {
+		if err := st.CreateSession(ctx, sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
+		}
+	}
+
+	got, err := st.ListAllSessions(ctx)
+	if err != nil {
+		t.Fatalf("ListAllSessions: %v", err)
+	}
+	var ids []string
+	for _, sess := range got {
+		ids = append(ids, sess.ID)
+	}
+	want := []string{"a-new", "a-old", "b-new", "b-old"}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("ListAllSessions ids = %#v, want %#v", ids, want)
 	}
 }
 

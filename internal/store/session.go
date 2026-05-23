@@ -87,6 +87,30 @@ func (s *Store) ListSessions(ctx context.Context, workspace string, limit int) (
 	return out, nil
 }
 
+// ListAllSessions lists all sessions grouped by workspace order.
+func (s *Store) ListAllSessions(ctx context.Context) ([]Session, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, model
+		FROM sessions
+		ORDER BY workspace ASC, updated_at DESC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("list all sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Session
+	for rows.Next() {
+		sess, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		out = append(out, *sess)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sessions: %w", err)
+	}
+	return out, nil
+}
+
 // UpdateSession updates a session by id.
 func (s *Store) UpdateSession(ctx context.Context, sess Session) error {
 	if sess.ID == "" {
