@@ -17,7 +17,8 @@ func TestResolve_RejectsRelativeEscape(t *testing.T) {
 
 func TestResolve_RejectsAbsoluteEscape(t *testing.T) {
 	root := t.TempDir()
-	if _, err := resolve(root, "/etc/passwd"); err == nil {
+	escape := filepath.Join(filepath.VolumeName(root)+string(filepath.Separator), "etc", "passwd")
+	if _, err := resolve(root, escape); err == nil {
 		t.Fatalf("expected error for absolute escape")
 	}
 }

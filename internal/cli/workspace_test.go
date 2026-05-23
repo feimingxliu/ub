@@ -18,13 +18,14 @@ func TestCanonicalWorkspaceUsesGitRoot(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	want := resolvedTestPath(t, repo)
 
 	got, err := canonicalWorkspace(sub)
 	if err != nil {
 		t.Fatalf("canonicalWorkspace: %v", err)
 	}
-	if got != repo {
-		t.Fatalf("canonicalWorkspace = %q, want git root %q", got, repo)
+	if got != want {
+		t.Fatalf("canonicalWorkspace = %q, want git root %q", got, want)
 	}
 }
 
@@ -37,13 +38,14 @@ func TestCanonicalWorkspaceIgnoresEmptyGitDirectory(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	want := resolvedTestPath(t, repo)
 
 	got, err := canonicalWorkspace(repo)
 	if err != nil {
 		t.Fatalf("canonicalWorkspace: %v", err)
 	}
-	if got != repo {
-		t.Fatalf("canonicalWorkspace = %q, want repo path %q", got, repo)
+	if got != want {
+		t.Fatalf("canonicalWorkspace = %q, want repo path %q", got, want)
 	}
 }
 
@@ -60,12 +62,26 @@ func TestCanonicalWorkspaceResolvesSymlinks(t *testing.T) {
 	if err := os.Symlink(repo, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
+	want := resolvedTestPath(t, repo)
 
 	got, err := canonicalWorkspace(link)
 	if err != nil {
 		t.Fatalf("canonicalWorkspace: %v", err)
 	}
-	if got != repo {
-		t.Fatalf("canonicalWorkspace = %q, want %q", got, repo)
+	if got != want {
+		t.Fatalf("canonicalWorkspace = %q, want %q", got, want)
 	}
+}
+
+func resolvedTestPath(t *testing.T, path string) string {
+	t.Helper()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatalf("Abs(%q): %v", path, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", abs, err)
+	}
+	return filepath.Clean(resolved)
 }

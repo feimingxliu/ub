@@ -153,6 +153,9 @@ func TestManager_PruneCompletedRemovesExpiredJobs(t *testing.T) {
 }
 
 func TestManager_ShutdownTerminatesRunningJobs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows V1 job support has no process-group shutdown semantics")
+	}
 	mgr := NewManagerWithOptions(t.TempDir(), ManagerOptions{MaxConcurrent: 2})
 	first, err := mgr.Start("", longRunningCommand())
 	if err != nil {
@@ -209,7 +212,7 @@ func runningOutputCommand() string {
 
 func largeOutputCommand() string {
 	if runtime.GOOS == "windows" {
-		return `powershell -NoProfile -Command "$s = 'x' * 40000; [Console]::Out.Write($s)"`
+		return `powershell -NoProfile -Command "[Console]::Out.Write(('x' * 40000))"`
 	}
 	return "awk 'BEGIN{for(i=0;i<40000;i++)printf \"x\"}'"
 }

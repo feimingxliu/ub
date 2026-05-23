@@ -48,6 +48,7 @@ cleanup:
     min_recent_per_workspace: 1
 `)
 	t.Chdir(temp)
+	workspace := mustCanonicalTestWorkspace(t, temp)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -59,8 +60,8 @@ cleanup:
 	}
 	now := time.Now().UTC()
 	for _, sess := range []store.Session{
-		{ID: "old-pruned", Workspace: temp, Title: "old", CreatedAt: now.Add(-72 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour)},
-		{ID: "old-kept", Workspace: temp, Title: "kept", CreatedAt: now.Add(-48 * time.Hour), UpdatedAt: now.Add(-48 * time.Hour)},
+		{ID: "old-pruned", Workspace: workspace, Title: "old", CreatedAt: now.Add(-72 * time.Hour), UpdatedAt: now.Add(-72 * time.Hour)},
+		{ID: "old-kept", Workspace: workspace, Title: "kept", CreatedAt: now.Add(-48 * time.Hour), UpdatedAt: now.Add(-48 * time.Hour)},
 	} {
 		if err := st.CreateSession(context.Background(), sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -795,6 +796,7 @@ func TestChatErrorUpdatesSessionUpdatedAt(t *testing.T) {
         error: boom
 `)
 	t.Chdir(temp)
+	workspace := mustCanonicalTestWorkspace(t, temp)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -807,7 +809,7 @@ func TestChatErrorUpdatesSessionUpdatedAt(t *testing.T) {
 	old := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
 	if err := st.CreateSession(context.Background(), store.Session{
 		ID:        "sess_error",
-		Workspace: temp,
+		Workspace: workspace,
 		Title:     "old",
 		Model:     "fake/model",
 		CreatedAt: old,
@@ -917,6 +919,7 @@ func readOnlySessionEvents(t *testing.T, workspace string) []rollout.Event {
 
 func readOnlySessions(t *testing.T, workspace string) []store.Session {
 	t.Helper()
+	workspace = mustCanonicalTestWorkspace(t, workspace)
 	path, err := store.DefaultPath()
 	if err != nil {
 		t.Fatalf("DefaultPath: %v", err)
@@ -931,6 +934,15 @@ func readOnlySessions(t *testing.T, workspace string) []store.Session {
 		t.Fatalf("ListSessions: %v", err)
 	}
 	return sessions
+}
+
+func mustCanonicalTestWorkspace(t *testing.T, workspace string) string {
+	t.Helper()
+	canonical, err := canonicalWorkspace(workspace)
+	if err != nil {
+		t.Fatalf("canonicalWorkspace(%q): %v", workspace, err)
+	}
+	return canonical
 }
 
 func assertEventTypes(t *testing.T, events []rollout.Event, want []rollout.Type) {

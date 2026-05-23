@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -284,6 +285,9 @@ func TestMessagesForTUIFromRolloutTagsTurnNumber(t *testing.T) {
 }
 
 func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash tool is not supported on windows in V1")
+	}
 	temp := t.TempDir()
 	t.Chdir(temp)
 	runtime, err := newToolRuntime(context.Background(), &config.Config{})

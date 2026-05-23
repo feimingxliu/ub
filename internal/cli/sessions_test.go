@@ -46,6 +46,7 @@ func TestSessionsDeleteRemovesSession(t *testing.T) {
 	}
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
 	t.Chdir(workspace)
+	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -58,7 +59,7 @@ func TestSessionsDeleteRemovesSession(t *testing.T) {
 	now := time.UnixMilli(1_700_000_000_000).UTC()
 	if err := st.CreateSession(context.Background(), store.Session{
 		ID:        "current",
-		Workspace: workspace,
+		Workspace: workspaceKey,
 		Title:     "Current Session",
 		Model:     "fake/model",
 		CreatedAt: now,
@@ -151,6 +152,8 @@ func TestSessionsClearDeletesCurrentWorkspaceOnly(t *testing.T) {
 	}
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
 	t.Chdir(workspace)
+	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
+	otherKey := mustCanonicalTestWorkspace(t, other)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -162,9 +165,9 @@ func TestSessionsClearDeletesCurrentWorkspaceOnly(t *testing.T) {
 	}
 	now := time.UnixMilli(1_700_000_000_000).UTC()
 	for _, sess := range []store.Session{
-		{ID: "current-1", Workspace: workspace, Title: "one", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
-		{ID: "current-2", Workspace: workspace, Title: "two", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Second)},
-		{ID: "elsewhere", Workspace: other, Title: "other", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+		{ID: "current-1", Workspace: workspaceKey, Title: "one", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
+		{ID: "current-2", Workspace: workspaceKey, Title: "two", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+		{ID: "elsewhere", Workspace: otherKey, Title: "other", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
 	} {
 		if err := st.CreateSession(context.Background(), sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -214,6 +217,8 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 	}
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
 	t.Chdir(workspace)
+	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
+	otherKey := mustCanonicalTestWorkspace(t, other)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -225,8 +230,8 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 	}
 	now := time.UnixMilli(1_700_000_000_000).UTC()
 	for _, sess := range []store.Session{
-		{ID: "current", Workspace: workspace, Title: "Current Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
-		{ID: "elsewhere", Workspace: other, Title: "Other Session", Model: "other/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+		{ID: "current", Workspace: workspaceKey, Title: "Current Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
+		{ID: "elsewhere", Workspace: otherKey, Title: "Other Session", Model: "other/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
 	} {
 		if err := st.CreateSession(context.Background(), sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -268,6 +273,8 @@ func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
 	}
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
 	t.Chdir(workspace)
+	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
+	otherKey := mustCanonicalTestWorkspace(t, other)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -279,9 +286,9 @@ func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
 	}
 	now := time.UnixMilli(1_700_000_000_000).UTC()
 	for _, sess := range []store.Session{
-		{ID: "current-old", Workspace: workspace, Title: "Current Old", Model: "fake/old", CreatedAt: now, UpdatedAt: now},
-		{ID: "current-new", Workspace: workspace, Title: "Current New", Model: "fake/new", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
-		{ID: "elsewhere", Workspace: other, Title: "Other Session", Model: "other/model", CreatedAt: now, UpdatedAt: now.Add(2 * time.Hour)},
+		{ID: "current-old", Workspace: workspaceKey, Title: "Current Old", Model: "fake/old", CreatedAt: now, UpdatedAt: now},
+		{ID: "current-new", Workspace: workspaceKey, Title: "Current New", Model: "fake/new", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+		{ID: "elsewhere", Workspace: otherKey, Title: "Other Session", Model: "other/model", CreatedAt: now, UpdatedAt: now.Add(2 * time.Hour)},
 	} {
 		if err := st.CreateSession(context.Background(), sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -302,8 +309,8 @@ func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"WORKSPACE " + workspace,
-		"WORKSPACE " + other,
+		"WORKSPACE " + workspaceKey,
+		"WORKSPACE " + otherKey,
 		"current-new",
 		"current-old",
 		"elsewhere",
@@ -330,6 +337,8 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 	}
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
 	t.Chdir(workspace)
+	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
+	otherKey := mustCanonicalTestWorkspace(t, other)
 
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -341,8 +350,8 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 	}
 	now := time.UnixMilli(1_700_000_000_000).UTC()
 	for _, sess := range []store.Session{
-		{ID: "current", Workspace: workspace, Title: "Current Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
-		{ID: "elsewhere", Workspace: other, Title: "Other Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+		{ID: "current", Workspace: workspaceKey, Title: "Current Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
+		{ID: "elsewhere", Workspace: otherKey, Title: "Other Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
 	} {
 		if err := st.CreateSession(context.Background(), sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -381,8 +390,8 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"WORKSPACE",
-		workspace,
-		other,
+		workspaceKey,
+		otherKey,
 		"current",
 		"elsewhere",
 		"please find the needle here",
@@ -444,9 +453,10 @@ func TestSessionsListUsesGitRootWorkspace(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	now := time.Now().UTC()
+	repoKey := mustCanonicalTestWorkspace(t, repo)
 	if err := st.CreateSession(context.Background(), store.Session{
 		ID:        "root-session",
-		Workspace: repo,
+		Workspace: repoKey,
 		Title:     "Root Session",
 		Model:     "fake/model",
 		CreatedAt: now,

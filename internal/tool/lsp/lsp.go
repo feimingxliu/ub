@@ -200,9 +200,9 @@ func displayPath(path string) string {
 		return "<unknown>"
 	}
 	if rel, err := filepath.Rel(".", path); err == nil && !strings.HasPrefix(rel, "..") {
-		return rel
+		return filepath.ToSlash(rel)
 	}
-	return path
+	return filepath.ToSlash(path)
 }
 
 func pathFromURI(uri string) string {
