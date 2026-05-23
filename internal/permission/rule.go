@@ -2,6 +2,7 @@ package permission
 
 import (
 	"encoding/json"
+	"os"
 	"regexp"
 	"strings"
 )
@@ -18,7 +19,6 @@ type ruleFile struct {
 }
 
 var blacklistPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\brm\s+-rf\s+/`),
 	regexp.MustCompile(`\bmkfs\.`),
 	regexp.MustCompile(`\bdd\s+.*of=/dev/`),
 }
@@ -80,10 +80,86 @@ func matchRule(rules []Rule, req Request, command string) (Rule, bool) {
 }
 
 func isBlacklisted(command string) bool {
+	command = normalizeCommandForBlacklist(command)
+	if isDangerousRecursiveRemove(command) {
+		return true
+	}
 	for _, pattern := range blacklistPatterns {
 		if pattern.MatchString(command) {
 			return true
 		}
 	}
 	return false
+}
+
+func normalizeCommandForBlacklist(command string) string {
+	command = os.ExpandEnv(command)
+	var b strings.Builder
+	escaped := false
+	for _, r := range command {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		switch r {
+		case '\\':
+			escaped = true
+		case '\'', '"':
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func isDangerousRecursiveRemove(command string) bool {
+	fields := strings.Fields(command)
+	for i, field := range fields {
+		if !isRMCommand(field) {
+			continue
+		}
+		recursive := false
+		force := false
+		for _, arg := range fields[i+1:] {
+			if arg == "--" {
+				continue
+			}
+			if strings.HasPrefix(arg, "-") && arg != "-" {
+				if arg == "--recursive" || strings.ContainsAny(arg, "rR") {
+					recursive = true
+				}
+				if arg == "--force" || strings.Contains(arg, "f") {
+					force = true
+				}
+				continue
+			}
+			if recursive && force && isDangerousRMTarget(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isRMCommand(field string) bool {
+	if field == "rm" {
+		return true
+	}
+	return strings.HasSuffix(field, "/rm")
+}
+
+func isDangerousRMTarget(target string) bool {
+	switch {
+	case target == "~", strings.HasPrefix(target, "~/"):
+		return true
+	case strings.HasPrefix(target, "/"):
+		return true
+	default:
+		return false
+	}
 }
