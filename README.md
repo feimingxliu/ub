@@ -111,13 +111,14 @@ See [`docs/design.md`](docs/design.md) for the long version.
 | [`docs/roadmap.md`](docs/roadmap.md) | V1 six-sprint iteration plan (historical) |
 | [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 roadmap — features, architecture, ecosystem |
 | [`README.zh-CN.md`](README.zh-CN.md) | 中文文档 |
-| [`AGENTS.md`](AGENTS.md) | Repository conventions (commit style, testing, etc.) |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributor workflow, tests, commit style, PR checklist |
+| [`AGENTS.md`](AGENTS.md) | AI-agent collaboration notes |
 
 ## 🛣️ Status
 
 V1 scope ([`docs/roadmap.md`](docs/roadmap.md)) is feature-complete. The codebase is approaching its first tagged release. Expect rough edges; expect API churn before `v1.0.0`.
 
-If something looks wrong, [open an issue](https://github.com/feimingxliu/ub/issues). PRs welcome — see [`AGENTS.md`](AGENTS.md) for conventions.
+If something looks wrong, [open an issue](https://github.com/feimingxliu/ub/issues). PRs welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions.
 
 ## 🙏 Acknowledgments
 
