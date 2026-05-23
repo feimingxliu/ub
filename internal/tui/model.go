@@ -13,6 +13,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 	"github.com/mattn/go-runewidth"
 
@@ -393,6 +394,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
 		if mouse.Button == tea.MouseLeft {
+			if m.statusHelpHit(mouse.X, mouse.Y) {
+				return m.showCheatsheet()
+			}
 			if m.toggleMessageAt(mouse.X, mouse.Y) {
 				return m, nil
 			}
@@ -419,6 +423,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel()
 			}
 			return m, tea.Quit
+		case "?":
+			return m.showCheatsheet()
 		case "esc":
 			if m.files != nil {
 				m.files = nil
@@ -624,6 +630,25 @@ func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.C
 
 func (m Model) footerView(width int) string {
 	return strings.Join(m.footerFrame(width).lines, "\n")
+}
+
+func (m Model) showCheatsheet() (tea.Model, tea.Cmd) {
+	m.messages.append(systemRole, slashHelp())
+	m.scrollToBottom()
+	return m, nil
+}
+
+func (m Model) statusHelpHit(x, y int) bool {
+	if y != frameHeight(m.height)-1 {
+		return false
+	}
+	line := xansi.Strip(m.status.view(contentWidth(m.width), m.styles))
+	idx := strings.LastIndex(line, "?")
+	if idx < 0 {
+		return false
+	}
+	col := runewidth.StringWidth(line[:idx])
+	return x >= col && x < col+1
 }
 
 func inputWidthForTerminal(width int, prompt string) int {
@@ -1538,6 +1563,7 @@ func helpKeyboardLines() []string {
 		"Ctrl+C - quit the TUI, cancelling the current run first",
 		"Esc - cancel an active picker or file search; while running, interrupt the current turn",
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
+		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",
 		"Mouse wheel - scroll the transcript; click an activity row to expand/collapse it",
 		"Shift+drag - select text for copy (terminal native, bypasses TUI mouse capture)",

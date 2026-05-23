@@ -1337,6 +1337,7 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"Ctrl+C - quit",
 		"Esc - cancel an active picker",
 		"Shift+Tab - cycle execution mode",
+		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",
 		"Ctrl+O - expand/collapse",
 		"Ctrl+N/Ctrl+P - move activity focus",
@@ -1358,6 +1359,41 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		if strings.Contains(help, unwanted) {
 			t.Fatalf("slashHelp should not advertise mouse tracking %q:\n%s", unwanted, help)
 		}
+	}
+}
+
+func TestQuestionMarkOpensCheatsheet(t *testing.T) {
+	model := NewModel(Options{})
+	updated, cmd := model.Update(runePress('?'))
+	if cmd != nil {
+		t.Fatalf("question mark returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "commands:") {
+		t.Fatalf("messages = %#v, want cheatsheet", got)
+	}
+}
+
+func TestStatusHelpClickOpensCheatsheet(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	model = assertModel(t, updated)
+	lines := strings.Split(viewString(model), "\n")
+	statusLine := lines[len(lines)-1]
+	x := strings.LastIndex(statusLine, "?")
+	if x < 0 {
+		t.Fatalf("status bar missing help marker:\n%s", statusLine)
+	}
+	x = xansi.StringWidth(statusLine[:x])
+
+	updated, cmd := model.Update(mouseClick(x, len(lines)-1))
+	if cmd != nil {
+		t.Fatalf("status help click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "commands:") {
+		t.Fatalf("messages = %#v, want cheatsheet", got)
 	}
 }
 

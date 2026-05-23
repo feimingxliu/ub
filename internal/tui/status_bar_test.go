@@ -29,6 +29,9 @@ func TestStatusBarFitsLongModelAndCWD(t *testing.T) {
 	if !strings.Contains(view, "model:") {
 		t.Fatalf("status bar missing model segment:\n%s", view)
 	}
+	if !strings.Contains(view, "?") {
+		t.Fatalf("status bar missing help marker:\n%s", view)
+	}
 }
 
 func TestStatusBarFitsDenseContext(t *testing.T) {

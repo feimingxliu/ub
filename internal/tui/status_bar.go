@@ -52,12 +52,12 @@ func (s statusBar) view(width int, styles tuitheme.Styles) string {
 		segments = append(segments, statusSegment{label: "turn", value: fmt.Sprintf("%d", s.turn)})
 	}
 	segments = append(segments, statusSegment{label: "cwd", value: defaultString(s.cwd, ".")})
+	segments = append(segments, statusSegment{label: "?", semantic: "help"})
 	segments = fitStatusSegments(segments, width, styles)
 
 	rendered := make([]string, len(segments))
 	for i, segment := range segments {
-		raw := segment.label + ": " + segment.value
-		rendered[i] = styles.Render(statusSegmentStyle(segment, styles), raw)
+		rendered[i] = styles.Render(statusSegmentStyle(segment, styles), statusSegmentText(segment))
 	}
 	separator := styles.Render(styles.SubtleLine, statusSeparatorText(styles))
 	return styles.Render(styles.Status.Bar, strings.Join(rendered, separator))
@@ -77,6 +77,11 @@ func fitStatusSegments(segments []statusSegment, width int, styles tuitheme.Styl
 	}
 
 	out = removeStatusSegment(out, "effort")
+	if statusSegmentsWidth(out, styles) <= width {
+		return out
+	}
+
+	out = removeStatusSegment(out, "cwd")
 	if statusSegmentsWidth(out, styles) <= width {
 		return out
 	}
@@ -171,9 +176,16 @@ func statusSegmentsWidth(segments []statusSegment, styles tuitheme.Styles) int {
 		if i > 0 {
 			total += lipgloss.Width(separator)
 		}
-		total += lipgloss.Width(styles.Render(statusSegmentStyle(segment, styles), segment.label+": "+segment.value))
+		total += lipgloss.Width(styles.Render(statusSegmentStyle(segment, styles), statusSegmentText(segment)))
 	}
 	return total
+}
+
+func statusSegmentText(segment statusSegment) string {
+	if strings.TrimSpace(segment.value) == "" {
+		return segment.label
+	}
+	return segment.label + ": " + segment.value
 }
 
 func statusSeparatorText(styles tuitheme.Styles) string {
@@ -233,6 +245,8 @@ func statusSegmentStyle(segment statusSegment, styles tuitheme.Styles) lipgloss.
 		return base.Copy().Foreground(modeStyle(segment.value, styles).GetForeground())
 	case "state":
 		return base.Copy().Foreground(stateStyle(segment.value, styles).GetForeground())
+	case "help":
+		return base.Copy().Foreground(styles.Status.Value.GetForeground()).Bold(true)
 	default:
 		return base
 	}
