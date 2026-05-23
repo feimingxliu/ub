@@ -131,6 +131,84 @@ func TestToolReconnectsAndRetriesAfterCallFailure(t *testing.T) {
 	}
 }
 
+func TestToolDoesNotReconnectOnServerError(t *testing.T) {
+	var initializes atomic.Int32
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     int64  `json:"id,omitempty"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if req.ID == 0 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		var (
+			result any
+			rpcErr map[string]any
+		)
+		switch req.Method {
+		case "initialize":
+			initializes.Add(1)
+			result = map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{"tools": map[string]any{}},
+			}
+		case "tools/list":
+			result = map[string]any{
+				"tools": []map[string]any{{
+					"name":        "echo",
+					"description": "Echo text",
+					"inputSchema": map[string]any{"type": "object"},
+				}},
+			}
+		case "tools/call":
+			calls.Add(1)
+			rpcErr = map[string]any{"code": -32602, "message": "invalid arguments"}
+		default:
+			t.Errorf("unexpected method %q", req.Method)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{"jsonrpc": "2.0", "id": req.ID}
+		if rpcErr != nil {
+			resp["error"] = rpcErr
+		} else {
+			resp["result"] = result
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	reg := tool.New()
+	closeFn, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
+		"remote": {Type: "http", URL: server.URL},
+	})
+	defer closeFn()
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", warnings)
+	}
+	tl, ok := reg.Get("mcp__remote__echo")
+	if !ok {
+		t.Fatalf("missing mcp__remote__echo")
+	}
+	if _, err := tl.Execute(context.Background(), json.RawMessage(`{}`)); err == nil {
+		t.Fatalf("Execute: expected server error, got nil")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("tool calls = %d, want 1 (no retry on server error)", got)
+	}
+	if got := initializes.Load(); got != 1 {
+		t.Fatalf("initialize count = %d, want 1 (no reconnect on server error)", got)
+	}
+}
+
 func newMCPHTTPServer(t *testing.T, toolName string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

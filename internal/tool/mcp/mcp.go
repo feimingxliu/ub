@@ -207,6 +207,15 @@ func (c *serverConnection) CallTool(ctx context.Context, name string, args json.
 		c.markHealthy()
 		return res, nil
 	}
+	// Server-side JSON-RPC errors and caller-cancellation are not connection
+	// faults: surface them as-is so a tool that fails with an application
+	// error (or a cancelled context) does not get retransmitted. Only
+	// transport failures (EOF, broken pipe, decode errors, HTTP non-2xx)
+	// reconnect and replay the call.
+	if coremcp.IsServerError(err) || ctx.Err() != nil {
+		c.markHealthy()
+		return coremcp.CallResult{}, err
+	}
 	c.markDisconnected(err)
 
 	client, reconnectErr := c.reconnectNow(ctx)
@@ -215,7 +224,9 @@ func (c *serverConnection) CallTool(ctx context.Context, name string, args json.
 	}
 	res, err = client.CallTool(ctx, name, args)
 	if err != nil {
-		c.markDisconnected(err)
+		if !coremcp.IsServerError(err) && ctx.Err() == nil {
+			c.markDisconnected(err)
+		}
 		return coremcp.CallResult{}, err
 	}
 	c.markHealthy()
