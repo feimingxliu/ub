@@ -21,22 +21,30 @@ import (
 func newDoctorCmd() *cobra.Command {
 	var plain bool
 	var suggest bool
+	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check local ub configuration and development environment",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDoctor(cmd, plain, suggest)
+			return runDoctor(cmd, plain, suggest, jsonOutput)
 		},
 	}
 	cmd.Flags().BoolVar(&plain, "plain", false, "disable styled output")
 	cmd.Flags().BoolVar(&suggest, "suggest", false, "print a suggested dev profile snippet")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print machine-readable JSON output")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
+func runDoctor(cmd *cobra.Command, plain, suggest, jsonOutput bool) error {
 	cfg, _, err := loadConfigForCommand(cmd)
 	if err != nil {
 		return err
+	}
+	if jsonOutput {
+		report := collectDoctorReport(cmd.Context(), cfg, suggest)
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(report)
 	}
 	report, err := renderDoctorText(cmd.Context(), cfg, plain, suggest)
 	if err != nil {
@@ -47,14 +55,14 @@ func runDoctor(cmd *cobra.Command, plain, suggest bool) error {
 }
 
 func renderDoctorText(ctx context.Context, cfg *config.Config, plain, suggest bool) (string, error) {
+	report := collectDoctorReport(ctx, cfg, suggest)
 	var out strings.Builder
 	style := doctorStyle{plain: plain}
 
 	if _, err := fmt.Fprintln(&out, style.header("providers:")); err != nil {
 		return "", err
 	}
-	for _, name := range sortedProviderNames(cfg.Providers) {
-		result := checkProvider(ctx, name, cfg.Providers[name])
+	for _, result := range report.Providers {
 		if _, err := fmt.Fprintf(&out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
 			return "", err
 		}
@@ -73,13 +81,12 @@ func renderDoctorText(ctx context.Context, cfg *config.Config, plain, suggest bo
 	if _, err := fmt.Fprintln(&out, style.header("mcp:")); err != nil {
 		return "", err
 	}
-	mcpStatuses := mcptool.CheckConfigured(ctx, cfg.MCPServers)
-	if len(mcpStatuses) == 0 {
+	if len(report.MCP) == 0 {
 		if _, err := fmt.Fprintln(&out, "  none\t-\tnot_configured"); err != nil {
 			return "", err
 		}
 	} else {
-		for _, result := range mcpStatuses {
+		for _, result := range report.MCP {
 			if _, err := fmt.Fprintf(&out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
 				return "", err
 			}
@@ -88,8 +95,8 @@ func renderDoctorText(ctx context.Context, cfg *config.Config, plain, suggest bo
 					return "", err
 				}
 			}
-			if result.Err != nil {
-				if _, err := fmt.Fprintf(&out, "    note\t%s\n", result.Err); err != nil {
+			if result.Error != "" {
+				if _, err := fmt.Fprintf(&out, "    note\t%s\n", result.Error); err != nil {
 					return "", err
 				}
 			}
@@ -99,22 +106,73 @@ func renderDoctorText(ctx context.Context, cfg *config.Config, plain, suggest bo
 	if _, err := fmt.Fprintln(&out, style.header("commands:")); err != nil {
 		return "", err
 	}
-	for _, name := range []string{"rg", "gopls", "typescript-language-server", "npx"} {
-		status := "missing"
-		if path, err := exec.LookPath(name); err == nil {
-			status = "found " + path
-		}
-		if _, err := fmt.Fprintf(&out, "  %s\t%s\n", name, style.status(status)); err != nil {
+	for _, result := range report.Commands {
+		if _, err := fmt.Fprintf(&out, "  %s\t%s\n", result.Name, style.status(result.Status)); err != nil {
 			return "", err
 		}
 	}
 
-	if suggest {
-		if _, err := fmt.Fprint(&out, suggestedDevProfile(cfg)); err != nil {
+	if report.SuggestedDevProfile != "" {
+		if _, err := fmt.Fprint(&out, report.SuggestedDevProfile); err != nil {
 			return "", err
 		}
 	}
 	return out.String(), nil
+}
+
+type doctorReport struct {
+	Providers           []providerCheck   `json:"providers"`
+	MCP                 []doctorMCPStatus `json:"mcp"`
+	Commands            []doctorCommand   `json:"commands"`
+	SuggestedDevProfile string            `json:"suggested_dev_profile,omitempty"`
+}
+
+type doctorMCPStatus struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+	ToolCount int    `json:"tool_count,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+type doctorCommand struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Path   string `json:"path,omitempty"`
+}
+
+func collectDoctorReport(ctx context.Context, cfg *config.Config, suggest bool) doctorReport {
+	report := doctorReport{
+		Providers: make([]providerCheck, 0, len(cfg.Providers)),
+		Commands:  make([]doctorCommand, 0, 4),
+	}
+	for _, name := range sortedProviderNames(cfg.Providers) {
+		report.Providers = append(report.Providers, checkProvider(ctx, name, cfg.Providers[name]))
+	}
+	for _, result := range mcptool.CheckConfigured(ctx, cfg.MCPServers) {
+		status := doctorMCPStatus{
+			Name:      result.Name,
+			Type:      result.Type,
+			Status:    result.Status,
+			ToolCount: result.ToolCount,
+		}
+		if result.Err != nil {
+			status.Error = result.Err.Error()
+		}
+		report.MCP = append(report.MCP, status)
+	}
+	for _, name := range []string{"rg", "gopls", "typescript-language-server", "npx"} {
+		check := doctorCommand{Name: name, Status: "missing"}
+		if path, err := exec.LookPath(name); err == nil {
+			check.Path = path
+			check.Status = "found " + path
+		}
+		report.Commands = append(report.Commands, check)
+	}
+	if suggest {
+		report.SuggestedDevProfile = suggestedDevProfile(cfg)
+	}
+	return report
 }
 
 type doctorStyle struct {
@@ -148,11 +206,11 @@ func (s doctorStyle) status(text string) string {
 }
 
 type providerCheck struct {
-	Name    string
-	Type    string
-	Status  string
-	Models  []string
-	Message string
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`
+	Status  string   `json:"status"`
+	Models  []string `json:"models,omitempty"`
+	Message string   `json:"message,omitempty"`
 }
 
 func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) providerCheck {

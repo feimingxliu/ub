@@ -181,6 +181,55 @@ func TestDoctorPlainDisablesStyledOutput(t *testing.T) {
 	}
 }
 
+func TestDoctorJSONReportsMachineReadableOutput(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  fake:
+    type: fake
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"doctor", "--json"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("doctor --json: %v", err)
+	}
+	var report struct {
+		Providers []struct {
+			Name   string `json:"name"`
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"providers"`
+		MCP []struct {
+			Name string `json:"name"`
+		} `json:"mcp"`
+		Commands []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Path   string `json:"path,omitempty"`
+		} `json:"commands"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor json: %v\n%s", err, out.String())
+	}
+	if len(report.Providers) != 1 || report.Providers[0].Name != "fake" || report.Providers[0].Status != "offline" {
+		t.Fatalf("providers = %#v", report.Providers)
+	}
+	if len(report.MCP) != 0 {
+		t.Fatalf("mcp = %#v, want empty when no servers configured", report.MCP)
+	}
+	if len(report.Commands) == 0 {
+		t.Fatalf("commands should be present: %#v", report.Commands)
+	}
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Fatalf("json doctor output contains ANSI sequences:\n%s", out.String())
+	}
+}
+
 func TestDoctorOpenAIMissingKeyDoesNotProbe(t *testing.T) {
 	probed := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
