@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 )
 
@@ -313,6 +315,105 @@ func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
 	}
 	if strings.Index(got, "current-new") > strings.Index(got, "current-old") {
 		t.Fatalf("workspace sessions are not ordered newest first:\n%s", got)
+	}
+}
+
+func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
+	temp := t.TempDir()
+	workspace := filepath.Join(temp, "repo")
+	other := filepath.Join(temp, "other")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(workspace)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.UnixMilli(1_700_000_000_000).UTC()
+	for _, sess := range []store.Session{
+		{ID: "current", Workspace: workspace, Title: "Current Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
+		{ID: "elsewhere", Workspace: other, Title: "Other Session", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+	} {
+		if err := st.CreateSession(context.Background(), sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
+		}
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		t.Fatalf("rollout.New: %v", err)
+	}
+	currentEvent, err := rollout.UserMessage("current", 1, message.Text(message.RoleUser, "please find the needle here"))
+	if err != nil {
+		t.Fatalf("UserMessage current: %v", err)
+	}
+	otherEvent, err := rollout.AssistantMessage("elsewhere", 2, message.Text(message.RoleAssistant, "the other Needle is here too"))
+	if err != nil {
+		t.Fatalf("AssistantMessage elsewhere: %v", err)
+	}
+	for _, event := range []rollout.Event{currentEvent, otherEvent} {
+		if err := ro.Append(context.Background(), event); err != nil {
+			t.Fatalf("Append(%s): %v", event.SessionID, err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"sessions", "search", "needle"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sessions search: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"WORKSPACE",
+		workspace,
+		other,
+		"current",
+		"elsewhere",
+		"please find the needle here",
+		"the other Needle is here too",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sessions search output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSessionsSearchNoMatches(t *testing.T) {
+	temp := t.TempDir()
+	workspace := filepath.Join(temp, "repo")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(workspace)
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"sessions", "search", "missing"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sessions search: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "no matches" {
+		t.Fatalf("sessions search output = %q, want no matches", got)
 	}
 }
 

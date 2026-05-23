@@ -3,6 +3,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -330,6 +331,14 @@ func newSessionsCmd() *cobra.Command {
 	}
 	lsCmd.Flags().BoolVar(&all, "all", false, "list sessions across all workspaces")
 	cmd.AddCommand(lsCmd)
+	cmd.AddCommand(&cobra.Command{
+		Use:   "search <query>",
+		Short: "Search rollout text across all sessions",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSessionsSearch(cmd, args[0])
+		},
+	})
 	cmd.AddCommand(&cobra.Command{
 		Use:     "rm <session-id> [session-id...]",
 		Aliases: []string{"delete", "del"},
@@ -1009,6 +1018,172 @@ func printSessionTable(out io.Writer, sessions []store.Session) error {
 		}
 	}
 	return w.Flush()
+}
+
+type sessionSearchMatch struct {
+	Session   store.Session
+	Turn      int
+	Type      rollout.Type
+	Time      time.Time
+	Snippet   string
+	Workspace string
+}
+
+func runSessionsSearch(cmd *cobra.Command, query string) error {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return fmt.Errorf("search query is empty")
+	}
+	path, err := store.DefaultPath()
+	if err != nil {
+		return fmt.Errorf("locate session store: %w", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	sessions, err := st.ListAllSessions(cmd.Context())
+	if err != nil {
+		return err
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		return err
+	}
+	matches, err := searchSessions(cmd.Context(), ro, sessions, query)
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "no matches")
+		return err
+	}
+	return printSessionSearchMatches(cmd.OutOrStdout(), matches)
+}
+
+func searchSessions(ctx context.Context, reader rollout.Reader, sessions []store.Session, query string) ([]sessionSearchMatch, error) {
+	needle := strings.ToLower(strings.TrimSpace(query))
+	var matches []sessionSearchMatch
+	for _, sess := range sessions {
+		if err := reader.ForEach(ctx, sess.ID, func(event rollout.Event) error {
+			text, err := rolloutEventSearchText(event)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(strings.ToLower(text), needle) {
+				return nil
+			}
+			matches = append(matches, sessionSearchMatch{
+				Session:   sess,
+				Turn:      event.Turn,
+				Type:      event.Type,
+				Time:      event.Time,
+				Snippet:   searchSnippet(text, query, 120),
+				Workspace: sess.Workspace,
+			})
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return matches, nil
+}
+
+func printSessionSearchMatches(out io.Writer, matches []sessionSearchMatch) error {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "WORKSPACE\tSESSION\tTURN\tTYPE\tTIME\tTITLE\tMATCH"); err != nil {
+		return err
+	}
+	for _, match := range matches {
+		title := match.Session.Title
+		if title == "" {
+			title = "(untitled)"
+		}
+		if _, err := fmt.Fprintf(
+			w,
+			"%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			match.Workspace,
+			match.Session.ID,
+			match.Turn,
+			match.Type,
+			match.Time.Local().Format(time.RFC3339),
+			title,
+			match.Snippet,
+		); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+func rolloutEventSearchText(event rollout.Event) (string, error) {
+	if msg, ok, err := rollout.MessageFromEvent(event); err != nil {
+		return "", err
+	} else if ok {
+		return msg.Text(), nil
+	}
+	switch event.Type {
+	case rollout.TypeError:
+		var payload rollout.ErrorPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode rollout error event %s: %w", event.ID, err)
+		}
+		return payload.Message, nil
+	case rollout.TypeActivity:
+		var payload rollout.ActivityPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode rollout activity event %s: %w", event.ID, err)
+		}
+		return strings.Join([]string{payload.ActivityKind, payload.ToolName, payload.Status, payload.Summary, payload.Content, payload.Decision, payload.Source, payload.Reason}, " "), nil
+	case rollout.TypeModeSwitch:
+		var payload rollout.ModeSwitchPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode rollout mode event %s: %w", event.ID, err)
+		}
+		return payload.Mode, nil
+	default:
+		return "", nil
+	}
+}
+
+func searchSnippet(text, query string, maxRunes int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if maxRunes <= 0 || len([]rune(text)) <= maxRunes {
+		return text
+	}
+	lowerText := strings.ToLower(text)
+	lowerQuery := strings.ToLower(strings.TrimSpace(query))
+	idx := strings.Index(lowerText, lowerQuery)
+	if idx < 0 {
+		return trimRunes(text, maxRunes)
+	}
+	runeStart := len([]rune(text[:idx]))
+	queryRunes := len([]rune(lowerQuery))
+	start := max(0, runeStart-(maxRunes-queryRunes)/2)
+	return trimRunesFrom(text, start, maxRunes)
+}
+
+func trimRunes(text string, maxRunes int) string {
+	return trimRunesFrom(text, 0, maxRunes)
+}
+
+func trimRunesFrom(text string, start, maxRunes int) string {
+	runes := []rune(text)
+	if start > len(runes) {
+		start = len(runes)
+	}
+	end := min(len(runes), start+maxRunes)
+	prefix := ""
+	if start > 0 {
+		prefix = "..."
+	}
+	suffix := ""
+	if end < len(runes) {
+		suffix = "..."
+	}
+	return prefix + string(runes[start:end]) + suffix
 }
 
 func runSessionsRM(cmd *cobra.Command, ids []string) error {
