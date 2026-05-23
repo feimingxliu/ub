@@ -512,12 +512,36 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 	for _, register := range []func(*tool.Registry, string) error{
 		search.Register,
 		shell.Register,
-		job.Register,
 	} {
 		if err := register(reg, cwd); err != nil {
 			return nil, err
 		}
 	}
+	jobCfg := config.Defaults().Tools.Job
+	if cfg != nil {
+		if cfg.Tools.Job.MaxConcurrent != 0 {
+			jobCfg.MaxConcurrent = cfg.Tools.Job.MaxConcurrent
+		}
+		if cfg.Tools.Job.Retention != 0 {
+			jobCfg.Retention = cfg.Tools.Job.Retention
+		}
+		if cfg.Tools.Job.CleanupInterval != 0 {
+			jobCfg.CleanupInterval = cfg.Tools.Job.CleanupInterval
+		}
+	}
+	jobMgr, err := job.RegisterWithOptions(reg, cwd, job.ManagerOptions{
+		MaxConcurrent:   jobCfg.MaxConcurrent,
+		Retention:       jobCfg.Retention,
+		CleanupInterval: jobCfg.CleanupInterval,
+	})
+	if err != nil {
+		return nil, err
+	}
+	closers = append(closers, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return jobMgr.Shutdown(ctx)
+	})
 	runtime := &toolRuntime{
 		Registry:  reg,
 		Workspace: cwd,

@@ -18,6 +18,13 @@ func Defaults() *Config {
 			AutoAllowWrite: false,
 			AutoAllowExec:  false,
 		},
+		Tools: ToolsConfig{
+			Job: JobToolConfig{
+				MaxConcurrent:   50,
+				Retention:       8 * time.Hour,
+				CleanupInterval: 5 * time.Minute,
+			},
+		},
 		Context: ContextConfig{
 			TriggerRatio:        0.8,
 			KeepRecentTurns:     3,

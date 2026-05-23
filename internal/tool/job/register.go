@@ -10,21 +10,29 @@ import (
 // Register creates a fresh Manager bound to root and adds job_run /
 // job_output / job_kill to reg, all sharing that Manager.
 func Register(reg *tool.Registry, root string) error {
+	_, err := RegisterWithOptions(reg, root, ManagerOptions{})
+	return err
+}
+
+// RegisterWithOptions creates a Manager with lifecycle options and registers
+// job_run / job_output / job_kill to reg.
+func RegisterWithOptions(reg *tool.Registry, root string, opts ManagerOptions) (*Manager, error) {
 	if reg == nil {
-		return fmt.Errorf("job: nil registry")
+		return nil, fmt.Errorf("job: nil registry")
 	}
 	if root == "" {
-		return fmt.Errorf("job: empty workspace root")
+		return nil, fmt.Errorf("job: empty workspace root")
 	}
-	mgr := NewManager(filepath.Clean(root))
+	mgr := NewManagerWithOptions(filepath.Clean(root), opts)
 	for _, t := range []tool.Tool{
 		newRunTool(mgr),
 		newOutputTool(mgr),
 		newKillTool(mgr),
 	} {
 		if err := reg.Register(t); err != nil {
-			return err
+			_ = mgr.Shutdown(nil)
+			return nil, err
 		}
 	}
-	return nil
+	return mgr, nil
 }

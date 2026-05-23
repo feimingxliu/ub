@@ -95,6 +95,21 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "JobToolConfig": {
+      "properties": {
+        "max_concurrent": {
+          "type": "integer"
+        },
+        "retention": {
+          "type": "integer"
+        },
+        "cleanup_interval": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "LSPServerConfig": {
       "properties": {
         "command": {
@@ -199,6 +214,9 @@
         "execution_mode": {
           "type": "string"
         },
+        "max_turns": {
+          "type": "integer"
+        },
         "reasoning": {
           "$ref": "#/$defs/Config"
         },
@@ -234,6 +252,9 @@
             "$ref": "#/$defs/LSPServerConfig"
           },
           "type": "object"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolsConfig"
         },
         "context": {
           "$ref": "#/$defs/ContextConfig"
@@ -332,6 +353,15 @@
       },
       "additionalProperties": false,
       "type": "object"
+    },
+    "ToolsConfig": {
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/JobToolConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
     }
   },
   "properties": {
@@ -346,6 +376,9 @@
     },
     "execution_mode": {
       "type": "string"
+    },
+    "max_turns": {
+      "type": "integer"
     },
     "reasoning": {
       "$ref": "#/$defs/Config"
@@ -388,6 +421,9 @@
         "$ref": "#/$defs/LSPServerConfig"
       },
       "type": "object"
+    },
+    "tools": {
+      "$ref": "#/$defs/ToolsConfig"
     },
     "context": {
       "$ref": "#/$defs/ContextConfig"

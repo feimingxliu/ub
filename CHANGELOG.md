@@ -8,6 +8,7 @@ All notable changes to this project are documented here.
 
 - Add `CONTRIBUTING.md` with contributor build, test, formatting, commit, PR, documentation, and security guidance.
 - Add Syft SBOM generation, Cosign keyless release signatures, and documented release verification steps.
+- Add configurable background job concurrency, retention cleanup, and shutdown termination.
 
 ### Fixed
 

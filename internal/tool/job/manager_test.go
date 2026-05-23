@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"testing"
@@ -112,6 +113,77 @@ func TestManager_EmptyCommand(t *testing.T) {
 	if _, err := mgr.Start("", ""); err == nil {
 		t.Fatalf("expected empty-command error")
 	}
+}
+
+func TestManager_MaxConcurrentRejectsNewJob(t *testing.T) {
+	mgr := NewManagerWithOptions(t.TempDir(), ManagerOptions{MaxConcurrent: 1})
+	j, err := mgr.Start("", longRunningCommand())
+	if err != nil {
+		t.Fatalf("start first: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = mgr.Shutdown(context.Background())
+	})
+
+	if _, err := mgr.Start("", longRunningCommand()); err == nil || !strings.Contains(err.Error(), "maximum concurrent jobs") {
+		t.Fatalf("expected max-concurrent error, got %v", err)
+	}
+	if _, ok := mgr.Get(j.id); !ok {
+		t.Fatalf("first job disappeared after rejected start")
+	}
+}
+
+func TestManager_PruneCompletedRemovesExpiredJobs(t *testing.T) {
+	now := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+	mgr := NewManagerWithOptions(t.TempDir(), ManagerOptions{Retention: time.Hour})
+	expired := &job{id: "expired", state: stateExited, exitCode: 0, completedAt: now.Add(-2 * time.Hour), stdout: newRing(streamCap), stderr: newRing(streamCap), done: closedDone()}
+	recent := &job{id: "recent", state: stateExited, exitCode: 0, completedAt: now.Add(-30 * time.Minute), stdout: newRing(streamCap), stderr: newRing(streamCap), done: closedDone()}
+	mgr.jobs[expired.id] = expired
+	mgr.jobs[recent.id] = recent
+
+	if deleted := mgr.PruneCompleted(now); deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+	if _, ok := mgr.Get("expired"); ok {
+		t.Fatalf("expired job was not pruned")
+	}
+	if _, ok := mgr.Get("recent"); !ok {
+		t.Fatalf("recent job should remain")
+	}
+}
+
+func TestManager_ShutdownTerminatesRunningJobs(t *testing.T) {
+	mgr := NewManagerWithOptions(t.TempDir(), ManagerOptions{MaxConcurrent: 2})
+	first, err := mgr.Start("", longRunningCommand())
+	if err != nil {
+		t.Fatalf("start first: %v", err)
+	}
+	second, err := mgr.Start("", longRunningCommand())
+	if err != nil {
+		t.Fatalf("start second: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := mgr.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	for _, j := range []*job{first, second} {
+		j.mu.Lock()
+		state := j.state
+		killed := j.killed
+		reason := j.killReason
+		j.mu.Unlock()
+		if state != stateExited || !killed || reason != "killed by manager shutdown" {
+			t.Fatalf("job %s state=%s killed=%t reason=%q", j.id, state, killed, reason)
+		}
+	}
+}
+
+func closedDone() chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 func successCommand() string {

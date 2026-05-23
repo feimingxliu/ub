@@ -293,6 +293,22 @@ providers:
     base_url: http://localhost:11434
 ```
 
+### 4.7 后台 Job 工具
+
+`job_run` / `job_output` / `job_kill` 的生命周期可以通过 `tools.job` 调整：
+
+```yaml
+tools:
+  job:
+    max_concurrent: 50
+    retention: 8h
+    cleanup_interval: 5m
+```
+
+- `max_concurrent`：manager 内同时保留的 job 上限，达到后 `job_run` 会拒绝新任务。
+- `retention`：已完成 job 在 manager 内保留多久，超时后由后台清扫器移除。
+- `cleanup_interval`：长跑进程中的后台清扫周期。
+
 ## 5. 验证安装
 
 ```sh

@@ -43,6 +43,7 @@ type Config struct {
 	Permissions     PermissionConfig           `yaml:"permissions,omitempty"   json:"permissions,omitempty"`
 	MCPServers      map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
 	LSPServers      map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
+	Tools           ToolsConfig                `yaml:"tools,omitempty"        json:"tools,omitempty"`
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
 
@@ -65,6 +66,7 @@ type ProfileConfig struct {
 	Permissions     PermissionConfig           `yaml:"permissions,omitempty"   json:"permissions,omitempty"`
 	MCPServers      map[string]MCPServerConfig `yaml:"mcp_servers,omitempty"  json:"mcp_servers,omitempty"`
 	LSPServers      map[string]LSPServerConfig `yaml:"lsp_servers,omitempty"  json:"lsp_servers,omitempty"`
+	Tools           ToolsConfig                `yaml:"tools,omitempty"        json:"tools,omitempty"`
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
 }
@@ -142,6 +144,18 @@ type LSPServerConfig struct {
 	Command   string   `yaml:"command,omitempty"    json:"command,omitempty"`
 	Args      []string `yaml:"args,omitempty"       json:"args,omitempty"`
 	FileTypes []string `yaml:"file_types,omitempty" json:"file_types,omitempty"`
+}
+
+// ToolsConfig controls built-in tool behavior.
+type ToolsConfig struct {
+	Job JobToolConfig `yaml:"job,omitempty" json:"job,omitempty"`
+}
+
+// JobToolConfig controls background job lifecycle limits.
+type JobToolConfig struct {
+	MaxConcurrent   int           `yaml:"max_concurrent,omitempty"  json:"max_concurrent,omitempty"`
+	Retention       time.Duration `yaml:"retention,omitempty"       json:"retention,omitempty"`
+	CleanupInterval time.Duration `yaml:"cleanup_interval,omitempty" json:"cleanup_interval,omitempty"`
 }
 
 // ContextConfig controls auto-summarization (used by I-28).

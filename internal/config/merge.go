@@ -63,6 +63,7 @@ func mergeInto(dst, src *Config) {
 	mergeLSPMap(&dst.LSPServers, src.LSPServers)
 	mergeTUI(&dst.TUI, src.TUI)
 	mergePermissions(&dst.Permissions, src.Permissions)
+	mergeTools(&dst.Tools, src.Tools)
 	mergeContext(&dst.Context, src.Context)
 	mergeCleanup(&dst.Cleanup, src.Cleanup)
 	mergeUnknown(&dst.Unknown, src.Unknown)
@@ -158,6 +159,18 @@ func mergePermissions(dst *PermissionConfig, src PermissionConfig) {
 	}
 	if src.AutoAllowExec {
 		dst.AutoAllowExec = src.AutoAllowExec
+	}
+}
+
+func mergeTools(dst *ToolsConfig, src ToolsConfig) {
+	if src.Job.MaxConcurrent != 0 {
+		dst.Job.MaxConcurrent = src.Job.MaxConcurrent
+	}
+	if src.Job.Retention != 0 {
+		dst.Job.Retention = src.Job.Retention
+	}
+	if src.Job.CleanupInterval != 0 {
+		dst.Job.CleanupInterval = src.Job.CleanupInterval
 	}
 }
 

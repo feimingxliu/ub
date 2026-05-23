@@ -33,6 +33,11 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.TUI.Theme == "" {
 		t.Fatalf("defaults not applied: %#v", cfg)
 	}
+	if cfg.Tools.Job.MaxConcurrent != 50 ||
+		cfg.Tools.Job.Retention.String() != "8h0m0s" ||
+		cfg.Tools.Job.CleanupInterval.String() != "5m0s" {
+		t.Fatalf("job tool defaults not applied: %#v", cfg.Tools.Job)
+	}
 	if !cfg.Cleanup.CleanupEnabled() ||
 		cfg.Cleanup.Interval.String() != "24h0m0s" ||
 		cfg.Cleanup.Sessions.MaxAge.String() != "720h0m0s" ||
@@ -40,6 +45,29 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Cleanup.Logs.MaxSizeMB != 10 ||
 		cfg.Cleanup.Logs.MaxBackups != 5 {
 		t.Fatalf("cleanup defaults not applied: %#v", cfg.Cleanup)
+	}
+}
+
+func TestLoadFromDirsParsesJobToolConfig(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `tools:
+  job:
+    max_concurrent: 3
+    retention: 2h
+    cleanup_interval: 30s
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Tools.Job.MaxConcurrent != 3 ||
+		cfg.Tools.Job.Retention.String() != "2h0m0s" ||
+		cfg.Tools.Job.CleanupInterval.String() != "30s" {
+		t.Fatalf("tools.job = %#v", cfg.Tools.Job)
 	}
 }
 

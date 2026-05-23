@@ -81,6 +81,13 @@ func TestMergeDefaults(t *testing.T) {
 			TriggerRatio:    0.9,
 			KeepRecentTurns: 5,
 		},
+		Tools: ToolsConfig{
+			Job: JobToolConfig{
+				MaxConcurrent:   10,
+				Retention:       4 * time.Hour,
+				CleanupInterval: time.Minute,
+			},
+		},
 		Cleanup: CleanupConfig{
 			Enabled:  &cleanupEnabled,
 			Interval: 12 * time.Hour,
@@ -113,6 +120,11 @@ func TestMergeDefaults(t *testing.T) {
 	}
 	if got.Context.TriggerRatio != 0.9 || got.Context.KeepRecentTurns != 5 {
 		t.Fatalf("context = %#v", got.Context)
+	}
+	if got.Tools.Job.MaxConcurrent != 10 ||
+		got.Tools.Job.Retention != 4*time.Hour ||
+		got.Tools.Job.CleanupInterval != time.Minute {
+		t.Fatalf("tools.job = %#v", got.Tools.Job)
 	}
 	if got.Cleanup.CleanupEnabled() {
 		t.Fatalf("cleanup enabled = true, want false")
