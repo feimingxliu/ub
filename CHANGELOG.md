@@ -4,15 +4,22 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Breaking
+
+- Sessions are now keyed by the resolved Git root rather than the literal working directory. Running `ub` from any subdirectory of a repository shares one workspace; previously each subdirectory was tracked separately. Existing sessions persisted from subdirectories will still be visible via `ub sessions ls --all` but no longer surface in the default `ub sessions ls` output for that subdirectory.
+
 ### Added
 
 - Add `CONTRIBUTING.md` with contributor build, test, formatting, commit, PR, documentation, and security guidance.
 - Add Syft SBOM generation, Cosign keyless release signatures, and documented release verification steps.
 - Add configurable background job concurrency, retention cleanup, and shutdown termination.
+- Add `--limit` and `--workspace` flags to `ub sessions search` so large session stores do not have to be scanned end-to-end.
 
 ### Fixed
 
 - Normalize persisted session workspaces through absolute path, symlink, clean-path, and Git-root resolution so checkout roots and subdirectories share sessions.
+- TUI `/copy` and `/doctor` no longer block the UI loop while the clipboard or doctor checks run.
+- MCP tool calls no longer reconnect or retransmit after a server-side JSON-RPC error or a caller cancellation; only transport-level failures trigger reconnect-and-retry.
 
 ## [0.1.2] - 2026-05-22
 
