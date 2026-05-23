@@ -7,6 +7,7 @@ endif
 BIN := ub$(EXE)
 GOFUMPT_VERSION ?= mvdan.cc/gofumpt@latest
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+RELEASE_NOTES ?= .release-notes.md
 
 build:
 	go build -o $(BIN) ./cmd/ub
@@ -61,8 +62,7 @@ changelog:
 	git cliff --output CHANGELOG.md
 
 release-notes:
-	mkdir -p dist
-	./scripts/release-notes.sh "$(VERSION)" CHANGELOG.md > dist/release-notes.md
+	./scripts/release-notes.sh "$(VERSION)" CHANGELOG.md > $(RELEASE_NOTES)
 
 tidy:
 	go mod tidy

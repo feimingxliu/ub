@@ -6,6 +6,7 @@
 # Go binary (matches the project's main artifact)
 /ub
 /dist/
+/.release-notes.md
 *.exe
 
 # Go test / coverage artifacts
