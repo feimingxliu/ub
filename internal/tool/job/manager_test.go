@@ -7,15 +7,7 @@ import (
 	"time"
 )
 
-func skipOnWindows(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("job tools not supported on windows in V1")
-	}
-}
-
 func TestManager_StartAndWaitForExit(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	j, err := mgr.Start("", "echo hi")
 	if err != nil {
@@ -40,9 +32,8 @@ func TestManager_StartAndWaitForExit(t *testing.T) {
 }
 
 func TestManager_KillSleep(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
-	j, err := mgr.Start("", "sleep 30")
+	j, err := mgr.Start("", longRunningCommand())
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -66,9 +57,8 @@ func TestManager_KillSleep(t *testing.T) {
 }
 
 func TestManager_KillIdempotent(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
-	j, err := mgr.Start("", "true")
+	j, err := mgr.Start("", successCommand())
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -83,10 +73,8 @@ func TestManager_KillIdempotent(t *testing.T) {
 }
 
 func TestManager_RingTotalAndTail(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
-	// awk one-liner produces deterministic 40000 bytes of 'x'.
-	j, err := mgr.Start("", "awk 'BEGIN{for(i=0;i<40000;i++)printf \"x\"}'")
+	j, err := mgr.Start("", largeOutputCommand())
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -113,7 +101,6 @@ func TestManager_RingTotalAndTail(t *testing.T) {
 }
 
 func TestManager_CwdOutsideRoot(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	if _, err := mgr.Start("../", "pwd"); err == nil {
 		t.Fatalf("expected sandbox error")
@@ -121,9 +108,36 @@ func TestManager_CwdOutsideRoot(t *testing.T) {
 }
 
 func TestManager_EmptyCommand(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	if _, err := mgr.Start("", ""); err == nil {
 		t.Fatalf("expected empty-command error")
 	}
+}
+
+func successCommand() string {
+	if runtime.GOOS == "windows" {
+		return "exit 0"
+	}
+	return "true"
+}
+
+func longRunningCommand() string {
+	if runtime.GOOS == "windows" {
+		return "ping -n 30 127.0.0.1 >NUL"
+	}
+	return "sleep 30"
+}
+
+func runningOutputCommand() string {
+	if runtime.GOOS == "windows" {
+		return "echo line1 & echo line2 & echo line3 & ping -n 30 127.0.0.1 >NUL"
+	}
+	return "for i in 1 2 3; do echo line$i; done; sleep 30"
+}
+
+func largeOutputCommand() string {
+	if runtime.GOOS == "windows" {
+		return `powershell -NoProfile -Command "$s = 'x' * 40000; [Console]::Out.Write($s)"`
+	}
+	return "awk 'BEGIN{for(i=0;i<40000;i++)printf \"x\"}'"
 }

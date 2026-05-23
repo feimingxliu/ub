@@ -75,9 +75,6 @@ func (w *ringWriter) Write(p []byte) (int, error) {
 // resolves cwd through tool.Resolve so escapes are rejected before any
 // process is spawned.
 func (m *Manager) Start(cwd, command string) (*job, error) {
-	if runtime.GOOS == "windows" {
-		return nil, fmt.Errorf("job: not supported on windows in V1")
-	}
 	if command == "" {
 		return nil, fmt.Errorf("job: command is required")
 	}
@@ -105,7 +102,7 @@ func (m *Manager) Start(cwd, command string) (*job, error) {
 		done:      make(chan struct{}),
 	}
 
-	cmd := exec.Command("/bin/sh", "-c", command)
+	cmd := shellCommand(command)
 	cmd.Dir = absCwd
 	cmd.Stdin = devNull
 	cmd.Stdout = &ringWriter{job: j, r: j.stdout}
@@ -153,28 +150,37 @@ func (m *Manager) Get(id string) (*job, bool) {
 // (killed=true) only when this call is the one that requested the
 // signal; a job that was already exited returns (killed=false).
 func (m *Manager) Kill(j *job) (bool, error) {
-	if runtime.GOOS == "windows" {
-		return false, fmt.Errorf("job: not supported on windows in V1")
-	}
 	j.mu.Lock()
 	if j.state == stateExited {
 		j.mu.Unlock()
 		return false, nil
 	}
-	pid := j.cmd.Process.Pid
+	process := j.cmd.Process
+	pid := process.Pid
 	j.killOnce.Do(func() {
 		j.killed = true
 		j.killReason = "killed by job_kill"
-		_ = procgroup.Kill(pid, syscall.SIGTERM)
-		go func() {
-			time.Sleep(killGrace)
-			_ = procgroup.Kill(pid, syscall.SIGKILL)
-		}()
+		if runtime.GOOS == "windows" {
+			_ = process.Kill()
+		} else {
+			_ = procgroup.Kill(pid, syscall.SIGTERM)
+			go func() {
+				time.Sleep(killGrace)
+				_ = procgroup.Kill(pid, syscall.SIGKILL)
+			}()
+		}
 	})
 	j.mu.Unlock()
 
 	<-j.done
 	return true, nil
+}
+
+func shellCommand(command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/C", command)
+	}
+	return exec.Command("/bin/sh", "-c", command)
 }
 
 func exitCodeFromErr(err error) int {

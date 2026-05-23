@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -30,15 +29,12 @@ func newKillTool(mgr *Manager) *killTool {
 
 func (t *killTool) Name() string { return "job_kill" }
 func (t *killTool) Description() string {
-	return "Terminate a background job. Sends SIGTERM to the process group, then SIGKILL after 2 seconds."
+	return "Terminate a background job. On Unix, sends SIGTERM to the process group, then SIGKILL after 2 seconds."
 }
 func (t *killTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *killTool) Risk() tool.Risk            { return tool.RiskExec }
 
 func (t *killTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
-	if runtime.GOOS == "windows" {
-		return tool.Result{}, fmt.Errorf("job_kill: not supported on windows in V1")
-	}
 	var a killArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("job_kill: invalid args: %w", err)

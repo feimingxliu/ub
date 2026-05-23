@@ -1,6 +1,10 @@
 .PHONY: build install test vet fmt lint check schema tidy clean run version install-hooks ensure-gofumpt changelog release-notes
 
-BIN := ub
+EXE :=
+ifeq ($(OS),Windows_NT)
+EXE := .exe
+endif
+BIN := ub$(EXE)
 GOFUMPT_VERSION ?= mvdan.cc/gofumpt@latest
 VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 

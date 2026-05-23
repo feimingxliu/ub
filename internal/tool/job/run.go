@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -14,7 +13,7 @@ import (
 )
 
 type runArgs struct {
-	Command string `json:"command"      jsonschema:"required,description=Shell command, executed via /bin/sh -c."`
+	Command string `json:"command"      jsonschema:"required,description=Shell command, executed through the platform shell."`
 	Cwd     string `json:"cwd,omitempty" jsonschema:"description=Working directory, relative to workspace root. Defaults to '.'."`
 }
 
@@ -32,15 +31,12 @@ func newRunTool(mgr *Manager) *runTool {
 
 func (t *runTool) Name() string { return "job_run" }
 func (t *runTool) Description() string {
-	return "Start a background shell job via /bin/sh -c and return its job_id. Output is captured into a 32KB ring buffer per stream."
+	return "Start a background shell job and return its job_id. Output is captured into a 32KB ring buffer per stream."
 }
 func (t *runTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *runTool) Risk() tool.Risk            { return tool.RiskExec }
 
 func (t *runTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
-	if runtime.GOOS == "windows" {
-		return tool.Result{}, fmt.Errorf("job_run: not supported on windows in V1")
-	}
 	var a runArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("job_run: invalid args: %w", err)

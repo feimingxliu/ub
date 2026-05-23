@@ -9,12 +9,10 @@ import (
 )
 
 func TestOutputTool_RunningJob(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	run := newRunTool(mgr)
 	out := newOutputTool(mgr)
-	// command produces a few lines fast then sleeps to stay running.
-	res, err := execTool(t, run, runArgs{Command: "for i in 1 2 3; do echo line$i; done; sleep 30"})
+	res, err := execTool(t, run, runArgs{Command: runningOutputCommand()})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -56,7 +54,6 @@ func TestOutputTool_RunningJob(t *testing.T) {
 }
 
 func TestOutputTool_NotFound(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	out := newOutputTool(mgr)
 	_, err := execTool(t, out, outputArgs{JobID: "nope"})
@@ -66,7 +63,6 @@ func TestOutputTool_NotFound(t *testing.T) {
 }
 
 func TestOutputTool_MissingID(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	out := newOutputTool(mgr)
 	if _, err := execTool(t, out, outputArgs{}); err == nil {

@@ -8,7 +8,8 @@ import (
 	"syscall"
 )
 
-// Set is a no-op on Windows; callers gate on runtime.GOOS first.
+// Set is a no-op on Windows. The job manager falls back to direct process
+// termination instead of Unix-style process-group signaling.
 func Set(cmd *exec.Cmd) {}
 
 // Kill returns an explicit not-supported error on Windows.

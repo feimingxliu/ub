@@ -19,7 +19,6 @@ func execTool(t *testing.T, tl tool.Tool, args any) (tool.Result, error) {
 }
 
 func TestRunTool_HappyPath(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	tl := newRunTool(mgr)
 	res, err := execTool(t, tl, runArgs{Command: "echo hi"})
@@ -39,7 +38,6 @@ func TestRunTool_HappyPath(t *testing.T) {
 }
 
 func TestRunTool_EmptyCommand(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	tl := newRunTool(mgr)
 	if _, err := execTool(t, tl, runArgs{Command: ""}); err == nil {
@@ -48,7 +46,6 @@ func TestRunTool_EmptyCommand(t *testing.T) {
 }
 
 func TestRunTool_CwdOutsideRoot(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	tl := newRunTool(mgr)
 	if _, err := execTool(t, tl, runArgs{Command: "pwd", Cwd: "../"}); err == nil {

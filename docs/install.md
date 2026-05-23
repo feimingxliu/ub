@@ -141,6 +141,10 @@ exec $SHELL -l
 
 > macOS Gatekeeper 的处理已经写在 [§2.1](#21-从-release-归档安装推荐)。
 
+> Windows 说明：仓库的 Platform workflow 会在 `windows-latest` 上运行
+> `make build`、`make test`、`make vet`，并用 zip 归档做一次
+> `ub.exe --version` / `ub.exe run --help` 安装烟测。WSL 验证不属于当前自动化门禁。
+
 ## 4. 配置 Provider
 
 ub 启动时按以下顺序合并配置：

@@ -1,0 +1,33 @@
+name: Platform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install make
+        run: choco install make -y --no-progress
+      - name: make build
+        run: make build
+      - name: make test
+        run: make test
+      - name: make vet
+        run: make vet
+      - name: Smoke release archive install
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          Compress-Archive -Path ub.exe,README.md,docs/install.md -DestinationPath smoke/ub_windows_amd64.zip -Force
+          Expand-Archive smoke/ub_windows_amd64.zip -DestinationPath smoke/install -Force
+          & .\smoke\install\ub.exe --version
+          & .\smoke\install\ub.exe run --help

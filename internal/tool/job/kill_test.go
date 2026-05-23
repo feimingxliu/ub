@@ -7,12 +7,11 @@ import (
 )
 
 func TestKillTool_HappyPath(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	run := newRunTool(mgr)
 	kill := newKillTool(mgr)
 
-	runRes, err := execTool(t, run, runArgs{Command: "sleep 30"})
+	runRes, err := execTool(t, run, runArgs{Command: longRunningCommand()})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -34,12 +33,11 @@ func TestKillTool_HappyPath(t *testing.T) {
 }
 
 func TestKillTool_Idempotent(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	run := newRunTool(mgr)
 	kill := newKillTool(mgr)
 
-	runRes, err := execTool(t, run, runArgs{Command: "true"})
+	runRes, err := execTool(t, run, runArgs{Command: successCommand()})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
@@ -59,7 +57,6 @@ func TestKillTool_Idempotent(t *testing.T) {
 }
 
 func TestKillTool_NotFound(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	kill := newKillTool(mgr)
 	_, err := execTool(t, kill, killArgs{JobID: "nope"})
@@ -69,7 +66,6 @@ func TestKillTool_NotFound(t *testing.T) {
 }
 
 func TestKillTool_MissingID(t *testing.T) {
-	skipOnWindows(t)
 	mgr := NewManager(t.TempDir())
 	kill := newKillTool(mgr)
 	if _, err := execTool(t, kill, killArgs{}); err == nil {
