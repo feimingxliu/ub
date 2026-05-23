@@ -531,6 +531,54 @@ func TestModelRendersToolEvents(t *testing.T) {
 	}
 }
 
+func TestToastShowsToolResultFeedback(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(streamEventMsg{
+		event: Event{Type: EventToolCallEnd, ToolName: "read"},
+		ok:    true,
+		runID: model.runID,
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "notice: tool read succeeded") {
+		t.Fatalf("view missing success toast:\n%s", viewString(model))
+	}
+
+	updated, _ = model.Update(streamEventMsg{
+		event: Event{Type: EventToolCallEnd, ToolName: "write", IsError: true},
+		ok:    true,
+		runID: model.runID,
+	})
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "notice: tool write failed") {
+		t.Fatalf("view missing failure toast:\n%s", viewString(model))
+	}
+}
+
+func TestToastShowsApprovalFeedbackAndClearsOnInput(t *testing.T) {
+	response := make(chan permission.Decision, 1)
+	model := NewModel(Options{})
+	updated, _ := model.Update(permissionRequestMsg{
+		request: PermissionRequest{
+			Request:  permission.Request{Tool: "bash"},
+			Response: response,
+		},
+		ok: true,
+	})
+	model = assertModel(t, updated)
+
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "notice: approval allowed bash") {
+		t.Fatalf("view missing approval toast:\n%s", viewString(model))
+	}
+
+	updated, _ = model.Update(runePress('x'))
+	model = assertModel(t, updated)
+	if strings.Contains(viewString(model), "notice: approval allowed bash") {
+		t.Fatalf("toast did not clear on input:\n%s", viewString(model))
+	}
+}
+
 func TestModelRendersActivityEvents(t *testing.T) {
 	runner := &scriptedRunner{events: []Event{
 		{Type: EventActivity, ActivityKind: "thinking", Summary: "checking repository context"},

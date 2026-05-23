@@ -111,6 +111,7 @@ type Model struct {
 	spinnerFrame    int
 	runStartedAt    time.Time
 	activitySummary string
+	toast           toastState
 }
 
 // NewModel creates the root TUI model.
@@ -223,6 +224,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinnerTickMsg:
 		return m.handleSpinnerTick(msg)
 	}
+	m.clearToastForInteraction(msg)
 
 	if m.pendingLimit != nil {
 		if mouseMsg, ok := msg.(tea.MouseWheelMsg); ok {
@@ -613,6 +615,9 @@ func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.C
 	if m.pending != nil && m.pending.Response != nil {
 		m.pending.Response <- decision
 	}
+	if m.pending != nil && permissionDecisionAllows(decision) {
+		m.showToast(toastSuccess, fmt.Sprintf("approval allowed %s", defaultString(m.pending.Request.Tool, "tool")))
+	}
 	m.pending = nil
 	return m, waitForPermission(m.permReqs)
 }
@@ -970,6 +975,7 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	m.updateContextUsage(event)
+	m.showToastForEvent(event)
 	switch event.Type {
 	case EventContext:
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)

@@ -118,6 +118,9 @@ func (m Model) footerFrame(width int) footerFrame {
 	if indicator := m.runIndicatorView(width); indicator != "" {
 		lines = append(lines, splitFrameLines(indicator)...)
 	}
+	if toast := m.toastView(width); toast != "" {
+		lines = append(lines, splitFrameLines(toast)...)
+	}
 	lines = append(lines, splitFrameLines(m.status.view(width, m.styles))...)
 	return footerFrame{lines: lines, inputLine: inputLine}
 }
