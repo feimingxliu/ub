@@ -13,6 +13,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
@@ -331,14 +332,21 @@ func newSessionsCmd() *cobra.Command {
 	}
 	lsCmd.Flags().BoolVar(&all, "all", false, "list sessions across all workspaces")
 	cmd.AddCommand(lsCmd)
-	cmd.AddCommand(&cobra.Command{
+	var (
+		searchLimit     int
+		searchWorkspace string
+	)
+	searchCmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search rollout text across all sessions",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSessionsSearch(cmd, args[0])
+			return runSessionsSearch(cmd, args[0], searchLimit, searchWorkspace)
 		},
-	})
+	}
+	searchCmd.Flags().IntVar(&searchLimit, "limit", 200, "max matches to return (0 = unlimited)")
+	searchCmd.Flags().StringVar(&searchWorkspace, "workspace", "", "restrict to a single workspace path")
+	cmd.AddCommand(searchCmd)
 	cmd.AddCommand(&cobra.Command{
 		Use:     "rm <session-id> [session-id...]",
 		Aliases: []string{"delete", "del"},
@@ -1029,7 +1037,7 @@ type sessionSearchMatch struct {
 	Workspace string
 }
 
-func runSessionsSearch(cmd *cobra.Command, query string) error {
+func runSessionsSearch(cmd *cobra.Command, query string, limit int, workspace string) error {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return fmt.Errorf("search query is empty")
@@ -1048,11 +1056,24 @@ func runSessionsSearch(cmd *cobra.Command, query string) error {
 	if err != nil {
 		return err
 	}
+	if workspace = strings.TrimSpace(workspace); workspace != "" {
+		canonical, err := canonicalWorkspace(workspace)
+		if err != nil {
+			return err
+		}
+		filtered := sessions[:0]
+		for _, sess := range sessions {
+			if sess.Workspace == canonical {
+				filtered = append(filtered, sess)
+			}
+		}
+		sessions = filtered
+	}
 	ro, err := rollout.New(st)
 	if err != nil {
 		return err
 	}
-	matches, err := searchSessions(cmd.Context(), ro, sessions, query)
+	matches, err := searchSessions(cmd.Context(), ro, sessions, query, limit)
 	if err != nil {
 		return err
 	}
@@ -1063,11 +1084,15 @@ func runSessionsSearch(cmd *cobra.Command, query string) error {
 	return printSessionSearchMatches(cmd.OutOrStdout(), matches)
 }
 
-func searchSessions(ctx context.Context, reader rollout.Reader, sessions []store.Session, query string) ([]sessionSearchMatch, error) {
+// errSearchLimitReached short-circuits ForEach once the caller has accumulated
+// the requested number of matches; the surrounding loop swallows it.
+var errSearchLimitReached = fmt.Errorf("search: match limit reached")
+
+func searchSessions(ctx context.Context, reader rollout.Reader, sessions []store.Session, query string, limit int) ([]sessionSearchMatch, error) {
 	needle := strings.ToLower(strings.TrimSpace(query))
 	var matches []sessionSearchMatch
 	for _, sess := range sessions {
-		if err := reader.ForEach(ctx, sess.ID, func(event rollout.Event) error {
+		err := reader.ForEach(ctx, sess.ID, func(event rollout.Event) error {
 			text, err := rolloutEventSearchText(event)
 			if err != nil {
 				return err
@@ -1083,8 +1108,15 @@ func searchSessions(ctx context.Context, reader rollout.Reader, sessions []store
 				Snippet:   searchSnippet(text, query, 120),
 				Workspace: sess.Workspace,
 			})
+			if limit > 0 && len(matches) >= limit {
+				return errSearchLimitReached
+			}
 			return nil
-		}); err != nil {
+		})
+		if errors.Is(err, errSearchLimitReached) {
+			return matches, nil
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -1159,8 +1191,8 @@ func searchSnippet(text, query string, maxRunes int) string {
 	if idx < 0 {
 		return trimRunes(text, maxRunes)
 	}
-	runeStart := len([]rune(text[:idx]))
-	queryRunes := len([]rune(lowerQuery))
+	runeStart := utf8.RuneCountInString(text[:idx])
+	queryRunes := utf8.RuneCountInString(lowerQuery)
 	start := max(0, runeStart-(maxRunes-queryRunes)/2)
 	return trimRunesFrom(text, start, maxRunes)
 }

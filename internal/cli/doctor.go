@@ -144,6 +144,7 @@ type doctorCommand struct {
 func collectDoctorReport(ctx context.Context, cfg *config.Config, suggest bool) doctorReport {
 	report := doctorReport{
 		Providers: make([]providerCheck, 0, len(cfg.Providers)),
+		MCP:       make([]doctorMCPStatus, 0, len(cfg.MCPServers)),
 		Commands:  make([]doctorCommand, 0, 4),
 	}
 	for _, name := range sortedProviderNames(cfg.Providers) {
