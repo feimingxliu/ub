@@ -30,6 +30,7 @@ var specs = []Spec{
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
 	{Name: "doctor", Usage: "/doctor", Description: "run health checks in the TUI"},
 	{Name: "retry", Usage: "/retry", Description: "rerun the last user turn"},
+	{Name: "copy", Usage: "/copy <N>", Description: "copy the Nth message to the clipboard"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
 	{Name: "new", Usage: "/new", Description: "start a new empty session"},
 	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},

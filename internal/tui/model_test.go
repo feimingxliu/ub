@@ -1628,6 +1628,52 @@ func TestSlashDoctorUnavailable(t *testing.T) {
 	}
 }
 
+func TestSlashCopyCopiesNthMessage(t *testing.T) {
+	clipboard := &recordingClipboard{}
+	model := NewModel(Options{
+		Clipboard: clipboard,
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "first prompt"},
+			{Role: assistantRole, Text: "second answer"},
+		},
+	})
+	model = sendText(t, model, "/copy 2")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash copy returned unexpected command")
+	}
+	model = assertModel(t, updated)
+
+	if clipboard.calls != 1 || clipboard.text != "second answer" {
+		t.Fatalf("clipboard calls/text = %d/%q, want 1/second answer", clipboard.calls, clipboard.text)
+	}
+	if got, want := model.MessageTexts(), []string{"first prompt", "second answer"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+	if !strings.Contains(viewString(model), "notice: copied message 2") {
+		t.Fatalf("view missing copy toast:\n%s", viewString(model))
+	}
+}
+
+func TestSlashCopyReportsInvalidIndex(t *testing.T) {
+	clipboard := &recordingClipboard{}
+	model := NewModel(Options{Clipboard: clipboard, Messages: []InitialMessage{{Role: userRole, Text: "only"}}})
+	model = sendText(t, model, "/copy 2")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash copy returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if clipboard.calls != 0 {
+		t.Fatalf("clipboard calls = %d, want 0", clipboard.calls)
+	}
+	if got := model.MessageTexts(); len(got) != 2 || !strings.Contains(got[1], "message 2 not found") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestSlashClear(t *testing.T) {
 	model := NewModel(Options{})
 	model = sendText(t, model, "hello")
@@ -3019,6 +3065,18 @@ type promptOnlyRunner struct {
 func (r *promptOnlyRunner) Run(_ context.Context, _ string, _ chan<- Event) error {
 	r.calls++
 	return nil
+}
+
+type recordingClipboard struct {
+	text  string
+	err   error
+	calls int
+}
+
+func (c *recordingClipboard) WriteText(_ context.Context, stringValue string) error {
+	c.calls++
+	c.text = stringValue
+	return c.err
 }
 
 func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {

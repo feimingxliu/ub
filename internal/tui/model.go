@@ -47,6 +47,7 @@ type Options struct {
 	Cwd            string
 	EventTimeout   time.Duration
 	SelectSession  bool
+	Clipboard      Clipboard
 	initialWidth   int
 	initialHeight  int
 }
@@ -113,6 +114,7 @@ type Model struct {
 	runStartedAt    time.Time
 	activitySummary string
 	toast           toastState
+	clipboard       Clipboard
 }
 
 // NewModel creates the root TUI model.
@@ -174,6 +176,7 @@ func NewModel(opts Options) Model {
 		messages:       newMessageList(),
 		styles:         styles,
 		runner:         opts.Runner,
+		clipboard:      opts.Clipboard,
 		permReqs:       opts.Permissions,
 		limitReqs:      opts.Limits,
 		ctx:            ctx,
@@ -197,6 +200,9 @@ func NewModel(opts Options) Model {
 			turn:          opts.Turn,
 			state:         statusIdle,
 		},
+	}
+	if m.clipboard == nil {
+		m.clipboard = systemClipboard{}
 	}
 	m.messages.load(opts.Messages)
 	if opts.SelectSession {
@@ -852,6 +858,29 @@ func (m Model) runDoctor() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) copyMessage(args []string) (tea.Model, tea.Cmd) {
+	if len(args) != 1 {
+		m.messages.append(errorRole, "usage: /copy <N>")
+		return m, nil
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil || n <= 0 {
+		m.messages.append(errorRole, "usage: /copy <N>")
+		return m, nil
+	}
+	text, ok := m.messages.copyText(n)
+	if !ok {
+		m.messages.append(errorRole, fmt.Sprintf("message %d not found", n))
+		return m, nil
+	}
+	if err := m.clipboard.WriteText(m.ctx, text); err != nil {
+		m.messages.append(errorRole, "copy failed: "+err.Error())
+		return m, nil
+	}
+	m.showToast(toastSuccess, fmt.Sprintf("copied message %d", n))
+	return m, nil
+}
+
 func (m Model) lastUserTurn() (string, bool) {
 	for i := len(m.messages.items) - 1; i >= 0; i-- {
 		item := m.messages.items[i]
@@ -893,6 +922,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m.runDoctor()
 	case "retry":
 		return m.retryLastTurn()
+	case "copy":
+		return m.copyMessage(cmd.Args)
 	case "quit", "exit":
 		if m.cancel != nil {
 			m.cancel()

@@ -1092,6 +1092,37 @@ func (l messageList) texts() []string {
 	return out
 }
 
+func (l messageList) copyText(n int) (string, bool) {
+	if n <= 0 {
+		return "", false
+	}
+	index := 0
+	for _, item := range l.items {
+		text := messageCopyText(item)
+		if text == "" {
+			continue
+		}
+		index++
+		if index == n {
+			return text, true
+		}
+	}
+	return "", false
+}
+
+func messageCopyText(item message) string {
+	if text := strings.TrimSpace(item.text); text != "" {
+		return item.text
+	}
+	if text := strings.TrimSpace(item.detail); text != "" {
+		return item.detail
+	}
+	if text := strings.TrimSpace(item.title); text != "" {
+		return item.title
+	}
+	return ""
+}
+
 func upsertActivityEntry(entries []message, entry message) []message {
 	if strings.TrimSpace(entry.key) != "" {
 		for i := range entries {
