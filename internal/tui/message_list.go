@@ -1525,7 +1525,7 @@ func activityMessage(event Event) message {
 			text:      activityEventText(event),
 			key:       activityEventKey(event),
 			kind:      thinkingMessage,
-			title:     "thinking: " + summary,
+			title:     "thinking: " + thinkingSummary(summary),
 			status:    "running",
 			detail:    detail,
 			collapsed: true,

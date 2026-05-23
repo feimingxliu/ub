@@ -12,6 +12,36 @@ import (
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
+// On resume, persisted activity summaries can contain embedded newlines (e.g.
+// the model's thinking summary kept its "\n\n" paragraph breaks). When such an
+// activity is rendered collapsed as a chip, the chip text inherits the
+// newline. messageList.view then joins its line slice with "\n" and frame.go
+// splits the joined string back, producing MORE rows than messageViewHeight
+// allotted — pushing the footer/input below the terminal edge. Pin the
+// invariant that every rendered line is a single terminal row (no embedded
+// "\n").
+func TestCollapsedThinkingChipDoesNotEmbedNewlines(t *testing.T) {
+	const width = 80
+	styles := tuitheme.Default()
+
+	multiline := "Now I've read through the entire codebase.\n\n1. Thumbnails bug - already fixed\n\n2. Unit testing - missing"
+	entry := activityMessage(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		Summary:      multiline,
+		Content:      multiline,
+	})
+	entry.collapsed = true
+
+	list := messageList{focus: -1, entryFocus: -1, items: []message{entry}}
+	rendered := list.render(width, styles)
+	for i, line := range rendered.lines {
+		if strings.Contains(line, "\n") {
+			t.Fatalf("rendered line %d contains embedded newline: %q", i, line)
+		}
+	}
+}
+
 // Probe whether rendering an expanded tool diff produces lines whose visual
 // width exceeds the configured content width. If any line overflows, the
 // terminal will auto-wrap it on top of the footer / input area, which

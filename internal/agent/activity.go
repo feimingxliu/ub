@@ -298,7 +298,11 @@ func isSensitive(text string) bool {
 }
 
 func truncateActivitySummary(text string) string {
-	text = strings.TrimSpace(text)
+	// Activity summaries are rendered as a single-line label (chip or status
+	// row). Collapse all interior whitespace so reasoning summaries — which the
+	// model often produces with embedded "\n\n" paragraph breaks — don't end up
+	// pushing the TUI footer off-screen when the chip is rendered.
+	text = strings.Join(strings.Fields(text), " ")
 	runes := []rune(text)
 	if len(runes) <= maxActivitySummaryRunes {
 		return text
