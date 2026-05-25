@@ -106,6 +106,22 @@ Before opening a PR, run:
 make check
 ```
 
+## Release Flow
+
+Maintainers cut a release with a single command from a clean `main`:
+
+```sh
+make release VERSION=0.2.7
+```
+
+This regenerates `CHANGELOG.md` to include the new version section, commits
+it, creates an annotated `vX.Y.Z` tag, and pushes commit + tag together. The
+release workflow then extracts the matching section from `CHANGELOG.md` as
+GoReleaser release notes — no changelog work happens in CI.
+
+Preflight checks the target enforces: working tree clean, on `main`, tag
+does not already exist, and `make check` passes.
+
 ## Security and Configuration
 
 Never commit API keys, rollout databases, local config, or reference

@@ -21,9 +21,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: git-cliff
       - uses: anchore/sbom-action/download-syft@v0
       - uses: sigstore/cosign-installer@v3
       - name: Build release notes from changelog

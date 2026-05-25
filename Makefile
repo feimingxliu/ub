@@ -1,4 +1,4 @@
-.PHONY: build install test vet fmt lint check schema tidy clean run version install-hooks ensure-gofumpt changelog release-notes
+.PHONY: build install test vet fmt lint check schema tidy clean run version install-hooks ensure-gofumpt changelog release-notes release
 
 EXE :=
 ifeq ($(OS),Windows_NT)
@@ -63,6 +63,40 @@ changelog:
 
 release-notes:
 	./scripts/release-notes.sh "$(VERSION)" CHANGELOG.md > $(RELEASE_NOTES)
+
+# release VERSION=x.y.z — regenerate CHANGELOG.md including the new
+# version section, commit it, tag it, and push commit + tag. The tag
+# commit itself contains the changelog, so the release workflow only
+# needs to extract release notes (no regeneration in CI).
+release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "usage: make release VERSION=x.y.z" >&2 ; \
+		exit 2 ; \
+	fi
+	@case "$(VERSION)" in \
+		v*) echo "VERSION must not include leading v" >&2 ; exit 2 ;; \
+		*[!0-9.]*|"") echo "VERSION must look like x.y.z" >&2 ; exit 2 ;; \
+	esac
+	@if ! git diff --quiet || ! git diff --cached --quiet; then \
+		echo "working tree not clean — commit or stash first" >&2 ; \
+		git status --short >&2 ; \
+		exit 1 ; \
+	fi
+	@if git rev-parse "v$(VERSION)" >/dev/null 2>&1; then \
+		echo "tag v$(VERSION) already exists" >&2 ; \
+		exit 1 ; \
+	fi
+	@branch=$$(git symbolic-ref --short HEAD) ; \
+	if [ "$$branch" != "main" ]; then \
+		echo "refusing to release from branch '$$branch' (expected main)" >&2 ; \
+		exit 1 ; \
+	fi
+	$(MAKE) check
+	git cliff --tag "v$(VERSION)" --output CHANGELOG.md
+	git add CHANGELOG.md
+	git commit -m "chore(release): v$(VERSION)"
+	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	git push origin main "v$(VERSION)"
 
 tidy:
 	go mod tidy
