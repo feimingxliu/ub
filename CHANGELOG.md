@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [0.2.7] - 2026-05-25
+
+
+### Build
+
+- One-shot make release VERSION=x.y.z ([0a3b3ce](https://github.com/feimingxliu/ub/commit/0a3b3ce7d9059f602d1c6c3fe09c7d06e9187976))
+
+
+### Documentation
+
+- Backfill v0.2.1 through v0.2.6 ([870fc5d](https://github.com/feimingxliu/ub/commit/870fc5db965845ed24250d200c973935f06fa2d3))
+
 ## [0.2.6] - 2026-05-23
 
 
