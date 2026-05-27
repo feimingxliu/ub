@@ -173,6 +173,8 @@ type ContextToolResultConfig struct {
 	InlineMaxLines   int           `yaml:"inline_max_lines,omitempty"  json:"inline_max_lines,omitempty"`
 	SpilloverEnabled *bool         `yaml:"spillover_enabled,omitempty" json:"spillover_enabled,omitempty"`
 	SpilloverMaxAge  time.Duration `yaml:"spillover_max_age,omitempty" json:"spillover_max_age,omitempty"`
+	FullMaxBytes     int           `yaml:"full_max_bytes,omitempty"    json:"full_max_bytes,omitempty"`
+	SpilloverDir     string        `yaml:"spillover_dir,omitempty"     json:"spillover_dir,omitempty"`
 }
 
 // HooksConfig holds shell hook lists keyed by trigger kind: pre_tool_call,

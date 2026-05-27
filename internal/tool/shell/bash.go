@@ -92,7 +92,7 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
 		return tool.Result{
-			Content: assembleContent(-1, time.Since(start), stdout, stderr, fmt.Sprintf("start failed: %v", err)),
+			Content: assembleContent(-1, time.Since(start), stdout, stderr, fmt.Sprintf("start failed: %v", err), false, false),
 			IsError: true,
 		}, nil
 	}
@@ -145,26 +145,46 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 			errorLine = waitErr.Error()
 		}
 	}
+	timedOut := false
+	aborted := false
 	if killReason != "" {
 		isError = true
-		errorLine = killReason
+		switch {
+		case strings.HasPrefix(killReason, "timeout"):
+			timedOut = true
+		case strings.HasPrefix(killReason, "cancelled"):
+			aborted = true
+		default:
+			errorLine = killReason
+		}
 	}
 
 	return tool.Result{
-		Content: assembleContent(exitCode, duration, stdout, stderr, errorLine),
+		Content: assembleContent(exitCode, duration, stdout, stderr, errorLine, timedOut, aborted),
 		IsError: isError,
 	}, nil
 }
 
-// assembleContent formats Result.Content with the stable header/body
-// layout defined in the bash-tool spec.
-func assembleContent(exitCode int, duration time.Duration, stdout, stderr *capWriter, errorLine string) string {
+// assembleContent formats Result.Content with the stable header/body layout
+// defined in the bash-tool spec. metadata lives inside a <shell_metadata>
+// block so model prompts can locate it deterministically; timeout / aborted
+// are surfaced as explicit boolean flags instead of being inferred from the
+// `error=` text.
+func assembleContent(exitCode int, duration time.Duration, stdout, stderr *capWriter, errorLine string, timedOut, aborted bool) string {
 	var b strings.Builder
+	b.WriteString("<shell_metadata>\n")
 	fmt.Fprintf(&b, "exit_code=%d\n", exitCode)
 	fmt.Fprintf(&b, "duration_ms=%d\n", duration.Milliseconds())
+	if timedOut {
+		b.WriteString("timeout=true\n")
+	}
+	if aborted {
+		b.WriteString("aborted=true\n")
+	}
 	if errorLine != "" {
 		fmt.Fprintf(&b, "error=%s\n", errorLine)
 	}
+	b.WriteString("</shell_metadata>\n")
 	b.WriteString("--- stdout ---\n")
 	writeStream(&b, stdout)
 	b.WriteString("\n--- stderr ---\n")

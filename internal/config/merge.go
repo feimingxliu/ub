@@ -212,6 +212,12 @@ func mergeContextToolResults(dst *ContextToolResultConfig, src ContextToolResult
 	if src.SpilloverMaxAge != 0 {
 		dst.SpilloverMaxAge = src.SpilloverMaxAge
 	}
+	if src.FullMaxBytes != 0 {
+		dst.FullMaxBytes = src.FullMaxBytes
+	}
+	if src.SpilloverDir != "" {
+		dst.SpilloverDir = src.SpilloverDir
+	}
 }
 
 func mergeCleanup(dst *CleanupConfig, src CleanupConfig) {

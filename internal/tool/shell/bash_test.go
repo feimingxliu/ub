@@ -96,8 +96,44 @@ func TestBash_Timeout(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("expected IsError on timeout")
 	}
-	if !strings.Contains(res.Content, "timeout") {
-		t.Fatalf("missing timeout marker:\n%s", res.Content)
+	if !strings.Contains(res.Content, "timeout=true") {
+		t.Fatalf("missing timeout=true flag:\n%s", res.Content)
+	}
+	if !strings.Contains(res.Content, "<shell_metadata>") || !strings.Contains(res.Content, "</shell_metadata>") {
+		t.Fatalf("missing shell_metadata block:\n%s", res.Content)
+	}
+}
+
+func TestBash_Aborted(t *testing.T) {
+	skipOnWindows(t)
+	b := newBashTool(t.TempDir())
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	raw, _ := json.Marshal(bashArgs{Command: "sleep 5"})
+	res, err := b.Execute(ctx, raw)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(res.Content, "aborted=true") {
+		t.Fatalf("missing aborted=true flag:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, "timeout=true") {
+		t.Fatalf("unexpected timeout flag in aborted run:\n%s", res.Content)
+	}
+}
+
+func TestBash_ShellMetadataBlockOnSuccess(t *testing.T) {
+	skipOnWindows(t)
+	b := newBashTool(t.TempDir())
+	res := execBash(t, b, bashArgs{Command: "true"})
+	if !strings.Contains(res.Content, "<shell_metadata>") || !strings.Contains(res.Content, "</shell_metadata>") {
+		t.Fatalf("missing shell_metadata block:\n%s", res.Content)
+	}
+	if strings.Contains(res.Content, "timeout=true") || strings.Contains(res.Content, "aborted=true") {
+		t.Fatalf("unexpected kill flags on happy path:\n%s", res.Content)
 	}
 }
 

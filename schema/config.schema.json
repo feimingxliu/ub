@@ -90,6 +90,12 @@
         },
         "spillover_max_age": {
           "type": "integer"
+        },
+        "full_max_bytes": {
+          "type": "integer"
+        },
+        "spillover_dir": {
+          "type": "string"
         }
       },
       "additionalProperties": false,

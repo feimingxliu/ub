@@ -18,6 +18,10 @@ const (
 	DefaultInlineMaxBytes = 12 * 1024
 	DefaultInlineMaxLines = 400
 	DefaultReserveTokens  = 12000
+	// DefaultFullMaxBytes caps the size of one spillover file. Beyond this,
+	// LimitResult truncates the disk artifact (and notes the original size
+	// in OriginalBytes so the model still knows how much was discarded).
+	DefaultFullMaxBytes = 50 * 1024 * 1024
 )
 
 var unsafePathChars = regexp.MustCompile(`[^A-Za-z0-9_.-]+`)
@@ -27,6 +31,13 @@ type Limits struct {
 	InlineMaxBytes   int
 	InlineMaxLines   int
 	SpilloverEnabled bool
+	// FullMaxBytes caps the on-disk spillover file size. <= 0 means no
+	// cap; EffectiveLimits substitutes DefaultFullMaxBytes.
+	FullMaxBytes int
+	// SpilloverDir, when non-empty, replaces "<stateRoot>/tool_outputs/"
+	// as the spillover root. Useful for routing spillover to a different
+	// disk (e.g. /var/tmp on a host with a small home).
+	SpilloverDir string
 }
 
 // LimitOptions identifies one tool result and where spillover files should be
@@ -44,12 +55,17 @@ func EffectiveLimits(cfg config.ContextConfig) Limits {
 		InlineMaxBytes:   cfg.ToolResults.InlineMaxBytes,
 		InlineMaxLines:   cfg.ToolResults.InlineMaxLines,
 		SpilloverEnabled: true,
+		FullMaxBytes:     cfg.ToolResults.FullMaxBytes,
+		SpilloverDir:     strings.TrimSpace(cfg.ToolResults.SpilloverDir),
 	}
 	if limits.InlineMaxBytes <= 0 {
 		limits.InlineMaxBytes = DefaultInlineMaxBytes
 	}
 	if limits.InlineMaxLines <= 0 {
 		limits.InlineMaxLines = DefaultInlineMaxLines
+	}
+	if limits.FullMaxBytes <= 0 {
+		limits.FullMaxBytes = DefaultFullMaxBytes
 	}
 	if cfg.ToolResults.SpilloverEnabled != nil {
 		limits.SpilloverEnabled = *cfg.ToolResults.SpilloverEnabled
@@ -138,16 +154,22 @@ func LimitResult(result tool.Result, opts LimitOptions) (tool.Result, error) {
 		return result, nil
 	}
 
+	originalBytes := len([]byte(full))
 	fullPath := ""
 	if limits.SpilloverEnabled && strings.TrimSpace(opts.SessionID) != "" && strings.TrimSpace(opts.ToolUseID) != "" {
-		path, err := writeSpillover(opts.StateRoot, opts.SessionID, opts.ToolUseID, full)
+		toWrite := full
+		if limits.FullMaxBytes > 0 && originalBytes > limits.FullMaxBytes {
+			kept := validPrefix(full, limits.FullMaxBytes)
+			toWrite = kept + fmt.Sprintf("\n... [spillover truncated: original_bytes=%d kept=%d]\n", originalBytes, len(kept))
+		}
+		path, err := writeSpilloverAt(limits.SpilloverDir, opts.StateRoot, opts.SessionID, opts.ToolUseID, toWrite)
 		if err != nil {
 			return result, err
 		}
 		fullPath = path
 	}
 
-	footer := truncationFooter(len([]byte(full)), fullPath)
+	footer := truncationFooter(originalBytes, fullPath)
 	previewBudget := limits.InlineMaxBytes
 	if footer != "" {
 		previewBudget -= len([]byte(footer)) + 1
@@ -166,7 +188,7 @@ func LimitResult(result tool.Result, opts LimitOptions) (tool.Result, error) {
 	result.Content = preview + footer
 	result.FullContent = ""
 	result.Truncated = true
-	result.OriginalBytes = len([]byte(full))
+	result.OriginalBytes = originalBytes
 	result.FullOutputPath = fullPath
 	return result, nil
 }
@@ -238,10 +260,19 @@ func truncationFooter(originalBytes int, fullPath string) string {
 	return b.String()
 }
 
-func writeSpillover(stateRoot, sessionID, toolUseID, content string) (string, error) {
-	path, err := SpilloverPath(stateRoot, sessionID, toolUseID)
-	if err != nil {
-		return "", err
+// writeSpilloverAt prefers spilloverDir when non-empty; otherwise it falls
+// back to <stateRoot>/tool_outputs via SpilloverPath. Either way the inner
+// layout is <root>/<safe sessionID>/<safe toolUseID>.txt.
+func writeSpilloverAt(spilloverDir, stateRoot, sessionID, toolUseID, content string) (string, error) {
+	var path string
+	if strings.TrimSpace(spilloverDir) != "" {
+		path = filepath.Join(spilloverDir, safePathPart(sessionID), safePathPart(toolUseID)+".txt")
+	} else {
+		var err error
+		path, err = SpilloverPath(stateRoot, sessionID, toolUseID)
+		if err != nil {
+			return "", err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create tool output directory: %w", err)
