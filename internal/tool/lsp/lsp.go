@@ -15,14 +15,22 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
-// Manager is the LSP query surface used by these tools.
+// Manager is the LSP query surface used by these tools. The interface grew
+// from the original 3 read methods to 8 when hover / completion /
+// document_symbols / rename / code_actions were added; any new
+// implementation must cover all 8.
 type Manager interface {
 	Diagnostics(ctx context.Context, file string) ([]lspruntime.FileDiagnostics, error)
 	References(ctx context.Context, file string, line, col int) ([]lspruntime.Location, error)
 	ReferencesBySymbol(ctx context.Context, symbol, path string) ([]lspruntime.Location, error)
+	Hover(ctx context.Context, file string, line, col int) (lspruntime.HoverResult, error)
+	Completion(ctx context.Context, file string, line, col, max int) ([]lspruntime.CompletionItem, error)
+	DocumentSymbols(ctx context.Context, file string) ([]lspruntime.DocumentSymbol, error)
+	Rename(ctx context.Context, file string, line, col int, newName string) (lspruntime.WorkspaceEdit, error)
+	CodeActions(ctx context.Context, file string, line, col, endLine, endCol int) ([]lspruntime.CodeAction, error)
 }
 
-// Register adds diagnostics and references tools when manager is available.
+// Register adds the 7 LSP-backed tools when manager is non-nil.
 func Register(reg *tool.Registry, manager Manager) error {
 	if reg == nil {
 		return fmt.Errorf("lsp tools: nil registry")
@@ -33,6 +41,11 @@ func Register(reg *tool.Registry, manager Manager) error {
 	for _, t := range []tool.Tool{
 		newDiagnosticsTool(manager),
 		newReferencesTool(manager),
+		newHoverTool(manager),
+		newCompletionTool(manager),
+		newDocumentSymbolsTool(manager),
+		newRenameTool(manager),
+		newCodeActionTool(manager),
 	} {
 		if err := reg.Register(t); err != nil {
 			return err

@@ -191,11 +191,13 @@ type FileChange struct {
 ```
 
 **风险等级**：
-- `safe`：read / ls / grep / glob / diagnostics / references / tool_result / plan_write / plan_update_step
+- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update_step
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
 
 `plan_write` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `.ub/plans/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),work 模式按这个 artifact 推进并 `plan_update_step` 标记每一步;两者都是 `RiskSafe` 所以 plan 模式不会拦截它们(写的是 ub 内部 artifact 目录,不是用户代码)
+
+LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `hover`、`completion`、`document_symbols`、`rename`、`code_action`。其中 `rename` 与 `code_action` **只返回 LSP 的建议**,不直接落盘 —— rename 输出"按文件路径排序的边界列表",model 拿到后用 `multiedit` 自行应用,从而走 ub 的 preview/permission 协议;`code_action` 只列可用 action 的 `title (kind)[ — has_edit]`,不执行任何 action
 
 `tool_result(tool_use_id, offset?, limit?)`：从 `<state-root>/tool_outputs/<sessionID>/<toolUseID>.txt` 读回曾被 `tooloutput.LimitResult` 截断/落盘的完整工具输出。sessionID 由 agent 调用前通过 `tool.WithSessionID(ctx)` 注入到 context；工具自身不接受任意路径,只能读 spillover 目录,跨 session 不可见
 

@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -196,6 +197,197 @@ func (m *Manager) ReferencesBySymbol(ctx context.Context, symbol, searchPath str
 		}
 	}
 	return nil, errors.Join(errs...)
+}
+
+// prepPosition resolves path to absolute, picks the right server, ensures
+// the document has been opened/refreshed, and returns the textDocument URI
+// plus the resolved server. It exists so the five position-based LSP
+// methods below share the same error-handling boilerplate.
+func (m *Manager) prepPosition(ctx context.Context, path string, line, col int, allowEnd bool) (*server, string, error) {
+	if m == nil {
+		return nil, "", fmt.Errorf("lsp: no language server configured")
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, "", fmt.Errorf("lsp: file is required")
+	}
+	if line <= 0 || col <= 0 {
+		return nil, "", fmt.Errorf("lsp: line and col must be positive 1-based values")
+	}
+	_ = allowEnd
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, "", err
+	}
+	srv := m.serverFor(abs)
+	if srv == nil {
+		return nil, "", fmt.Errorf("lsp: no language server for %s", abs)
+	}
+	if err := m.DidChangeFile(ctx, abs); err != nil {
+		return nil, "", err
+	}
+	uri, err := fileURI(abs)
+	if err != nil {
+		return nil, "", err
+	}
+	return srv, uri, nil
+}
+
+// Hover queries textDocument/hover at a 1-based position.
+func (m *Manager) Hover(ctx context.Context, path string, line, col int) (HoverResult, error) {
+	srv, uri, err := m.prepPosition(ctx, path, line, col, false)
+	if err != nil {
+		return HoverResult{}, err
+	}
+	var raw json.RawMessage
+	err = srv.client.Call(ctx, "textDocument/hover", map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"position":     map[string]any{"line": line - 1, "character": col - 1},
+	}, &raw)
+	if err != nil {
+		return HoverResult{}, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return HoverResult{}, nil
+	}
+	var hover struct {
+		Contents json.RawMessage `json:"contents"`
+		Range    *Range          `json:"range,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &hover); err != nil {
+		return HoverResult{}, fmt.Errorf("lsp: decode hover: %w", err)
+	}
+	text, err := flattenHoverContents(hover.Contents)
+	if err != nil {
+		return HoverResult{}, err
+	}
+	return HoverResult{Contents: text, Range: hover.Range}, nil
+}
+
+// Completion queries textDocument/completion at a 1-based position. The
+// response is normalized whether the server returns CompletionList or a
+// bare CompletionItem array. max <= 0 means "no truncation".
+func (m *Manager) Completion(ctx context.Context, path string, line, col, maxItems int) ([]CompletionItem, error) {
+	srv, uri, err := m.prepPosition(ctx, path, line, col, false)
+	if err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	err = srv.client.Call(ctx, "textDocument/completion", map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"position":     map[string]any{"line": line - 1, "character": col - 1},
+	}, &raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	items, err := parseCompletion(raw)
+	if err != nil {
+		return nil, err
+	}
+	if maxItems > 0 && len(items) > maxItems {
+		items = items[:maxItems]
+	}
+	return items, nil
+}
+
+// DocumentSymbols queries textDocument/documentSymbol and returns the
+// hierarchical form. If the server only supports flat SymbolInformation,
+// this method still returns DocumentSymbol shells with empty Children.
+func (m *Manager) DocumentSymbols(ctx context.Context, path string) ([]DocumentSymbol, error) {
+	if m == nil {
+		return nil, fmt.Errorf("lsp: no language server configured")
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("lsp: file is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	srv := m.serverFor(abs)
+	if srv == nil {
+		return nil, fmt.Errorf("lsp: no language server for %s", abs)
+	}
+	if err := m.DidChangeFile(ctx, abs); err != nil {
+		return nil, err
+	}
+	uri, err := fileURI(abs)
+	if err != nil {
+		return nil, err
+	}
+	var raw json.RawMessage
+	err = srv.client.Call(ctx, "textDocument/documentSymbol", map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+	}, &raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	return parseDocumentSymbols(raw)
+}
+
+// Rename queries textDocument/rename and returns the proposed edits
+// normalized as []TextEdit (one entry per concrete edit). It does NOT apply
+// the edits; callers (typically the rename tool) format them for the agent
+// to apply via multiedit.
+func (m *Manager) Rename(ctx context.Context, path string, line, col int, newName string) (WorkspaceEdit, error) {
+	if strings.TrimSpace(newName) == "" {
+		return WorkspaceEdit{}, fmt.Errorf("lsp: new_name is required")
+	}
+	srv, uri, err := m.prepPosition(ctx, path, line, col, false)
+	if err != nil {
+		return WorkspaceEdit{}, err
+	}
+	var raw json.RawMessage
+	err = srv.client.Call(ctx, "textDocument/rename", map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"position":     map[string]any{"line": line - 1, "character": col - 1},
+		"newName":      newName,
+	}, &raw)
+	if err != nil {
+		return WorkspaceEdit{}, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return WorkspaceEdit{}, nil
+	}
+	return parseWorkspaceEdit(raw)
+}
+
+// CodeActions queries textDocument/codeAction over a range. endLine/endCol
+// = 0 mean "use start as a point range." It always returns the normalized
+// [{Title, Kind, HasEdit}] regardless of whether the server returns the
+// older Command shape or the newer CodeAction shape.
+func (m *Manager) CodeActions(ctx context.Context, path string, line, col, endLine, endCol int) ([]CodeAction, error) {
+	srv, uri, err := m.prepPosition(ctx, path, line, col, true)
+	if err != nil {
+		return nil, err
+	}
+	if endLine <= 0 {
+		endLine = line
+	}
+	if endCol <= 0 {
+		endCol = col
+	}
+	var raw json.RawMessage
+	err = srv.client.Call(ctx, "textDocument/codeAction", map[string]any{
+		"textDocument": map[string]any{"uri": uri},
+		"range": map[string]any{
+			"start": map[string]any{"line": line - 1, "character": col - 1},
+			"end":   map[string]any{"line": endLine - 1, "character": endCol - 1},
+		},
+		"context": map[string]any{"diagnostics": []any{}},
+	}, &raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	return parseCodeActions(raw)
 }
 
 // Close closes all managed LSP clients.

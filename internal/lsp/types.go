@@ -45,4 +45,51 @@ type FileDiagnostics struct {
 	Diagnostics []Diagnostic
 }
 
+// HoverResult is the normalized form of a textDocument/hover response.
+// The raw LSP shape can be MarkupContent, MarkedString, or MarkedString[];
+// the client flattens all three into a single plain-text/markdown string.
+type HoverResult struct {
+	Contents string
+	Range    *Range
+}
+
+// CompletionItem is a single completion suggestion.
+type CompletionItem struct {
+	Label  string `json:"label"`
+	Detail string `json:"detail,omitempty"`
+	Kind   int    `json:"kind,omitempty"`
+}
+
+// DocumentSymbol is a recursive symbol tree node from textDocument/documentSymbol.
+type DocumentSymbol struct {
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail,omitempty"`
+	Kind           int              `json:"kind"`
+	Range          Range            `json:"range"`
+	SelectionRange Range            `json:"selectionRange"`
+	Children       []DocumentSymbol `json:"children,omitempty"`
+}
+
+// TextEdit is one edit produced by rename/code_action.
+type TextEdit struct {
+	URI     string `json:"-"` // path-side; populated from the surrounding WorkspaceEdit
+	Path    string `json:"-"`
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}
+
+// WorkspaceEdit aggregates rename / code-action edits across files.
+type WorkspaceEdit struct {
+	Edits []TextEdit
+}
+
+// CodeAction is a single available code action from textDocument/codeAction.
+// HasEdit reports whether the action carries a WorkspaceEdit payload (vs a
+// pure Command); ub does not currently apply either form.
+type CodeAction struct {
+	Title   string `json:"title"`
+	Kind    string `json:"kind,omitempty"`
+	HasEdit bool   `json:"-"`
+}
+
 const closeTimeout = 2 * time.Second
