@@ -230,6 +230,15 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "MemoryConfig": {
+      "properties": {
+        "max_chars": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ModelConfig": {
       "properties": {
         "supports_reasoning": {
@@ -499,6 +508,9 @@
     },
     "hooks": {
       "$ref": "#/$defs/HooksConfig"
+    },
+    "memory": {
+      "$ref": "#/$defs/MemoryConfig"
     }
   },
   "additionalProperties": false,

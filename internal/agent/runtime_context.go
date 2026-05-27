@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/feimingxliu/ub/internal/memory"
 	"github.com/feimingxliu/ub/internal/message"
 )
 
@@ -26,11 +27,36 @@ func (c RuntimeContext) normalized() RuntimeContext {
 
 func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message {
 	out := cloneMessages(messages)
-	runtimeMsg, ok := a.runtime.message()
-	if !ok {
+	var prepend []message.Message
+	if runtimeMsg, ok := a.runtime.message(); ok {
+		prepend = append(prepend, runtimeMsg)
+	}
+	if memMsg, ok := a.memoryMessage(); ok {
+		prepend = append(prepend, memMsg)
+	}
+	if len(prepend) == 0 {
 		return out
 	}
-	return append([]message.Message{runtimeMsg}, out...)
+	return append(prepend, out...)
+}
+
+// memoryMessage returns a role=system message containing the
+// <workspace_memory>...</workspace_memory> envelope of the current memory
+// files. Returns ok=false when the agent has no workspace configured or
+// when neither memory file has content.
+func (a *Agent) memoryMessage() (message.Message, bool) {
+	if a.workspaceRoot == "" {
+		return message.Message{}, false
+	}
+	budget := a.memoryMaxChars
+	if budget <= 0 {
+		budget = memory.DefaultReadMaxChars
+	}
+	body := memory.Read(a.workspaceRoot, budget)
+	if strings.TrimSpace(body) == "" {
+		return message.Message{}, false
+	}
+	return message.Text(message.RoleSystem, "<workspace_memory>\n"+body+"\n</workspace_memory>"), true
 }
 
 func (c RuntimeContext) message() (message.Message, bool) {

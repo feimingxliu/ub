@@ -67,7 +67,14 @@ func mergeInto(dst, src *Config) {
 	mergeContext(&dst.Context, src.Context)
 	mergeCleanup(&dst.Cleanup, src.Cleanup)
 	mergeHooks(&dst.Hooks, src.Hooks)
+	mergeMemory(&dst.Memory, src.Memory)
 	mergeUnknown(&dst.Unknown, src.Unknown)
+}
+
+func mergeMemory(dst *MemoryConfig, src MemoryConfig) {
+	if src.MaxChars != 0 {
+		dst.MaxChars = src.MaxChars
+	}
 }
 
 // mergeHooks appends each later layer's hook list to the earlier layer's so

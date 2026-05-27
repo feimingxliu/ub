@@ -64,6 +64,8 @@ type Options struct {
 	Runtime          RuntimeContext
 	ToolOutputState  string
 	Hooks            hook.Runner
+	WorkspaceRoot    string
+	MemoryMaxChars   int
 }
 
 // Agent runs a single headless agent loop.
@@ -86,6 +88,8 @@ type Agent struct {
 	runtime          RuntimeContext
 	toolOutputState  string
 	hooks            hook.Runner
+	workspaceRoot    string
+	memoryMaxChars   int
 }
 
 // Request is one Agent run input.
@@ -160,6 +164,8 @@ func New(opts Options) (*Agent, error) {
 		runtime:          opts.Runtime.normalized(),
 		toolOutputState:  toolOutputState,
 		hooks:            hooks,
+		workspaceRoot:    strings.TrimSpace(opts.WorkspaceRoot),
+		memoryMaxChars:   opts.MemoryMaxChars,
 	}, nil
 }
 

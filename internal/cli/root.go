@@ -36,6 +36,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/job"
 	lsptool "github.com/feimingxliu/ub/internal/tool/lsp"
 	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
+	memorytool "github.com/feimingxliu/ub/internal/tool/memory"
 	"github.com/feimingxliu/ub/internal/tool/plan"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
@@ -458,6 +459,8 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		Context:          cfg.Context,
 		Runtime:          agentRuntimeContext(tools.Workspace),
 		Hooks:            hook.New(cfg.Hooks),
+		WorkspaceRoot:    tools.Workspace,
+		MemoryMaxChars:   cfg.Memory.MaxChars,
 	})
 	if err != nil {
 		return err
@@ -540,6 +543,7 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		search.Register,
 		shell.Register,
 		plan.Register,
+		memorytool.Register,
 	} {
 		if err := register(reg, cwd); err != nil {
 			return nil, err

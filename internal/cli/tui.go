@@ -406,6 +406,8 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Context:          r.contextCfg,
 		Runtime:          agentRuntimeContext(r.tools.Workspace),
 		Hooks:            hook.New(r.cfg.Hooks),
+		WorkspaceRoot:    r.tools.Workspace,
+		MemoryMaxChars:   r.cfg.Memory.MaxChars,
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},

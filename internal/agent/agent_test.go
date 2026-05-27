@@ -1640,6 +1640,84 @@ func TestAgentPreToolCallHookCanBlockExecution(t *testing.T) {
 	}
 }
 
+func TestAgent_InjectsWorkspaceMemoryWhenPresent(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, ".ub"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, ".ub/memory.md"), []byte("## 2026-05-27\n\nbuild is `make build`\n"), 0o644); err != nil {
+		t.Fatalf("write memory: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, ws); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("ok"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:      p,
+		Tools:         reg,
+		Permission:    perm,
+		Model:         "fake/model",
+		Mode:          execution.ModeWork,
+		WorkspaceRoot: ws,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "hi", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.requests) == 0 {
+		t.Fatalf("no provider call")
+	}
+	// One of the request's messages MUST contain the workspace_memory block.
+	found := false
+	for _, m := range p.requests[0].Messages {
+		if m.Role == message.RoleSystem && strings.Contains(m.Text(), "<workspace_memory>") && strings.Contains(m.Text(), "make build") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected workspace_memory injected; got: %#v", p.requests[0].Messages)
+	}
+}
+
+func TestAgent_OmitsMemoryWhenAbsent(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	reg := tool.New()
+	if err := fs.Register(reg, ws); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("ok"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:      p,
+		Tools:         reg,
+		Permission:    perm,
+		Model:         "fake/model",
+		Mode:          execution.ModeWork,
+		WorkspaceRoot: ws,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "hi", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, m := range p.requests[0].Messages {
+		if strings.Contains(m.Text(), "<workspace_memory>") {
+			t.Fatalf("memory should not be injected when files absent")
+		}
+	}
+}
+
 func TestAgentInjectsSessionIDIntoToolContext(t *testing.T) {
 	rec := &recordSessionTool{}
 	reg := tool.New()

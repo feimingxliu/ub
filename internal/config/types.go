@@ -47,6 +47,7 @@ type Config struct {
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
 	Hooks           HooksConfig                `yaml:"hooks,omitempty"         json:"hooks,omitempty"`
+	Memory          MemoryConfig               `yaml:"memory,omitempty"        json:"memory,omitempty"`
 
 	Unknown map[string]any `yaml:",inline" json:"-"`
 }
@@ -175,6 +176,12 @@ type ContextToolResultConfig struct {
 	SpilloverMaxAge  time.Duration `yaml:"spillover_max_age,omitempty" json:"spillover_max_age,omitempty"`
 	FullMaxBytes     int           `yaml:"full_max_bytes,omitempty"    json:"full_max_bytes,omitempty"`
 	SpilloverDir     string        `yaml:"spillover_dir,omitempty"     json:"spillover_dir,omitempty"`
+}
+
+// MemoryConfig controls how much of the persisted memory files agent
+// runtime injects into the system prompt.
+type MemoryConfig struct {
+	MaxChars int `yaml:"max_chars,omitempty" json:"max_chars,omitempty"`
 }
 
 // HooksConfig holds shell hook lists keyed by trigger kind: pre_tool_call,
