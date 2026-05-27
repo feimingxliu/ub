@@ -392,15 +392,19 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 	resolvedReasoning := cloneReasoningConfig(r.reasoning)
 	maxContext := modelinfo.Resolve(r.providerName, r.providerCfg, r.model).MaxContextTokens
 	runtime := agentRuntimeContext(r.tools.Workspace)
+	hooksRunner := hook.New(r.cfg.Hooks)
 	subRunner := &cliSubagentRunner{
 		provider:         r.provider,
 		tools:            r.tools.Registry,
 		permission:       r.permission,
 		model:            r.model,
+		mode:             r.currentMode(),
+		modeFunc:         r.currentMode,
 		reasoningCfg:     cloneReasoningConfig(r.reasoning),
 		maxContextTokens: maxContext,
 		contextCfg:       r.contextCfg,
 		runtime:          runtime,
+		hooks:            hooksRunner,
 		defaultMaxTurns:  r.maxTurns,
 		workspaceRoot:    r.tools.Workspace,
 		memoryMaxChars:   r.cfg.Memory.MaxChars,
@@ -421,7 +425,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		SummaryModel:     r.summaryModel,
 		Context:          r.contextCfg,
 		Runtime:          runtime,
-		Hooks:            hook.New(r.cfg.Hooks),
+		Hooks:            hooksRunner,
 		WorkspaceRoot:    r.tools.Workspace,
 		MemoryMaxChars:   r.cfg.Memory.MaxChars,
 		SubagentRunner:   subRunner,

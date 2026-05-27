@@ -107,6 +107,12 @@ func OutputRoot(stateRoot string) (string, error) {
 	return filepath.Join(stateRoot, "tool_outputs"), nil
 }
 
+// OutputRootForLimits returns the root directory where LimitResult will write
+// spillover files with the provided effective limits.
+func OutputRootForLimits(limits Limits, stateRoot string) (string, error) {
+	return outputRootForSpilloverDir(limits.SpilloverDir, stateRoot)
+}
+
 // SafePathPart sanitizes value into a filesystem-safe path component used by
 // the spillover layout. Exported so tools that want to look up an existing
 // spillover file (e.g. the tool_result tool) can use the same sanitization
@@ -264,16 +270,11 @@ func truncationFooter(originalBytes int, fullPath string) string {
 // back to <stateRoot>/tool_outputs via SpilloverPath. Either way the inner
 // layout is <root>/<safe sessionID>/<safe toolUseID>.txt.
 func writeSpilloverAt(spilloverDir, stateRoot, sessionID, toolUseID, content string) (string, error) {
-	var path string
-	if strings.TrimSpace(spilloverDir) != "" {
-		path = filepath.Join(spilloverDir, safePathPart(sessionID), safePathPart(toolUseID)+".txt")
-	} else {
-		var err error
-		path, err = SpilloverPath(stateRoot, sessionID, toolUseID)
-		if err != nil {
-			return "", err
-		}
+	root, err := outputRootForSpilloverDir(spilloverDir, stateRoot)
+	if err != nil {
+		return "", err
 	}
+	path := filepath.Join(root, safePathPart(sessionID), safePathPart(toolUseID)+".txt")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create tool output directory: %w", err)
 	}
@@ -281,6 +282,17 @@ func writeSpilloverAt(spilloverDir, stateRoot, sessionID, toolUseID, content str
 		return "", fmt.Errorf("write tool output spillover: %w", err)
 	}
 	return path, nil
+}
+
+func outputRootForSpilloverDir(spilloverDir, stateRoot string) (string, error) {
+	if dir := strings.TrimSpace(spilloverDir); dir != "" {
+		abs, err := filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
+		return abs, nil
+	}
+	return OutputRoot(stateRoot)
 }
 
 func safePathPart(value string) string {

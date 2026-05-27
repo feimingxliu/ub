@@ -445,15 +445,18 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	}
 	defer state.store.Close()
 
+	hooksRunner := hook.New(cfg.Hooks)
 	subRunner := &cliSubagentRunner{
 		provider:         p,
 		tools:            tools.Registry,
 		permission:       perm,
 		model:            model,
+		mode:             mode,
 		reasoningCfg:     chatReasoningConfig(cfg, providerName, providerCfg, model),
 		maxContextTokens: chatMaxContextTokens(providerName, providerCfg, model),
 		contextCfg:       cfg.Context,
 		runtime:          agentRuntimeContext(tools.Workspace),
+		hooks:            hooksRunner,
 		defaultMaxTurns:  cfg.MaxTurns,
 		workspaceRoot:    tools.Workspace,
 		memoryMaxChars:   cfg.Memory.MaxChars,
@@ -472,7 +475,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		SummaryModel:     summarySetup.Model,
 		Context:          cfg.Context,
 		Runtime:          agentRuntimeContext(tools.Workspace),
-		Hooks:            hook.New(cfg.Hooks),
+		Hooks:            hooksRunner,
 		WorkspaceRoot:    tools.Workspace,
 		MemoryMaxChars:   cfg.Memory.MaxChars,
 		SubagentRunner:   subRunner,
@@ -527,21 +530,21 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 			closers = append(closers, lspManager.Close)
 		}
 	}
+	limits := tooloutput.EffectiveLimits(config.ContextConfig{})
+	if cfg != nil {
+		limits = tooloutput.EffectiveLimits(cfg.Context)
+	}
 	stateRoot, err := tooloutput.StateRoot()
-	if err != nil {
+	if err != nil && strings.TrimSpace(limits.SpilloverDir) == "" {
 		warnings = append(warnings, fmt.Errorf("locate tool-output state: %w", err))
 	}
 	readStateRoot := ""
-	if stateRoot != "" {
-		if outputRoot, err := tooloutput.OutputRoot(stateRoot); err == nil {
+	if err == nil || strings.TrimSpace(limits.SpilloverDir) != "" {
+		if outputRoot, err := tooloutput.OutputRootForLimits(limits, stateRoot); err == nil {
 			readStateRoot = outputRoot
 		} else {
 			warnings = append(warnings, fmt.Errorf("locate tool-output root: %w", err))
 		}
-	}
-	limits := tooloutput.EffectiveLimits(config.ContextConfig{})
-	if cfg != nil {
-		limits = tooloutput.EffectiveLimits(cfg.Context)
 	}
 	if err := fs.RegisterWithOptions(reg, cwd, fs.Options{
 		StateRoot:      readStateRoot,

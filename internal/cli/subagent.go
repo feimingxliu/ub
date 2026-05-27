@@ -9,6 +9,7 @@ import (
 	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/reasoning"
@@ -25,9 +26,8 @@ import (
 //   - share rollout (sub-agent runs are not persisted in this minimum
 //     viable version; a future change may give them their own session
 //     entry under the parent)
-//   - share Hooks (user hooks fire only for the user's own turns)
-//   - get its own SubagentRunner, so further nested `task` calls inside
-//     the child trip the depth limit cleanly
+//   - run user-turn hooks (tool hooks are inherited so blocking policies still
+//     apply to child tool calls)
 //   - get an EventSink, so its activity does not noisily mix into the
 //     parent TUI
 type cliSubagentRunner struct {
@@ -35,10 +35,13 @@ type cliSubagentRunner struct {
 	tools            *tool.Registry
 	permission       *permission.Manager
 	model            string
+	mode             execution.Mode
+	modeFunc         func() execution.Mode
 	reasoningCfg     *reasoning.Config
 	maxContextTokens int
 	contextCfg       config.ContextConfig
 	runtime          agent.RuntimeContext
+	hooks            hook.Runner
 	defaultMaxTurns  int
 	workspaceRoot    string
 	memoryMaxChars   int
@@ -56,14 +59,17 @@ func (r *cliSubagentRunner) RunSubagent(ctx context.Context, prompt string, maxT
 		Tools:            r.tools,
 		Permission:       r.permission,
 		Model:            r.model,
-		Mode:             execution.ModeWork,
+		Mode:             r.currentMode(),
+		ModeFunc:         r.modeFunc,
 		MaxTurns:         maxTurns,
 		Reasoning:        r.reasoningCfg,
 		MaxContextTokens: r.maxContextTokens,
 		Context:          r.contextCfg,
 		Runtime:          r.runtime,
+		Hooks:            subagentHookRunner{inner: r.hooks},
 		WorkspaceRoot:    r.workspaceRoot,
 		MemoryMaxChars:   r.memoryMaxChars,
+		SubagentRunner:   r,
 	})
 	if err != nil {
 		return "", fmt.Errorf("subagent: build child: %w", err)
@@ -75,4 +81,35 @@ func (r *cliSubagentRunner) RunSubagent(ctx context.Context, prompt string, maxT
 		Prompt:    prompt,
 	})
 	return res.Text, err
+}
+
+func (r *cliSubagentRunner) currentMode() execution.Mode {
+	if r == nil {
+		return execution.ModeWork
+	}
+	if r.modeFunc != nil {
+		if mode, err := execution.ParseMode(string(r.modeFunc())); err == nil {
+			return mode
+		}
+	}
+	if mode, err := execution.ParseMode(string(r.mode)); err == nil {
+		return mode
+	}
+	return execution.ModeWork
+}
+
+type subagentHookRunner struct {
+	inner hook.Runner
+}
+
+func (r subagentHookRunner) Run(ctx context.Context, event hook.Event) hook.Decision {
+	if r.inner == nil {
+		return hook.Decision{}
+	}
+	switch event.Kind {
+	case hook.KindPreToolCall, hook.KindPostToolCall:
+		return r.inner.Run(ctx, event)
+	default:
+		return hook.Decision{}
+	}
 }

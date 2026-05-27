@@ -100,6 +100,27 @@ func TestManagerDidChangeFileRoutesByFileType(t *testing.T) {
 	}
 }
 
+func TestManagerRejectsFilesOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir() + "/secret.go"
+	if err := os.WriteFile(outside, []byte("package secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := &Manager{root: root, servers: []*server{{fileTypes: []string{"go"}}}}
+	if err := m.DidChangeFile(context.Background(), outside); err == nil || !strings.Contains(err.Error(), "outside workspace root") {
+		t.Fatalf("DidChangeFile error = %v, want outside-workspace rejection", err)
+	}
+	if _, err := m.Diagnostics(context.Background(), outside); err == nil || !strings.Contains(err.Error(), "outside workspace root") {
+		t.Fatalf("Diagnostics error = %v, want outside-workspace rejection", err)
+	}
+	if _, err := m.Hover(context.Background(), outside, 1, 1); err == nil || !strings.Contains(err.Error(), "outside workspace root") {
+		t.Fatalf("Hover error = %v, want outside-workspace rejection", err)
+	}
+	if _, err := m.DocumentSymbols(context.Background(), outside); err == nil || !strings.Contains(err.Error(), "outside workspace root") {
+		t.Fatalf("DocumentSymbols error = %v, want outside-workspace rejection", err)
+	}
+}
+
 func TestManagerDiagnosticsAndReferences(t *testing.T) {
 	root := t.TempDir()
 	file := root + "/main.go"

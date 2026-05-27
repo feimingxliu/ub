@@ -75,7 +75,7 @@ func (m *Manager) DidChangeFile(ctx context.Context, path string) error {
 	if m == nil {
 		return nil
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := m.resolveWorkspaceFile(path)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (m *Manager) Diagnostics(ctx context.Context, path string) ([]FileDiagnosti
 		sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 		return out, nil
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := m.resolveWorkspaceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func (m *Manager) References(ctx context.Context, path string, line, col int) ([
 	if line <= 0 || col <= 0 {
 		return nil, fmt.Errorf("lsp: line and col must be positive 1-based values")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := m.resolveWorkspaceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +214,7 @@ func (m *Manager) prepPosition(ctx context.Context, path string, line, col int, 
 		return nil, "", fmt.Errorf("lsp: line and col must be positive 1-based values")
 	}
 	_ = allowEnd
-	abs, err := filepath.Abs(path)
+	abs, err := m.resolveWorkspaceFile(path)
 	if err != nil {
 		return nil, "", err
 	}
@@ -302,7 +302,7 @@ func (m *Manager) DocumentSymbols(ctx context.Context, path string) ([]DocumentS
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("lsp: file is required")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := m.resolveWorkspaceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +488,7 @@ func (m *Manager) resolveSymbolSearchPath(searchPath string) (string, bool, erro
 }
 
 func (m *Manager) fileSymbolCandidates(path, symbol string) ([]symbolCandidate, error) {
-	abs, err := filepath.Abs(path)
+	abs, err := m.resolveWorkspaceFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -650,6 +650,27 @@ func (m *Manager) serverFor(path string) *server {
 		}
 	}
 	return nil
+}
+
+func (m *Manager) resolveWorkspaceFile(path string) (string, error) {
+	if m == nil {
+		return "", fmt.Errorf("lsp: no language server configured")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("lsp: file is required")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(m.root, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if err := ensureInsideRoot(m.root, abs); err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func sortedConfigNames(configs map[string]config.LSPServerConfig) []string {
