@@ -24,3 +24,39 @@ func TestWithSessionID_EmptySessionIsNoop(t *testing.T) {
 		t.Fatalf("empty sid leaked into ctx: %q", got)
 	}
 }
+
+type fakeSubagentRunner struct{ called int }
+
+func (f *fakeSubagentRunner) RunSubagent(_ context.Context, _ string, _ int) (string, error) {
+	f.called++
+	return "ok", nil
+}
+
+func TestSubagentRunner_RoundTrip(t *testing.T) {
+	r := &fakeSubagentRunner{}
+	ctx := WithSubagentRunner(context.Background(), r)
+	got := SubagentRunnerFromContext(ctx)
+	if got != r {
+		t.Fatalf("runner round-trip broken: %#v vs %#v", got, r)
+	}
+}
+
+func TestSubagentRunner_NilDropped(t *testing.T) {
+	ctx := WithSubagentRunner(context.Background(), nil)
+	if got := SubagentRunnerFromContext(ctx); got != nil {
+		t.Fatalf("nil runner leaked: %#v", got)
+	}
+}
+
+func TestSubagentDepth_DefaultZero(t *testing.T) {
+	if got := SubagentDepthFromContext(context.Background()); got != 0 {
+		t.Fatalf("default depth = %d, want 0", got)
+	}
+}
+
+func TestSubagentDepth_RoundTrip(t *testing.T) {
+	ctx := WithSubagentDepth(context.Background(), 1)
+	if got := SubagentDepthFromContext(ctx); got != 1 {
+		t.Fatalf("depth = %d, want 1", got)
+	}
+}

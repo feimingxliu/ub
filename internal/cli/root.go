@@ -40,6 +40,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/plan"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
+	tasktool "github.com/feimingxliu/ub/internal/tool/task"
 	"github.com/feimingxliu/ub/internal/tooloutput"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
@@ -444,6 +445,19 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	}
 	defer state.store.Close()
 
+	subRunner := &cliSubagentRunner{
+		provider:         p,
+		tools:            tools.Registry,
+		permission:       perm,
+		model:            model,
+		reasoningCfg:     chatReasoningConfig(cfg, providerName, providerCfg, model),
+		maxContextTokens: chatMaxContextTokens(providerName, providerCfg, model),
+		contextCfg:       cfg.Context,
+		runtime:          agentRuntimeContext(tools.Workspace),
+		defaultMaxTurns:  cfg.MaxTurns,
+		workspaceRoot:    tools.Workspace,
+		memoryMaxChars:   cfg.Memory.MaxChars,
+	}
 	a, err := agent.New(agent.Options{
 		Provider:         p,
 		Tools:            tools.Registry,
@@ -461,6 +475,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		Hooks:            hook.New(cfg.Hooks),
 		WorkspaceRoot:    tools.Workspace,
 		MemoryMaxChars:   cfg.Memory.MaxChars,
+		SubagentRunner:   subRunner,
 	})
 	if err != nil {
 		return err
@@ -537,6 +552,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		return nil, err
 	}
 	if err := lsptool.Register(reg, lspManager); err != nil {
+		return nil, err
+	}
+	if err := tasktool.Register(reg); err != nil {
 		return nil, err
 	}
 	for _, register := range []func(*tool.Registry, string) error{

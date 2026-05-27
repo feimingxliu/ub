@@ -66,6 +66,7 @@ type Options struct {
 	Hooks            hook.Runner
 	WorkspaceRoot    string
 	MemoryMaxChars   int
+	SubagentRunner   tool.SubagentRunner
 }
 
 // Agent runs a single headless agent loop.
@@ -90,6 +91,7 @@ type Agent struct {
 	hooks            hook.Runner
 	workspaceRoot    string
 	memoryMaxChars   int
+	subagentRunner   tool.SubagentRunner
 }
 
 // Request is one Agent run input.
@@ -166,6 +168,7 @@ func New(opts Options) (*Agent, error) {
 		hooks:            hooks,
 		workspaceRoot:    strings.TrimSpace(opts.WorkspaceRoot),
 		memoryMaxChars:   opts.MemoryMaxChars,
+		subagentRunner:   opts.SubagentRunner,
 	}, nil
 }
 
@@ -466,6 +469,9 @@ func usagePayload(usage *provider.Usage) rollout.UsagePayload {
 
 func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) tool.Result {
 	ctx = tool.WithSessionID(ctx, sessionID)
+	if a.subagentRunner != nil {
+		ctx = tool.WithSubagentRunner(ctx, a.subagentRunner)
+	}
 	preDec := a.hooks.Run(ctx, hook.Event{
 		Kind:      hook.KindPreToolCall,
 		SessionID: sessionID,

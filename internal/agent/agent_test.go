@@ -1744,6 +1744,97 @@ func TestAgentPreToolCallHookCanBlockExecution(t *testing.T) {
 	}
 }
 
+// captureSubagentTool records whether the SubagentRunner was visible in
+// the ctx that the agent passed into Execute.
+type captureSubagentTool struct {
+	gotRunner bool
+	gotDepth  int
+	schema    *jsonschema.Schema
+}
+
+func (t *captureSubagentTool) Name() string        { return "captureSubagent" }
+func (t *captureSubagentTool) Description() string { return "capture ctx" }
+func (t *captureSubagentTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *captureSubagentTool) Risk() tool.Risk { return tool.RiskSafe }
+func (t *captureSubagentTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
+	t.gotRunner = tool.SubagentRunnerFromContext(ctx) != nil
+	t.gotDepth = tool.SubagentDepthFromContext(ctx)
+	return tool.Result{Content: "ok"}, nil
+}
+
+type fakeAgentSubagentRunner struct{}
+
+func (fakeAgentSubagentRunner) RunSubagent(_ context.Context, _ string, _ int) (string, error) {
+	return "ok", nil
+}
+
+func TestAgent_InjectsSubagentRunnerIntoToolContext(t *testing.T) {
+	cap := &captureSubagentTool{}
+	reg := tool.New()
+	if err := reg.Register(cap); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("captureSubagent", map[string]any{}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:       p,
+		Tools:          reg,
+		Permission:     perm,
+		Model:          "fake/model",
+		Mode:           execution.ModeWork,
+		SubagentRunner: fakeAgentSubagentRunner{},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !cap.gotRunner {
+		t.Fatalf("ctx did not carry SubagentRunner")
+	}
+	if cap.gotDepth != 0 {
+		t.Fatalf("depth in tool ctx = %d, want 0 (root call)", cap.gotDepth)
+	}
+}
+
+func TestAgent_NoRunnerWhenOptionUnset(t *testing.T) {
+	cap := &captureSubagentTool{}
+	reg := tool.New()
+	if err := reg.Register(cap); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("captureSubagent", map[string]any{}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if cap.gotRunner {
+		t.Fatalf("ctx unexpectedly carried a SubagentRunner")
+	}
+}
+
 func TestAgent_InjectsWorkspaceMemoryWhenPresent(t *testing.T) {
 	ws := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(ws, ".ub"), 0o755); err != nil {
