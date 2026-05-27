@@ -79,19 +79,30 @@ func (t *readTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result,
 	if info.IsDir() {
 		return tool.Result{}, fmt.Errorf("read: %s is a directory; use ls or glob instead", a.Path)
 	}
+	return readNumberedLines(abs, int(a.Offset), int(a.Limit), t.maxLines, "read", a.Path)
+}
 
-	f, err := os.Open(abs)
+// readNumberedLines opens absPath and renders it as a tool.Result whose
+// Content is the requested slice of numbered lines. Shared by `read` and
+// `tool_result`; errorTag/errorPath are interpolated into error messages so
+// the message keeps the caller's tool name and the caller's user-facing
+// path. When the caller did not pass a limit (limit <= 0), the full content
+// is rendered into Result.FullContent so the agent's spillover layer can
+// pick it up; otherwise FullContent stays empty to keep the tool result
+// small.
+func readNumberedLines(absPath string, offset, limit, defaultMaxLines int, errorTag, errorPath string) (tool.Result, error) {
+	f, err := os.Open(absPath)
 	if err != nil {
-		return tool.Result{}, fmt.Errorf("read: open %s: %w", a.Path, err)
+		return tool.Result{}, fmt.Errorf("%s: open %s: %w", errorTag, errorPath, err)
 	}
 	defer f.Close()
 
-	offset := max(int(a.Offset), 1)
-
-	limit := int(a.Limit)
+	if offset < 1 {
+		offset = 1
+	}
 	implicitLimit := limit <= 0
 	if implicitLimit {
-		limit = t.maxLines
+		limit = defaultMaxLines
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -116,7 +127,7 @@ func (t *readTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result,
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return tool.Result{}, fmt.Errorf("read: scan %s: %w", a.Path, err)
+		return tool.Result{}, fmt.Errorf("%s: scan %s: %w", errorTag, errorPath, err)
 	}
 
 	if len(picked) == 0 {

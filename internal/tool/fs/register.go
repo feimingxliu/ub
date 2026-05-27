@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/feimingxliu/ub/internal/tool"
 )
@@ -14,14 +15,22 @@ type ChangeNotifier interface {
 }
 
 // Options controls read-only state paths and model-facing read defaults.
+//
+// StateRoot historically holds the spillover output root (i.e.
+// <state-root>/tool_outputs). OutputRoot is the preferred field with the
+// same meaning; when empty, Register falls back to StateRoot.
 type Options struct {
 	StateRoot      string
+	OutputRoot     string
 	ReadMaxLines   int
 	ChangeNotifier ChangeNotifier
 }
 
-// Register adds the six fs tools (read, ls, glob, write, edit, multiedit) to
-// reg. All tools share the same cleaned workspace root.
+// Register adds the six base fs tools (read, ls, glob, write, edit, multiedit)
+// to reg. All tools share the same cleaned workspace root. When
+// RegisterWithOptions receives a non-empty OutputRoot (or StateRoot fallback),
+// a seventh tool, tool_result, is also registered so agents can replay
+// spilled tool outputs by tool_use_id.
 func Register(reg *tool.Registry, root string) error {
 	return RegisterWithNotifier(reg, root, nil)
 }
@@ -42,13 +51,20 @@ func RegisterWithOptions(reg *tool.Registry, root string, opts Options) error {
 	}
 	root = filepath.Clean(root)
 
+	outputRoot := strings.TrimSpace(opts.OutputRoot)
+	if outputRoot == "" {
+		outputRoot = strings.TrimSpace(opts.StateRoot)
+	}
 	tools := []tool.Tool{
-		newReadToolWithOptions(root, opts.StateRoot, opts.ReadMaxLines),
+		newReadToolWithOptions(root, outputRoot, opts.ReadMaxLines),
 		newLsTool(root),
 		newGlobTool(root),
 		newWriteToolWithNotifier(root, opts.ChangeNotifier),
 		newEditToolWithNotifier(root, opts.ChangeNotifier),
 		newMultiEditToolWithNotifier(root, opts.ChangeNotifier),
+	}
+	if outputRoot != "" {
+		tools = append(tools, newToolResultTool(outputRoot, opts.ReadMaxLines))
 	}
 	for _, t := range tools {
 		if err := reg.Register(t); err != nil {

@@ -91,6 +91,26 @@ func OutputRoot(stateRoot string) (string, error) {
 	return filepath.Join(stateRoot, "tool_outputs"), nil
 }
 
+// SafePathPart sanitizes value into a filesystem-safe path component used by
+// the spillover layout. Exported so tools that want to look up an existing
+// spillover file (e.g. the tool_result tool) can use the same sanitization
+// the writer used.
+func SafePathPart(value string) string {
+	return safePathPart(value)
+}
+
+// SpilloverPath returns the absolute path LimitResult would write to for a
+// (sessionID, toolUseID) pair under stateRoot. It does NOT touch disk and is
+// safe to call when no spillover file has been written yet. An empty
+// stateRoot falls back to the default state root (StateRoot()).
+func SpilloverPath(stateRoot, sessionID, toolUseID string) (string, error) {
+	root, err := OutputRoot(stateRoot)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, safePathPart(sessionID), safePathPart(toolUseID)+".txt"), nil
+}
+
 // LimitResult returns a copy of result whose Content is safe to place back in
 // model context. If the visible content is truncated, or the tool supplied a
 // separate FullContent value, the full output is written to spillover storage
@@ -219,15 +239,13 @@ func truncationFooter(originalBytes int, fullPath string) string {
 }
 
 func writeSpillover(stateRoot, sessionID, toolUseID, content string) (string, error) {
-	root, err := OutputRoot(stateRoot)
+	path, err := SpilloverPath(stateRoot, sessionID, toolUseID)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(root, safePathPart(sessionID))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create tool output directory: %w", err)
 	}
-	path := filepath.Join(dir, safePathPart(toolUseID)+".txt")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		return "", fmt.Errorf("write tool output spillover: %w", err)
 	}

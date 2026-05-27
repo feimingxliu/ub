@@ -1493,3 +1493,44 @@ func (t *previewExecTool) Execute(_ context.Context, _ json.RawMessage) (tool.Re
 	t.executeCalls++
 	return tool.Result{Content: "executed"}, nil
 }
+
+// recordSessionTool captures the session id present in the context that the
+// agent passes into Execute, so a test can verify runTool injects it.
+type recordSessionTool struct {
+	got    string
+	schema *jsonschema.Schema
+}
+
+func (t *recordSessionTool) Name() string        { return "recordsess" }
+func (t *recordSessionTool) Description() string { return "Capture session id from ctx." }
+func (t *recordSessionTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *recordSessionTool) Risk() tool.Risk { return tool.RiskSafe }
+func (t *recordSessionTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
+	t.got = tool.SessionIDFromContext(ctx)
+	return tool.Result{Content: "ok"}, nil
+}
+
+func TestAgentInjectsSessionIDIntoToolContext(t *testing.T) {
+	rec := &recordSessionTool{}
+	reg := tool.New()
+	if err := reg.Register(rec); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("recordsess", map[string]any{}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a := newTestAgent(t, p, reg, perm, execution.ModeWork)
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess-xyz", Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rec.got != "sess-xyz" {
+		t.Fatalf("tool ctx sessionID = %q, want sess-xyz", rec.got)
+	}
+}

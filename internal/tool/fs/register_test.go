@@ -29,6 +29,27 @@ func TestRegister_SixTools(t *testing.T) {
 	}
 }
 
+func TestRegister_SevenToolsWithOutputRoot(t *testing.T) {
+	reg := tool.New()
+	if err := fs.RegisterWithOptions(reg, t.TempDir(), fs.Options{OutputRoot: t.TempDir()}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	want := []string{"edit", "glob", "ls", "multiedit", "read", "tool_result", "write"}
+	all := reg.All()
+	got := make([]string, len(all))
+	for i, tl := range all {
+		got[i] = tl.Name()
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	}
+}
+
 func TestRegister_ConflictReturnsError(t *testing.T) {
 	reg := tool.New()
 	if err := fs.Register(reg, t.TempDir()); err != nil {

@@ -524,6 +524,7 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 	}
 	if err := fs.RegisterWithOptions(reg, cwd, fs.Options{
 		StateRoot:      readStateRoot,
+		OutputRoot:     readStateRoot,
 		ReadMaxLines:   limits.InlineMaxLines,
 		ChangeNotifier: lspManager,
 	}); err != nil {

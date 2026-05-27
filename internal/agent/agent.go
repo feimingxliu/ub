@@ -435,6 +435,7 @@ func usagePayload(usage *provider.Usage) rollout.UsagePayload {
 }
 
 func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) tool.Result {
+	ctx = tool.WithSessionID(ctx, sessionID)
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}

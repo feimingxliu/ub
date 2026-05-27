@@ -190,9 +190,11 @@ type FileChange struct {
 ```
 
 **风险等级**：
-- `safe`：read / ls / grep / glob / diagnostics / references
+- `safe`：read / ls / grep / glob / diagnostics / references / tool_result
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
+
+`tool_result(tool_use_id, offset?, limit?)`：从 `<state-root>/tool_outputs/<sessionID>/<toolUseID>.txt` 读回曾被 `tooloutput.LimitResult` 截断/落盘的完整工具输出。sessionID 由 agent 调用前通过 `tool.WithSessionID(ctx)` 注入到 context；工具自身不接受任意路径,只能读 spillover 目录,跨 session 不可见
 
 **Registry**：本地工具静态注册，MCP 工具运行时注册。同名冲突时 MCP 走 `mcp__<server>__<tool>` 前缀（Anthropic 规范）。
 
