@@ -1,7 +1,8 @@
-# hooks Specification (delta: add-hooks)
+# hooks Specification
 
-## ADDED Requirements
-
+## Purpose
+TBD - created by archiving change add-hooks. Update Purpose after archive.
+## Requirements
 ### Requirement: Hooks 配置 schema
 
 系统 SHALL 在顶层 `Config` 之下新增 `hooks` 字段,容纳四类触发点:`pre_tool_call`、`post_tool_call`、`pre_user_turn`、`post_user_turn`。每类下是一个有序 hook 列表;每条 hook MUST 包含:
@@ -11,6 +12,18 @@
 - 可选 `timeout: duration`:0 时取默认 10 秒;最大值 60 秒,超过 MUST 被钳制
 - 可选 `on_failure: string`:取值 `warn`(默认)或 `block`;`block` 仅在 `pre_tool_call` 阶段会真正阻止 tool 调用,其他阶段总是被视为 `warn`
 - 可选 `env: []string`:子进程允许从父进程继承的 env key 白名单,未列出的 env MUST 不被传给子进程;白名单为空时默认仅传 `PATH`
+
+#### Scenario: 默认 timeout 钳制
+
+- **GIVEN** hook 配置不带 `timeout` 字段
+- **WHEN** runner 运行该 hook
+- **THEN** 子进程 MUST 在 10 秒(默认值)内被强制结束
+
+#### Scenario: 工作区与用户 hooks 合并
+
+- **GIVEN** 用户配置在 `pre_tool_call` 下有 1 条 hook,项目 `.ub/config.yaml` 在同一段下又加了 1 条
+- **WHEN** 配置 layering 合并完成
+- **THEN** 合并后的 `hooks.pre_tool_call` MUST 含 2 条 hook,顺序为"用户在前 + 项目在后"
 
 ### Requirement: pre_tool_call 触发
 
@@ -55,6 +68,18 @@
 
 post_user_turn 触发 MUST 在 `agent.Run` 返回前同步完成,以便 TUI 在"agent done"之前看到 hook 输出。
 
+#### Scenario: pre_user_turn 在首次 provider 请求前
+
+- **GIVEN** 配置了一条 `pre_user_turn` hook,且 agent 收到一个 user prompt
+- **WHEN** `agent.Run` 推进到调用 provider.Chat 之前
+- **THEN** 该 hook MUST 已经运行完毕;hook 的 stdout/stderr MUST 通过 activity 事件流送到 TUI
+
+#### Scenario: post_user_turn 在 Run 返回前
+
+- **GIVEN** 配置了一条 `post_user_turn` hook
+- **WHEN** `agent.Run` 完成主循环,准备 return
+- **THEN** 该 hook MUST 同步运行完毕(不被 goroutine 异步丢弃),Run 返回时调用方 MUST 已经能看到 hook 的 activity 事件
+
 ### Requirement: hook 进程隔离
 
 子进程 MUST 通过 `exec.CommandContext` 启动,context 在 hook timeout 到达时取消并发送 SIGKILL。stdin MUST 是上述 JSON 字节;stdout 和 stderr MUST 各自被读取并截断到 4KB(剩余字节丢弃)。子进程 env MUST 仅包含配置中 `env` 白名单列出的 key 对应的父进程值,以及由 hook runner 设置的 `UB_HOOK_EVENT`、`UB_HOOK_SESSION_ID`、`UB_HOOK_TURN`、(对 tool 阶段)`UB_HOOK_TOOL_NAME`、`UB_HOOK_TOOL_USE_ID` 这五个固定变量。
@@ -64,3 +89,4 @@ post_user_turn 触发 MUST 在 `agent.Run` 返回前同步完成,以便 TUI 在"
 - **GIVEN** hook 配置 `timeout: 50ms` 但脚本 sleep 5 秒
 - **WHEN** hook 触发
 - **THEN** runner MUST 在 ≤ 200ms 内返回,且 Outcome.Err 非 nil 含 "timeout" / "killed" 字样
+

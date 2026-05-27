@@ -17,6 +17,18 @@ ExecuteStream(ctx context.Context, args json.RawMessage, events chan<- StreamEve
 
 未实现 StreamingTool 的工具 MUST 保持现有 `Execute` 协议不变;agent runtime 不应假设 streaming。
 
+#### Scenario: events chan 由调用方关闭
+
+- **GIVEN** 一个 StreamingTool 实现
+- **WHEN** ExecuteStream 推送完所有 StreamEvent 并返回 Result
+- **THEN** 实现 MUST NOT 自己 close(events);agent runtime 负责在 goroutine 退出后 close
+
+#### Scenario: 仍需实现 Execute
+
+- **GIVEN** 一个声称是 StreamingTool 的工具
+- **WHEN** 编译期接口断言运行
+- **THEN** 它 MUST 同时实现 `Execute`(StreamingTool 嵌入了 Tool 接口)
+
 ### Requirement: agent runtime 转发 partial output
 
 agent runtime MUST 在 `runTool` 中先尝试 `t.(StreamingTool)`;断言成功时:

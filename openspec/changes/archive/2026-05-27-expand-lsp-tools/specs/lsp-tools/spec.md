@@ -16,6 +16,18 @@
 
 系统 SHALL 提供 `completion` 工具,`Risk` 为 `RiskSafe`。input MUST 含 `file/line/col`,可选 `max: int`(默认 25,上限 100;超过 100 MUST 被钳制到 100)。Execute MUST 通过 `Manager.Completion` 调用 `textDocument/completion`,接受 `CompletionList` 或 `CompletionItem[]` 两种返回形态,截断到 max 条,`Result.Content` 每行 `label\tdetail`(没有 detail 时省略 detail 但保留 tab 前缀)。空结果 MUST 返回 `"no completions"`。
 
+#### Scenario: max 钳制
+
+- **GIVEN** 调用 `completion(file=x, line=1, col=1, max=500)`
+- **WHEN** Manager.Completion 收到该请求
+- **THEN** Manager 收到的 max 参数 MUST 被钳制到 100;Result.Content 最多 100 行
+
+#### Scenario: 默认 max
+
+- **GIVEN** 调用 `completion(file=x, line=1, col=1)`,不传 max
+- **WHEN** 工具运行
+- **THEN** Manager 收到的 max 参数 MUST 等于 25
+
 ### Requirement: document_symbols 工具
 
 系统 SHALL 提供 `document_symbols` 工具,`Risk` 为 `RiskSafe`。input MUST 含 `file: string`。Execute MUST 通过 `Manager.DocumentSymbols` 调用 `textDocument/documentSymbol`,把返回的 `DocumentSymbol[]` 递归扁平化为缩进文本,每行格式 `<indent><kind> <name> [<start_line>:<start_col>-<end_line>:<end_col>]`,缩进每层 2 个空格。空结果 MUST 返回 `"no symbols"`。
@@ -39,6 +51,18 @@
 ### Requirement: code_action 工具
 
 系统 SHALL 提供 `code_action` 工具,`Risk` 为 `RiskSafe`,**只返回可用 actions 列表,不直接执行**。input MUST 含 `file/line/col`,可选 `end_line/end_col` 定义范围(缺失时使用与 `line/col` 相同的点位)。Execute MUST 通过 `Manager.CodeActions` 调用 `textDocument/codeAction`,把返回的 `Command` 与 `CodeAction` 两种形态统一为 `CodeAction{Title, Kind, HasEdit}`;`Result.Content` 每行格式 `<title> (<kind>)[ — has_edit]`。空结果 MUST 返回 `"no code actions"`。
+
+#### Scenario: 列出 actions
+
+- **GIVEN** LSP 返回 2 个 actions,其中第 1 个含 edit、第 2 个无 edit
+- **WHEN** 调用 `code_action(file=x, line=3, col=5)`
+- **THEN** `Result.Content` MUST 含两行,第 1 行以 ` — has_edit` 结尾,第 2 行不含此后缀
+
+#### Scenario: end_line/end_col 缺省默认
+
+- **GIVEN** 调用 `code_action(file=x, line=3, col=5)`(无 end_line/end_col)
+- **WHEN** Manager.CodeActions 收到请求
+- **THEN** 它收到的 endLine MUST = 3、endCol MUST = 5(以 line/col 兜底)
 
 ### Requirement: Manager 接口扩展
 

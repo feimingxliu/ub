@@ -6,31 +6,29 @@
 
 系统 SHALL 把 plan 工件存放在 `<workspace>/.ub/plans/<plan_id>.md`,`plan_id` 由 `plan_write` 生成,格式为 `<RFC3339 时间戳的 yyyymmddTHHMMSSZ>-<slug>`。slug MUST 从 title 派生:仅保留 ASCII 字母数字与 `-`,其余字符替换为 `-`,连续 `-` 折叠为单个,首尾 `-` 去掉,长度截断到 40。`.ub/plans/` 目录不存在时 plan_write MUST 先创建(权限 0o755)。
 
+#### Scenario: slug 派生
+
+- **GIVEN** title = "Fix Login Bug!"
+- **WHEN** `plan_write` 生成 plan_id
+- **THEN** plan_id 的 slug 部分 MUST 等于 `fix-login-bug`(连续非字母数字被合并为单个 `-`,且去掉了尾部 `-`)
+
+#### Scenario: 目录自动创建
+
+- **GIVEN** workspace 中尚不存在 `.ub/plans/` 目录
+- **WHEN** 调用 `plan_write(title="x", steps=["a"])`
+- **THEN** `.ub/plans/` 目录 MUST 被创建,plan 文件 MUST 落在该目录下
+
 ### Requirement: Plan markdown 模板
 
-`plan_write` 生成的 markdown MUST 满足以下结构,以保证后续 `plan_update_step` 可解析:
+`plan_write` 生成的 markdown MUST 满足固定结构,以保证后续 `plan_update_step` 可解析。顶部 MUST 是一个 `# <title>` 一级标题,空行后跟两行 metadata `Created: <RFC3339 时间>` 与 `Status: in_progress`。后续 MUST 依次出现 `Steps`、`Notes`、`Log` 三个二级标题段(均以 `## ` 起首)。
 
-```markdown
-# <title>
+Steps 段下每一步为一行,格式 `- [<m>] <i>. <text>`:`<m>` 取值 `空格`(未开始)/ `x`(完成)/ `~`(跳过)/ `!`(失败);`<i>` 是 1-based 序号;`<text>` 是步骤说明。Notes 段在 `notes` 入参为空时仍 MUST 保留标题但内容为空。Log 段初始 MUST 为空,后续 `plan_update_step` 调用 MUST 把 log 行追加到该段末尾。
 
-Created: <RFC3339 时间>
-Status: in_progress
+#### Scenario: 初始模板字段齐全
 
-## Steps
-
-- [ ] 1. <step 1>
-- [ ] 2. <step 2>
-- [ ] 3. <step 3>
-
-## Notes
-
-<notes 入参原样;为空时该 section 留空但保留标题>
-
-## Log
-
-```
-
-`## Steps` 节中每行 MUST 形如 `- [<m>] <i>. <text>`,其中 `<m>` 取值:`空格` 未开始 / `x` 已完成 / `~` 已跳过 / `!` 失败;`<i>` 是 1-based 序号。`## Log` 节初始为空。
+- **GIVEN** title = "T",steps = ["a", "b"],notes = "n"
+- **WHEN** plan 文件刚被 plan_write 生成
+- **THEN** 文件 MUST 同时包含 `# T` 一级标题、`Status: in_progress` metadata、两条以 `- [ ] N. ` 开头的 step 行、Notes 段(含 `n`)、Log 段(空)
 
 ### Requirement: plan_write 工具
 

@@ -1,7 +1,8 @@
-# task-subagent Specification (delta: add-task-subagent)
+# task-subagent Specification
 
-## ADDED Requirements
-
+## Purpose
+TBD - created by archiving change add-task-subagent. Update Purpose after archive.
+## Requirements
 ### Requirement: SubagentRunner ctx 助手
 
 `internal/tool` 包 SHALL 暴露 `SubagentRunner` 接口与配套的 ctx 助手:
@@ -19,6 +20,23 @@ func SubagentDepthFromContext(ctx context.Context) int
 ```
 
 `runner` 为 nil 时 `WithSubagentRunner` MUST 直接返回原 ctx。`depth` 默认 0,`task` 工具在调用 sub-runner 前 MUST 把 depth + 1 注入到 ctx 上,以便深度限制生效。
+
+#### Scenario: round-trip
+
+- **GIVEN** 一个实现 SubagentRunner 的 R
+- **WHEN** `ctx := WithSubagentRunner(parent, R); got := SubagentRunnerFromContext(ctx)`
+- **THEN** got == R
+
+#### Scenario: nil runner 不入 ctx
+
+- **WHEN** 调用 `WithSubagentRunner(parent, nil)`
+- **THEN** 返回的 ctx 与 parent 一致,SubagentRunnerFromContext 返回 nil
+
+#### Scenario: depth 默认为 0
+
+- **GIVEN** 全新的 context.Background()
+- **WHEN** 调用 `SubagentDepthFromContext`
+- **THEN** 返回 0
 
 ### Requirement: task 工具
 
@@ -66,3 +84,4 @@ agent runtime MUST 在 `runTool` 调用 `t.Execute(ctx, ...)` 之前,当 `Option
 - **GIVEN** 一个 agent 配了 `Options.SubagentRunner = R`
 - **WHEN** 它的 `task` 工具被调用
 - **THEN** `task` 工具 Execute 时从 ctx 取到的 runner MUST == R
+

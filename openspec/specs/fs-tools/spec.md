@@ -145,3 +145,96 @@ TBD - created by archiving change add-fs-tools. Update Purpose after archive.
 - **WHEN** 调用 `Execute(path="e.go", old="a", new="b")`，且在 Execute 内部读盘前文件内容已被改成 `c\n`
 - **THEN** Execute MUST 返回错误说明文件已变更，且 MUST NOT 把磁盘内容覆盖成 `b\n`
 
+### Requirement: multiedit 工具
+
+系统 SHALL 提供 `multiedit` 工具,`Risk` 为 `RiskWrite`,且 MUST 实现 `tool.PreviewableTool`。input schema MUST 包含 `edits: array`(必填,至少 1 条),每条 edit 的 schema 与 `edit` 工具一致:`{path: string(必填), old: string(必填), new: string(必填), replace_all: bool(可选,默认 false)}`。
+
+`multiedit` MUST 提供原子性语义:Execute 阶段先在内存中对所有 edits 按数组顺序逐条计算结果(同一 `path` 的多条 edits 串行累加,即第 N 条看到的是前 N-1 条应用后的内容),全部计算成功后再对每个涉及文件做"当前盘内容 == 计算前读到的 before"的 TOCTOU 二次校验,最后再批量写盘。任一 edit 失败、任一 TOCTOU 校验失败、任一写盘失败 MUST 终止整次调用并返回错误;未通过写盘步骤的文件 MUST 保持原内容不变。
+
+`Preview` MUST 在不写盘的前提下产出每个涉及文件一条 `FileDiff{Kind: "modify"}`,`UnifiedDiff` 反映该文件所有 edits 合并应用后的最终差异。
+
+`Execute` 成功时 `Result.Content` MUST 是人类可读的汇总(包含修改的文件数与替换次数总和),`Result.Files` MUST 按文件路径字典序包含每个涉及文件的一条 `FileChange{Kind: "modify", UnifiedDiff}`。
+
+#### Scenario: 单文件多处编辑 Preview
+
+- **GIVEN** root 中存在 `a.go`,内容为 `foo\nbar\nbaz\n`
+- **WHEN** 调用 `Preview(edits=[{path:"a.go", old:"foo", new:"FOO"}, {path:"a.go", old:"bar", new:"BAR"}])`
+- **THEN** 返回 `Preview` MUST 含一条 `FileDiff{Path:"a.go", Kind:"modify"}`,`UnifiedDiff` 同时含 `+FOO` 与 `+BAR` 行,且磁盘内容仍为 `foo\nbar\nbaz\n`
+
+#### Scenario: 多文件 Execute
+
+- **GIVEN** root 中存在 `a.txt`(内容 `aaa\n`)与 `b.txt`(内容 `bbb\n`)
+- **WHEN** 调用 `Execute(edits=[{path:"a.txt", old:"aaa", new:"AAA"}, {path:"b.txt", old:"bbb", new:"BBB"}])`
+- **THEN** `a.txt` 内容变为 `AAA\n`、`b.txt` 内容变为 `BBB\n`,`Result.Files` MUST 含两条 `FileChange`,按路径字典序排列
+
+#### Scenario: 同文件 edit 顺序敏感
+
+- **GIVEN** root 中存在 `a.txt`,内容为 `foo\n`
+- **WHEN** 调用 `Execute(edits=[{path:"a.txt", old:"foo", new:"bar"}, {path:"a.txt", old:"bar", new:"baz"}])`
+- **THEN** `a.txt` 最终内容 MUST 为 `baz\n`(第二条看到第一条应用后的结果)
+
+#### Scenario: 其中一条 edit 失败时整体回滚
+
+- **GIVEN** root 中存在 `a.txt`(内容 `foo\n`)与 `b.txt`(内容 `bbb\n`)
+- **WHEN** 调用 `Execute(edits=[{path:"a.txt", old:"foo", new:"FOO"}, {path:"b.txt", old:"NOPE", new:"x"}])`
+- **THEN** 工具 MUST 返回错误,`a.txt` 与 `b.txt` 内容 MUST 与调用前完全一致
+
+#### Scenario: 空 edits 数组拒绝
+
+- **WHEN** 调用 `Execute(edits=[])`
+- **THEN** 工具 MUST 返回包含 "at least one edit" 字样的错误
+
+#### Scenario: TOCTOU 检测
+
+- **GIVEN** root 中存在 `a.txt`,内容为 `foo\n`
+- **WHEN** 在 Preview 之后、Execute 写盘之前,`a.txt` 被外部进程改写为 `mutated\n`
+- **THEN** `Execute` MUST 返回包含 `changed on disk` 字样的错误,且 `a.txt` 内容 MUST 保留为 `mutated\n`(不被工具覆盖)
+
+### Requirement: tool_result 工具
+
+系统 SHALL 提供 `tool_result` 工具,`Risk` 为 `RiskSafe`。input schema MUST 包含 `tool_use_id: string`(必填),并 MAY 包含 `offset: int`(可选,从 1 开始)与 `limit: int`(可选)。工具 MUST 从 `context.Context` 中读取由 agent runtime 注入的 sessionID。如果 ctx 中未携带 sessionID,工具 MUST 返回包含 `session id` 字样的错误且不读盘。
+
+工具 MUST 通过 `tooloutput.SpilloverPath(stateRoot, sessionID, tool_use_id)` 推导 spillover 文件路径。当目标文件不存在时,工具 MUST 返回包含 `not found or output was not spilled` 字样的错误。文件存在时,`Result.Content` MUST 是带行号的文本,行号宽度按本次输出的最大行号对齐,默认 2000 行截断与 `read` 工具一致。
+
+`tool_result` MUST NOT 通过 input 接受任意磁盘路径;路径 MUST 由 sessionID + tool_use_id + 注册时固定的 outputRoot 派生,以避免越权读取 spillover 目录之外的文件。
+
+#### Scenario: 读取存在的 spillover 文件
+
+- **GIVEN** 当前 session 的 sessionID 为 `S`,`<outputRoot>/<safe(S)>/<safe(T)>.txt` 内容为 `alpha\nbeta\ngamma\n`,且 ctx 已注入 sessionID=S
+- **WHEN** 调用 `tool_result(tool_use_id="T")`
+- **THEN** `Result.Content` MUST 包含全部三行,每行带行号前缀
+
+#### Scenario: 文件缺失
+
+- **GIVEN** spillover 路径不存在
+- **WHEN** 调用 `tool_result(tool_use_id="X")`
+- **THEN** 工具 MUST 返回包含 `not found or output was not spilled` 字样的错误
+
+#### Scenario: 缺少 sessionID
+
+- **GIVEN** ctx 中未注入 sessionID
+- **WHEN** 调用 `tool_result(tool_use_id="T")`
+- **THEN** 工具 MUST 返回错误且不访问任何文件
+
+#### Scenario: offset / limit
+
+- **GIVEN** spillover 文件有 10 行
+- **WHEN** 调用 `tool_result(tool_use_id="T", offset=3, limit=2)`
+- **THEN** `Result.Content` MUST 只包含原第 3、4 行
+
+### Requirement: fs.Register 条件注册 tool_result
+
+系统 SHALL 在调用 `fs.RegisterWithOptions` 时,仅当 `Options.OutputRoot`(或回落用的 `Options.StateRoot`)指向非空目录时才注册 `tool_result`;否则 `Register` MUST 跳过 `tool_result` 的注册并不报错。其余 6 个工具(`read`/`ls`/`glob`/`write`/`edit`/`multiedit`)不受影响。
+
+#### Scenario: OutputRoot 提供时注册七件套
+
+- **GIVEN** 一个空 Registry、一个临时 root 与一个临时 outputRoot
+- **WHEN** 调用 `fs.RegisterWithOptions(reg, root, fs.Options{OutputRoot: outputRoot})`
+- **THEN** Registry MUST 含 `read`、`ls`、`glob`、`write`、`edit`、`multiedit`、`tool_result` 共 7 个工具
+
+#### Scenario: OutputRoot 缺失时回退六件套
+
+- **GIVEN** 一个空 Registry 与一个临时 root
+- **WHEN** 调用 `fs.Register(reg, root)`
+- **THEN** Registry MUST 只含 6 个工具且不含 `tool_result`
+
