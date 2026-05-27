@@ -20,8 +20,8 @@ type Options struct {
 	ChangeNotifier ChangeNotifier
 }
 
-// Register adds the five fs tools (read, ls, glob, write, edit) to reg.
-// All tools share the same cleaned workspace root.
+// Register adds the six fs tools (read, ls, glob, write, edit, multiedit) to
+// reg. All tools share the same cleaned workspace root.
 func Register(reg *tool.Registry, root string) error {
 	return RegisterWithNotifier(reg, root, nil)
 }
@@ -48,6 +48,7 @@ func RegisterWithOptions(reg *tool.Registry, root string, opts Options) error {
 		newGlobTool(root),
 		newWriteToolWithNotifier(root, opts.ChangeNotifier),
 		newEditToolWithNotifier(root, opts.ChangeNotifier),
+		newMultiEditToolWithNotifier(root, opts.ChangeNotifier),
 	}
 	for _, t := range tools {
 		if err := reg.Register(t); err != nil {

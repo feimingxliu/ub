@@ -8,12 +8,12 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/fs"
 )
 
-func TestRegister_FiveTools(t *testing.T) {
+func TestRegister_SixTools(t *testing.T) {
 	reg := tool.New()
 	if err := fs.Register(reg, t.TempDir()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	want := []string{"edit", "glob", "ls", "read", "write"}
+	want := []string{"edit", "glob", "ls", "multiedit", "read", "write"}
 	all := reg.All()
 	got := make([]string, len(all))
 	for i, tl := range all {
