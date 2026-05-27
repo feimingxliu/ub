@@ -220,7 +220,7 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs))
+	return tea.Batch(windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner))
 }
 
 // Update implements tea.Model.
@@ -241,6 +241,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDoctorResult(msg)
 	case copyResultMsg:
 		return m.handleCopyResult(msg)
+	case modelRefreshResultMsg:
+		return m.handleModelRefreshResult(msg)
 	}
 	m.clearToastForInteraction(msg)
 
@@ -918,6 +920,67 @@ func (m Model) handleCopyResult(msg copyResultMsg) (tea.Model, tea.Cmd) {
 	return m, m.showToast(toastSuccess, fmt.Sprintf("copied message %d", msg.n))
 }
 
+type modelRefreshResultMsg struct {
+	models           []string
+	modelErr         error
+	modelsOK         bool
+	approvalModels   []string
+	approvalErr      error
+	approvalModelsOK bool
+}
+
+func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
+	modelRunner, hasModels := runner.(ModelRefreshRunner)
+	approvalRunner, hasApprovalModels := runner.(ApprovalModelRefreshRunner)
+	if !hasModels && !hasApprovalModels {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := modelRefreshResultMsg{}
+		if hasModels {
+			msg.models, msg.modelErr = modelRunner.RefreshModels(ctx)
+			msg.modelsOK = true
+		}
+		if hasApprovalModels {
+			msg.approvalModels, msg.approvalErr = approvalRunner.RefreshApprovalModels(ctx)
+			msg.approvalModelsOK = true
+		}
+		return msg
+	}
+}
+
+func (m Model) handleModelRefreshResult(msg modelRefreshResultMsg) (tea.Model, tea.Cmd) {
+	if msg.modelsOK && msg.modelErr == nil {
+		selected := ""
+		if m.picker != nil && m.pickerTarget == "model" {
+			selected = m.picker.selected()
+		}
+		m.models = normalizeModels(msg.models, m.status.model)
+		if m.picker != nil && m.pickerTarget == "model" {
+			current := m.status.model
+			if modelAllowed(m.models, selected) {
+				current = selected
+			}
+			m.picker = newModelPicker(m.models, current)
+		}
+	}
+	if msg.approvalModelsOK && msg.approvalErr == nil {
+		selected := ""
+		if m.picker != nil && m.pickerTarget == "approval" {
+			selected = m.picker.selected()
+		}
+		m.approvalModels = normalizeModels(msg.approvalModels, m.approvalModel)
+		if m.picker != nil && m.pickerTarget == "approval" {
+			current := m.approvalModel
+			if modelAllowed(m.approvalModels, selected) {
+				current = selected
+			}
+			m.picker = newModelPicker(m.approvalModels, current)
+		}
+	}
+	return m, nil
+}
+
 func (m Model) lastUserTurn() (string, bool) {
 	for i := len(m.messages.items) - 1; i >= 0; i-- {
 		item := m.messages.items[i]
@@ -1431,16 +1494,15 @@ func (m *Model) setModel(model string) error {
 	if model == "" {
 		return fmt.Errorf("model cannot be empty")
 	}
-	if !modelAllowed(m.models, model) {
-		return fmt.Errorf("model %q is not available for the current provider; use /model to list candidates", model)
-	}
 	if runner, ok := m.runner.(ControlRunner); ok {
 		if err := runner.SetModel(model); err != nil {
 			return err
 		}
+		m.models = normalizeModels(runner.Models(), model)
+	} else if !modelAllowed(m.models, model) {
+		return fmt.Errorf("model %q is not available for the current provider; use /model to list candidates", model)
 	}
 	m.status.model = model
-	m.models = normalizeModels(m.models, model)
 	m.refreshEffortFromRunner()
 	return nil
 }
@@ -1517,16 +1579,15 @@ func (m *Model) setApprovalModel(model string) error {
 	if model == "" {
 		return fmt.Errorf("approval model cannot be empty")
 	}
-	if !modelAllowed(m.approvalModels, model) {
-		return fmt.Errorf("approval model %q is not available for the current approval provider; use /approval-model to list candidates", model)
-	}
 	if runner, ok := m.runner.(ApprovalControlRunner); ok {
 		if err := runner.SetApprovalModel(model); err != nil {
 			return err
 		}
+		m.approvalModels = normalizeModels(runner.ApprovalModels(), model)
+	} else if !modelAllowed(m.approvalModels, model) {
+		return fmt.Errorf("approval model %q is not available for the current approval provider; use /approval-model to list candidates", model)
 	}
 	m.approvalModel = model
-	m.approvalModels = normalizeModels(m.approvalModels, model)
 	return nil
 }
 

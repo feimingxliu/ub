@@ -521,11 +521,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 	reg := tool.New()
 	var warnings []error
 	var closers []func() error
-	var lspManager *lspruntime.Manager
+	var lspManager *lspruntime.LazyManager
 	if cfg != nil && len(cfg.LSPServers) > 0 {
-		var lspWarnings []error
-		lspManager, lspWarnings = lspruntime.StartConfigured(ctx, cwd, cfg.LSPServers)
-		warnings = append(warnings, lspWarnings...)
+		lspManager = lspruntime.NewLazyManager(cwd, cfg.LSPServers)
 		if lspManager != nil {
 			closers = append(closers, lspManager.Close)
 		}

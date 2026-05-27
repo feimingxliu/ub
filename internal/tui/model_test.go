@@ -2019,6 +2019,54 @@ func TestSlashModelWithoutArgsListsCandidates(t *testing.T) {
 	}
 }
 
+func TestAsyncModelRefreshUpdatesOpenPicker(t *testing.T) {
+	runner := &scriptedRunner{
+		model:         "fake/current",
+		models:        []string{"fake/current"},
+		refreshModels: []string{"fake/current", "fake/remote"},
+	}
+	model := NewModel(Options{Runner: runner, Model: "fake/current", Models: runner.models})
+	refreshMsg := initModelRefreshMsg(t, model)
+	if runner.refreshModelCalls != 1 {
+		t.Fatalf("refresh model calls = %d, want 1", runner.refreshModelCalls)
+	}
+
+	model = sendText(t, model, "/model")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash model returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.refreshModelCalls != 1 {
+		t.Fatalf("slash model triggered refresh calls = %d, want 1", runner.refreshModelCalls)
+	}
+	view := viewString(model)
+	if strings.Contains(view, "fake/remote") {
+		t.Fatalf("model picker included async candidate before refresh msg:\n%s", view)
+	}
+
+	updated, cmd = model.Update(refreshMsg)
+	if cmd != nil {
+		t.Fatalf("refresh returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view = viewString(model)
+	for _, want := range []string{"> fake/current", "  fake/remote"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("model picker missing refreshed candidate %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyDown))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.model != "fake/remote" || !strings.Contains(viewString(model), "model: fake/remote") {
+		t.Fatalf("refreshed model selection failed: runner=%q view=\n%s", runner.model, viewString(model))
+	}
+}
+
 func TestSlashApprovalModelUpdatesRunner(t *testing.T) {
 	runner := &scriptedRunner{
 		approvalModel:  "fake/review-old",
@@ -2070,6 +2118,58 @@ func TestSlashApprovalModelWithoutArgsListsCandidates(t *testing.T) {
 	model = assertModel(t, updated)
 	if runner.approvalModel != "fake/review-new" {
 		t.Fatalf("approval model = %q, want fake/review-new", runner.approvalModel)
+	}
+}
+
+func TestAsyncApprovalModelRefreshUpdatesOpenPicker(t *testing.T) {
+	runner := &scriptedRunner{
+		approvalModel:         "fake/review-current",
+		approvalModels:        []string{"fake/review-current"},
+		refreshApprovalModels: []string{"fake/review-current", "fake/review-remote"},
+	}
+	model := NewModel(Options{
+		Runner:         runner,
+		ApprovalModel:  runner.approvalModel,
+		ApprovalModels: runner.approvalModels,
+	})
+	refreshMsg := initModelRefreshMsg(t, model)
+	if runner.refreshApprovalCalls != 1 {
+		t.Fatalf("refresh approval calls = %d, want 1", runner.refreshApprovalCalls)
+	}
+
+	model = sendText(t, model, "/approval-model")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash approval-model returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.refreshApprovalCalls != 1 {
+		t.Fatalf("slash approval-model triggered refresh calls = %d, want 1", runner.refreshApprovalCalls)
+	}
+	view := viewString(model)
+	if strings.Contains(view, "fake/review-remote") {
+		t.Fatalf("approval model picker included async candidate before refresh msg:\n%s", view)
+	}
+
+	updated, cmd = model.Update(refreshMsg)
+	if cmd != nil {
+		t.Fatalf("refresh returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view = viewString(model)
+	for _, want := range []string{"> fake/review-current", "  fake/review-remote"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("approval model picker missing refreshed candidate %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyDown))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.approvalModel != "fake/review-remote" {
+		t.Fatalf("approval model = %q, want fake/review-remote", runner.approvalModel)
 	}
 }
 
@@ -2936,33 +3036,39 @@ func TestStreamWaitTimeoutCancelsRun(t *testing.T) {
 }
 
 type scriptedRunner struct {
-	events           []Event
-	compactEvents    []Event
-	calls            int
-	compactCalls     int
-	prompts          []string
-	provider         string
-	providers        []string
-	providerModels   map[string][]string
-	model            string
-	models           []string
-	effort           string
-	efforts          []string
-	approvalModel    string
-	approvalModels   []string
-	mode             string
-	sessions         []SessionInfo
-	sessionStates    map[string]SessionState
-	currentSessionID string
-	newSessionState  SessionState
-	newSessionCalls  int
-	shellEvents      []Event
-	shellCalls       int
-	shellCommands    []string
-	workspaceFiles   []string
-	doctorReport     string
-	doctorErr        error
-	doctorCalls      int
+	events                []Event
+	compactEvents         []Event
+	calls                 int
+	compactCalls          int
+	prompts               []string
+	provider              string
+	providers             []string
+	providerModels        map[string][]string
+	model                 string
+	models                []string
+	refreshModels         []string
+	refreshModelErr       error
+	refreshModelCalls     int
+	effort                string
+	efforts               []string
+	approvalModel         string
+	approvalModels        []string
+	refreshApprovalModels []string
+	refreshApprovalErr    error
+	refreshApprovalCalls  int
+	mode                  string
+	sessions              []SessionInfo
+	sessionStates         map[string]SessionState
+	currentSessionID      string
+	newSessionState       SessionState
+	newSessionCalls       int
+	shellEvents           []Event
+	shellCalls            int
+	shellCommands         []string
+	workspaceFiles        []string
+	doctorReport          string
+	doctorErr             error
+	doctorCalls           int
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -3017,6 +3123,9 @@ func (r *scriptedRunner) ListWorkspaceFiles(_ context.Context, query string, lim
 }
 
 func (r *scriptedRunner) SetModel(model string) error {
+	if len(r.models) > 0 && !modelAllowed(r.models, model) {
+		return fmt.Errorf("model %q is not available", model)
+	}
 	r.model = model
 	return nil
 }
@@ -3062,6 +3171,17 @@ func (r *scriptedRunner) Models() []string {
 	return append([]string(nil), r.models...)
 }
 
+func (r *scriptedRunner) RefreshModels(context.Context) ([]string, error) {
+	r.refreshModelCalls++
+	if r.refreshModelErr != nil {
+		return nil, r.refreshModelErr
+	}
+	if r.refreshModels != nil {
+		r.models = append([]string(nil), r.refreshModels...)
+	}
+	return r.Models(), nil
+}
+
 func (r *scriptedRunner) SetEffort(effort string) error {
 	for _, candidate := range r.efforts {
 		if candidate == effort {
@@ -3081,6 +3201,9 @@ func (r *scriptedRunner) Efforts() []string {
 }
 
 func (r *scriptedRunner) SetApprovalModel(model string) error {
+	if len(r.approvalModels) > 0 && !modelAllowed(r.approvalModels, model) {
+		return fmt.Errorf("approval model %q is not available", model)
+	}
 	r.approvalModel = model
 	return nil
 }
@@ -3091,6 +3214,17 @@ func (r *scriptedRunner) ApprovalModel() string {
 
 func (r *scriptedRunner) ApprovalModels() []string {
 	return append([]string(nil), r.approvalModels...)
+}
+
+func (r *scriptedRunner) RefreshApprovalModels(context.Context) ([]string, error) {
+	r.refreshApprovalCalls++
+	if r.refreshApprovalErr != nil {
+		return nil, r.refreshApprovalErr
+	}
+	if r.refreshApprovalModels != nil {
+		r.approvalModels = append([]string(nil), r.refreshApprovalModels...)
+	}
+	return r.ApprovalModels(), nil
 }
 
 func (r *scriptedRunner) ListSessions(context.Context) ([]SessionInfo, error) {
@@ -3344,4 +3478,24 @@ func assertInitRequestsWindowSizes(t *testing.T, model Model, wantWidth, wantHei
 	if !gotSynthetic || !gotRequest {
 		t.Fatalf("Init batch synthetic=%v request=%v, want both", gotSynthetic, gotRequest)
 	}
+}
+
+func initModelRefreshMsg(t *testing.T, model Model) modelRefreshResultMsg {
+	t.Helper()
+	cmd := model.Init()
+	if cmd == nil {
+		t.Fatalf("Init returned nil")
+	}
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init returned %T, want tea.BatchMsg", cmd())
+	}
+	for _, cmd := range batch {
+		msg := cmd()
+		if refresh, ok := msg.(modelRefreshResultMsg); ok {
+			return refresh
+		}
+	}
+	t.Fatalf("Init batch did not include model refresh command")
+	return modelRefreshResultMsg{}
 }

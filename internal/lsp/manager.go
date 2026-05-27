@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/feimingxliu/ub/internal/config"
@@ -19,6 +20,19 @@ import (
 type Manager struct {
 	root    string
 	servers []*server
+}
+
+// LazyManager defers starting language servers until an LSP query needs them.
+// Filesystem change notifications are ignored until startup has happened; the
+// first query syncs its target file before asking the server.
+type LazyManager struct {
+	root    string
+	configs map[string]config.LSPServerConfig
+
+	mu       sync.Mutex
+	started  bool
+	manager  *Manager
+	startErr error
 }
 
 type server struct {
@@ -33,6 +47,27 @@ const (
 )
 
 var errStopSymbolSearch = errors.New("stop symbol search")
+
+// NewLazyManager returns a Manager-compatible wrapper that does not spawn LSP
+// processes until the first query. Nil is returned when no servers are
+// configured so callers can keep the old "no LSP tools" behavior.
+func NewLazyManager(root string, configs map[string]config.LSPServerConfig) *LazyManager {
+	if len(configs) == 0 {
+		return nil
+	}
+	if root == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			root = cwd
+		}
+	}
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	return &LazyManager{
+		root:    root,
+		configs: cloneServerConfigs(configs),
+	}
+}
 
 // StartConfigured starts all configured LSP servers. Individual failures are
 // returned as warnings so callers can keep non-LSP tools available.
@@ -68,6 +103,125 @@ func StartConfigured(ctx context.Context, root string, configs map[string]config
 		return nil, warnings
 	}
 	return m, warnings
+}
+
+func (m *LazyManager) ensureStarted(ctx context.Context) (*Manager, error) {
+	if m == nil {
+		return nil, fmt.Errorf("lsp: no language server configured")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.started {
+		if m.manager != nil {
+			return m.manager, nil
+		}
+		return nil, m.startErr
+	}
+	m.started = true
+	manager, warnings := StartConfigured(ctx, m.root, m.configs)
+	m.manager = manager
+	if manager != nil {
+		return manager, nil
+	}
+	if len(warnings) > 0 {
+		m.startErr = fmt.Errorf("lsp: start configured: %w", errors.Join(warnings...))
+	} else {
+		m.startErr = fmt.Errorf("lsp: no language server configured")
+	}
+	return nil, m.startErr
+}
+
+// DidChangeFile updates an already-started server. Before the first query it is
+// a no-op so ordinary file edits do not pay LSP startup cost.
+func (m *LazyManager) DidChangeFile(ctx context.Context, path string) error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	manager := m.manager
+	m.mu.Unlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.DidChangeFile(ctx, path)
+}
+
+func (m *LazyManager) Diagnostics(ctx context.Context, file string) ([]FileDiagnostics, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return manager.Diagnostics(ctx, file)
+}
+
+func (m *LazyManager) References(ctx context.Context, file string, line, col int) ([]Location, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return manager.References(ctx, file, line, col)
+}
+
+func (m *LazyManager) ReferencesBySymbol(ctx context.Context, symbol, path string) ([]Location, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return manager.ReferencesBySymbol(ctx, symbol, path)
+}
+
+func (m *LazyManager) Hover(ctx context.Context, file string, line, col int) (HoverResult, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return HoverResult{}, err
+	}
+	return manager.Hover(ctx, file, line, col)
+}
+
+func (m *LazyManager) Completion(ctx context.Context, file string, line, col, max int) ([]CompletionItem, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return manager.Completion(ctx, file, line, col, max)
+}
+
+func (m *LazyManager) DocumentSymbols(ctx context.Context, file string) ([]DocumentSymbol, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return manager.DocumentSymbols(ctx, file)
+}
+
+func (m *LazyManager) Rename(ctx context.Context, file string, line, col int, newName string) (WorkspaceEdit, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return WorkspaceEdit{}, err
+	}
+	return manager.Rename(ctx, file, line, col, newName)
+}
+
+func (m *LazyManager) CodeActions(ctx context.Context, file string, line, col, endLine, endCol int) ([]CodeAction, error) {
+	manager, err := m.ensureStarted(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return manager.CodeActions(ctx, file, line, col, endLine, endCol)
+}
+
+func (m *LazyManager) Close() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	manager := m.manager
+	m.manager = nil
+	m.mu.Unlock()
+	if manager == nil {
+		return nil
+	}
+	return manager.Close()
 }
 
 // DidChangeFile reads path and syncs it to the matching language server.
@@ -693,6 +847,19 @@ func normalizeFileTypes(types []string) []string {
 		if typ != "" {
 			out = append(out, typ)
 		}
+	}
+	return out
+}
+
+func cloneServerConfigs(configs map[string]config.LSPServerConfig) map[string]config.LSPServerConfig {
+	if len(configs) == 0 {
+		return nil
+	}
+	out := make(map[string]config.LSPServerConfig, len(configs))
+	for name, cfg := range configs {
+		cfg.Args = append([]string(nil), cfg.Args...)
+		cfg.FileTypes = append([]string(nil), cfg.FileTypes...)
+		out[name] = cfg
 	}
 	return out
 }

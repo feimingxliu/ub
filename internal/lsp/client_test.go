@@ -100,6 +100,45 @@ func TestManagerDidChangeFileRoutesByFileType(t *testing.T) {
 	}
 }
 
+func TestLazyManagerDefersStartUntilQuery(t *testing.T) {
+	root := t.TempDir()
+	file := root + "/main.go"
+	if err := os.WriteFile(file, []byte("package main\nfunc main() {"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath := root + "/lsp.log"
+	t.Setenv("UB_LSP_FIXTURE", "1")
+	t.Setenv("UB_LSP_FIXTURE_LOG", logPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	m := NewLazyManager(root, map[string]config.LSPServerConfig{
+		"fixture": {
+			Command:   os.Args[0],
+			Args:      []string{"-test.run=TestLSPFixture"},
+			FileTypes: []string{"go"},
+		},
+	})
+	if err := m.DidChangeFile(ctx, file); err != nil {
+		t.Fatalf("DidChangeFile before start: %v", err)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("lazy manager started before query; stat err = %v", err)
+	}
+	if _, err := m.Diagnostics(ctx, file); err != nil {
+		t.Fatalf("Diagnostics: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(logBytes), "initialize") {
+		t.Fatalf("lazy manager did not start on query:\n%s", logBytes)
+	}
+}
+
 func TestManagerRejectsFilesOutsideWorkspace(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir() + "/secret.go"

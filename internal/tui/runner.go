@@ -40,6 +40,12 @@ type ControlRunner interface {
 	Models() []string
 }
 
+// ModelRefreshRunner optionally lets the TUI load the current provider's
+// complete model list on demand.
+type ModelRefreshRunner interface {
+	RefreshModels(ctx context.Context) ([]string, error)
+}
+
 // ProviderSelection is the effective provider/model state after switching.
 type ProviderSelection struct {
 	Provider  string
@@ -70,6 +76,12 @@ type ApprovalControlRunner interface {
 	SetApprovalModel(model string) error
 	ApprovalModel() string
 	ApprovalModels() []string
+}
+
+// ApprovalModelRefreshRunner optionally lets the TUI load the approval
+// provider's complete model list on demand.
+type ApprovalModelRefreshRunner interface {
+	RefreshApprovalModels(ctx context.Context) ([]string, error)
 }
 
 // InitialMessage is a persisted message rendered when a TUI session is loaded.

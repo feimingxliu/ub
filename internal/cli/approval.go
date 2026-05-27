@@ -85,7 +85,7 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 		ProviderName:   providerName,
 		ProviderConfig: providerCfg,
 		Model:          model,
-		Models:         providerModels(ctx, providerName, providerCfg, model),
+		Models:         configuredProviderModels(providerCfg, model),
 		Reasoning:      reasoningCfg,
 	}, nil
 }

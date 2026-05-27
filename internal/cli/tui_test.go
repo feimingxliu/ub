@@ -142,6 +142,36 @@ func TestTUIRunnerSetProviderSwitchesProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestTUIRunnerRefreshModelsMergesConfiguredAndProviderModels(t *testing.T) {
+	cfg := config.ProviderConfig{
+		Type:    "openai-compat",
+		BaseURL: "https://example.test/v1",
+		Models: map[string]config.ModelConfig{
+			"configured/model": {},
+		},
+	}
+	runner := &tuiAgentRunner{
+		providerName: "primary",
+		providerCfg:  cfg,
+		model:        "current/model",
+		providerChecks: map[string]providerCheck{
+			providerCheckKey("primary", cfg): {
+				Status: "ok",
+				Models: []string{"remote/model", "configured/model"},
+			},
+		},
+	}
+
+	models, err := runner.RefreshModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshModels: %v", err)
+	}
+	want := []string{"current/model", "configured/model", "remote/model"}
+	if strings.Join(models, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("models = %#v, want %#v", models, want)
+	}
+}
+
 func TestTUIRunnerNewSessionCreatesBlankSession(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `providers:

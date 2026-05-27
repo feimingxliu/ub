@@ -43,7 +43,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 	logger.Info("tui start", "log_file", logPath)
 	defer logger.Info("tui stop")
 	if strings.TrimSpace(resume) == "" {
-		runStartupMaintenance(cmd, cfg)
+		go runStartupMaintenance(cmd, cfg)
 	}
 
 	permBridge := tui.NewPermissionBridge()
@@ -139,6 +139,8 @@ type tuiAgentRunner struct {
 	closedStore          bool
 	maxTurns             int
 	limitAsker           agent.LimitAsker
+	providerCheckMu      sync.Mutex
+	providerChecks       map[string]providerCheck
 
 	// cachedMessages holds the reconstructed InitialMessages for the loaded
 	// session. Populated lazily by Messages() so we only scan the rollout once
@@ -164,7 +166,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
-	models := providerModels(cmd.Context(), providerName, providerCfg, model)
+	models := configuredProviderModels(providerCfg, model)
 	mainInfo := modelinfo.Resolve(providerName, providerCfg, model)
 	reasoningCfg := modelinfo.RequestConfig(cfg.Reasoning, mainInfo)
 	mode, err := execution.ParseMode(cfg.ExecutionMode)
@@ -213,6 +215,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
 		maxTurns:             cfg.MaxTurns,
+		providerChecks:       map[string]providerCheck{},
 	}, nil
 }
 
@@ -598,6 +601,9 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 		return fmt.Errorf("model cannot be empty")
 	}
 	if !modelInList(r.models, model) {
+		r.models = r.providerModels(r.cmd.Context(), r.providerName, r.providerCfg, "")
+	}
+	if !modelInList(r.models, model) {
 		return fmt.Errorf("model %q is not available for the current provider", model)
 	}
 	r.model = model
@@ -607,6 +613,13 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	}
 	r.refreshReasoning()
 	return nil
+}
+
+func (r *tuiAgentRunner) RefreshModels(ctx context.Context) ([]string, error) {
+	if r == nil {
+		return nil, fmt.Errorf("model refresh is unavailable")
+	}
+	return r.providerModels(ctx, r.providerName, r.providerCfg, r.model), nil
 }
 
 func (r *tuiAgentRunner) SetProvider(providerName, model string) (tui.ProviderSelection, error) {
@@ -629,7 +642,7 @@ func (r *tuiAgentRunner) SetProvider(providerName, model string) (tui.ProviderSe
 	if err != nil {
 		return tui.ProviderSelection{}, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
-	models := providerModels(r.cmd.Context(), providerName, providerCfg, selectedModel)
+	models := r.providerModels(r.cmd.Context(), providerName, providerCfg, selectedModel)
 	info := modelinfo.Resolve(providerName, providerCfg, selectedModel)
 	summarySetup, err := newSummarySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel)
 	if err != nil {
@@ -675,7 +688,7 @@ func (r *tuiAgentRunner) modelForProviderSwitch(providerName string, providerCfg
 	if r != nil && r.cfg != nil && strings.TrimSpace(r.cfg.DefaultProvider) == providerName && strings.TrimSpace(r.cfg.DefaultModel) != "" {
 		return strings.TrimSpace(r.cfg.DefaultModel), nil
 	}
-	return selectProviderModel(r.cmd.Context(), providerName, providerCfg, "")
+	return r.selectProviderModel(r.cmd.Context(), providerName, providerCfg, "")
 }
 
 func (r *tuiAgentRunner) SetEffort(effort string) error {
@@ -698,6 +711,9 @@ func (r *tuiAgentRunner) SetApprovalModel(model string) error {
 		return fmt.Errorf("approval provider is not configured")
 	}
 	if !modelInList(r.approvalModels, model) {
+		r.approvalModels = r.providerModels(r.cmd.Context(), r.approvalProviderName, r.approvalProviderCfg, "")
+	}
+	if !modelInList(r.approvalModels, model) {
 		return fmt.Errorf("approval model %q is not available for the current approval provider", model)
 	}
 	agent, err := r.newApprovalAgent(model)
@@ -708,6 +724,13 @@ func (r *tuiAgentRunner) SetApprovalModel(model string) error {
 	r.approvalModel = model
 	r.approvalModels = appendModelCandidate(r.approvalModels, model)
 	return nil
+}
+
+func (r *tuiAgentRunner) RefreshApprovalModels(ctx context.Context) ([]string, error) {
+	if r == nil || r.approvalProviderName == "" {
+		return nil, fmt.Errorf("approval provider is not configured")
+	}
+	return r.providerModels(ctx, r.approvalProviderName, r.approvalProviderCfg, r.approvalModel), nil
 }
 
 func (r *tuiAgentRunner) SetMode(mode string) error {
@@ -811,9 +834,64 @@ func (r *tuiAgentRunner) newApprovalAgent(model string) (approval.Agent, error) 
 	return approval.NewProviderAgentWithReasoning(p, model, reasoningCfg)
 }
 
-func providerModels(ctx context.Context, providerName string, providerCfg config.ProviderConfig, current string) []string {
+func configuredProviderModels(providerCfg config.ProviderConfig, current string) []string {
+	models := make([]string, 0, len(providerCfg.Models))
+	for model := range providerCfg.Models {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return appendModelCandidate(models, current)
+}
+
+func (r *tuiAgentRunner) providerModels(ctx context.Context, providerName string, providerCfg config.ProviderConfig, current string) []string {
+	result := r.checkProvider(ctx, providerName, providerCfg)
+	return mergeModelCandidates(current, configuredProviderModels(providerCfg, ""), result.Models)
+}
+
+func (r *tuiAgentRunner) selectProviderModel(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model, nil
+	}
+	check := r.checkProvider(ctx, providerName, providerCfg)
+	if len(check.Models) > 0 {
+		return check.Models[0], nil
+	}
+	if !providerRequiresModel(providerCfg.Type) {
+		return "", nil
+	}
+	return "", missingModelError(providerName, check)
+}
+
+func (r *tuiAgentRunner) checkProvider(ctx context.Context, providerName string, providerCfg config.ProviderConfig) providerCheck {
+	if r == nil {
+		return checkProvider(ctx, providerName, providerCfg)
+	}
+	key := providerCheckKey(providerName, providerCfg)
+	r.providerCheckMu.Lock()
+	if r.providerChecks == nil {
+		r.providerChecks = map[string]providerCheck{}
+	}
+	if cached, ok := r.providerChecks[key]; ok {
+		r.providerCheckMu.Unlock()
+		return cached
+	}
+	r.providerCheckMu.Unlock()
+
 	result := checkProvider(ctx, providerName, providerCfg)
-	return appendModelCandidate(result.Models, current)
+
+	r.providerCheckMu.Lock()
+	r.providerChecks[key] = result
+	r.providerCheckMu.Unlock()
+	return result
+}
+
+func providerCheckKey(providerName string, providerCfg config.ProviderConfig) string {
+	return strings.Join([]string{
+		strings.TrimSpace(providerName),
+		strings.TrimSpace(providerCfg.Type),
+		strings.TrimSpace(providerCfg.BaseURL),
+	}, "\x00")
 }
 
 func appendModelCandidate(models []string, model string) []string {
@@ -834,6 +912,30 @@ func appendModelCandidate(models []string, model string) []string {
 	add(model)
 	for _, candidate := range models {
 		add(candidate)
+	}
+	return out
+}
+
+func mergeModelCandidates(current string, groups ...[]string) []string {
+	current = strings.TrimSpace(current)
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, ok := seen[candidate]; ok {
+			return
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	add(current)
+	for _, group := range groups {
+		for _, candidate := range group {
+			add(candidate)
+		}
 	}
 	return out
 }
