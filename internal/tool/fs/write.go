@@ -46,7 +46,7 @@ func (t *writeTool) Risk() tool.Risk            { return tool.RiskWrite }
 
 func (t *writeTool) parseAndResolve(raw json.RawMessage) (writeArgs, string, error) {
 	var a writeArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return a, "", fmt.Errorf("write: invalid args: %w", err)
 	}
 	if a.Path == "" {

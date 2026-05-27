@@ -202,17 +202,16 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	tools, err := toolDefinitions(a.tools, a.currentMode())
-	if err != nil {
-		return Result{}, err
-	}
-
 	turn := 0
 	limit := a.maxTurns
 	outputTokensRecoveryCount := 0
 loop:
 	for {
 		for turn < limit {
+			tools, err := toolDefinitions(a.tools, a.currentMode())
+			if err != nil {
+				return Result{}, err
+			}
 			prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages, tools)
 			if err != nil {
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
@@ -712,7 +711,7 @@ func toolDefinitions(reg *tool.Registry, mode execution.Mode) ([]provider.ToolDe
 	tools := reg.All()
 	defs := make([]provider.ToolDefinition, 0, len(tools))
 	for _, t := range tools {
-		if !toolAvailableInMode(t.Name(), mode) {
+		if !toolAdvertisedInMode(t, mode) {
 			continue
 		}
 		raw, err := json.Marshal(t.Schema())
@@ -726,6 +725,17 @@ func toolDefinitions(reg *tool.Registry, mode execution.Mode) ([]provider.ToolDe
 		})
 	}
 	return defs, nil
+}
+
+func toolAdvertisedInMode(t tool.Tool, mode execution.Mode) bool {
+	if t == nil || !toolAvailableInMode(t.Name(), mode) {
+		return false
+	}
+	parsed, err := execution.ParseMode(string(mode))
+	if err != nil {
+		parsed = execution.ModeWork
+	}
+	return parsed != execution.ModePlan || t.Risk() != tool.RiskWrite
 }
 
 func toolAvailableInMode(name string, mode execution.Mode) bool {

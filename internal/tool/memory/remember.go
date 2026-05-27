@@ -43,7 +43,7 @@ func (t *rememberTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *rememberTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a rememberArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("remember: invalid args: %w", err)
 	}
 	if strings.TrimSpace(a.Text) == "" {

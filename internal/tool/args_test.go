@@ -45,3 +45,17 @@ func TestBoolArgRejectsNonBooleanStrings(t *testing.T) {
 		t.Fatalf("expected boolean error, got %v", err)
 	}
 }
+
+func TestUnmarshalArgsAcceptsJSONEncodedObjectString(t *testing.T) {
+	var got struct {
+		Count IntArg  `json:"count"`
+		All   BoolArg `json:"all"`
+	}
+	raw := json.RawMessage(`"{\"count\":\"42\",\"all\":\"true\"}"`)
+	if err := UnmarshalArgs(raw, &got); err != nil {
+		t.Fatalf("UnmarshalArgs: %v", err)
+	}
+	if int(got.Count) != 42 || !bool(got.All) {
+		t.Fatalf("decoded args = %#v, want count=42 all=true", got)
+	}
+}

@@ -266,6 +266,42 @@ func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
 	}
 }
 
+func TestAgentInjectsPlanModeInstructionsWithoutPersistingThem(t *testing.T) {
+	reg := tool.New()
+	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Model:    "fake/model",
+		Mode:     execution.ModePlan,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{Prompt: "add CI", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(p.requests))
+	}
+	got := p.requests[0].Messages
+	for _, want := range []string{
+		"<execution_mode>",
+		"mode=plan",
+		"create a plan with the plan_write tool before starting implementation",
+		"Do not create, edit, delete, move, format, install",
+		"report the plan_id and wait",
+	} {
+		if !containsText(got, want) {
+			t.Fatalf("plan mode instructions missing %q:\n%#v", want, got)
+		}
+	}
+	if containsText(res.Messages, "<execution_mode>") {
+		t.Fatalf("plan mode instructions leaked into result history: %#v", res.Messages)
+	}
+}
+
 func TestAgentRunsReadToolAndReturnsFinalAnswer(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
@@ -692,6 +728,12 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if err := reg.Register(&namedSafeTool{name: "read"}); err != nil {
 		t.Fatalf("register read: %v", err)
 	}
+	if err := reg.Register(&namedRiskTool{name: "edit", risk: tool.RiskWrite}); err != nil {
+		t.Fatalf("register edit: %v", err)
+	}
+	if err := reg.Register(&namedRiskTool{name: "bash", risk: tool.RiskExec}); err != nil {
+		t.Fatalf("register bash: %v", err)
+	}
 	tools, err := toolDefinitions(reg, execution.ModeAuto)
 	if err != nil {
 		t.Fatalf("toolDefinitions auto: %v", err)
@@ -702,12 +744,21 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "read") {
 		t.Fatalf("auto mode should keep non-plan tools: %#v", tools)
 	}
+	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") {
+		t.Fatalf("auto mode should keep write and exec tools: %#v", tools)
+	}
 	tools, err = toolDefinitions(reg, execution.ModePlan)
 	if err != nil {
 		t.Fatalf("toolDefinitions plan: %v", err)
 	}
 	if !toolNamesContain(tools, "plan_write") {
 		t.Fatalf("plan mode should advertise plan_write: %#v", tools)
+	}
+	if toolNamesContain(tools, "edit") {
+		t.Fatalf("plan mode should not advertise write tools: %#v", tools)
+	}
+	if !toolNamesContain(tools, "bash") {
+		t.Fatalf("plan mode should keep exec tools for approved inspection commands: %#v", tools)
 	}
 
 	perm := newPermissionManager(t, nil)
@@ -726,6 +777,58 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	block := last.Content[0]
 	if !block.IsError || !strings.Contains(block.Output, "only available in plan mode") {
 		t.Fatalf("tool result block = %#v, want plan-mode denial", block)
+	}
+}
+
+func TestAgentRefreshesAdvertisedToolsAfterModeSwitch(t *testing.T) {
+	mode := execution.ModeWork
+	reg := tool.New()
+	if err := reg.Register(&namedSafeTool{name: "plan_write"}); err != nil {
+		t.Fatalf("register plan_write: %v", err)
+	}
+	if err := reg.Register(&namedRiskTool{name: "write", risk: tool.RiskWrite}); err != nil {
+		t.Fatalf("register write: %v", err)
+	}
+	if err := reg.Register(&modeFlipTool{set: func() { mode = execution.ModePlan }}); err != nil {
+		t.Fatalf("register flip_mode: %v", err)
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("flip_mode", map[string]any{}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Model:    "fake/model",
+		Mode:     execution.ModeWork,
+		ModeFunc: func() execution.Mode {
+			return mode
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "create CI", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(p.requests))
+	}
+	if toolNamesContain(p.requests[0].Tools, "plan_write") {
+		t.Fatalf("work mode should not advertise plan_write: %#v", p.requests[0].Tools)
+	}
+	if !toolNamesContain(p.requests[0].Tools, "write") {
+		t.Fatalf("work mode should advertise write: %#v", p.requests[0].Tools)
+	}
+	if !toolNamesContain(p.requests[1].Tools, "plan_write") {
+		t.Fatalf("plan mode should advertise plan_write after switch: %#v", p.requests[1].Tools)
+	}
+	if toolNamesContain(p.requests[1].Tools, "write") {
+		t.Fatalf("plan mode should hide write after switch: %#v", p.requests[1].Tools)
+	}
+	if !containsText(p.requests[1].Messages, "mode=plan") {
+		t.Fatalf("second request missing plan-mode instructions: %#v", p.requests[1].Messages)
 	}
 }
 
@@ -1533,6 +1636,46 @@ func (t *namedSafeTool) Schema() *jsonschema.Schema {
 func (t *namedSafeTool) Risk() tool.Risk { return tool.RiskSafe }
 func (t *namedSafeTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
 	t.executeCalls++
+	return tool.Result{Content: "ok"}, nil
+}
+
+type namedRiskTool struct {
+	name   string
+	risk   tool.Risk
+	schema *jsonschema.Schema
+}
+
+func (t *namedRiskTool) Name() string        { return t.name }
+func (t *namedRiskTool) Description() string { return "named risk test tool." }
+func (t *namedRiskTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *namedRiskTool) Risk() tool.Risk { return t.risk }
+func (t *namedRiskTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	return tool.Result{Content: "ok"}, nil
+}
+
+type modeFlipTool struct {
+	set    func()
+	schema *jsonschema.Schema
+}
+
+func (t *modeFlipTool) Name() string        { return "flip_mode" }
+func (t *modeFlipTool) Description() string { return "flip test mode." }
+func (t *modeFlipTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *modeFlipTool) Risk() tool.Risk { return tool.RiskSafe }
+func (t *modeFlipTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	if t.set != nil {
+		t.set()
+	}
 	return tool.Result{Content: "ok"}, nil
 }
 

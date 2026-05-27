@@ -40,7 +40,7 @@ func (t *grepTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *grepTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a grepArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("grep: invalid args: %w", err)
 	}
 	if a.Pattern == "" {

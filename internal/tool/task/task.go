@@ -47,7 +47,7 @@ func (t *taskTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *taskTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a taskArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("task: invalid args: %w", err)
 	}
 	if strings.TrimSpace(a.Prompt) == "" {

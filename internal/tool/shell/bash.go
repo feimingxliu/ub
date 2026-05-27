@@ -61,7 +61,7 @@ func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- t
 		return tool.Result{}, fmt.Errorf("bash: not supported on windows in V1")
 	}
 	var a bashArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("bash: invalid args: %w", err)
 	}
 	if a.Command == "" {

@@ -39,7 +39,7 @@ func (t *globTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *globTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a globArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("glob: invalid args: %w", err)
 	}
 	if a.Pattern == "" {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/memory"
 	"github.com/feimingxliu/ub/internal/message"
 )
@@ -31,6 +32,9 @@ func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message
 	if runtimeMsg, ok := a.runtime.message(); ok {
 		prepend = append(prepend, runtimeMsg)
 	}
+	if modeMsg, ok := a.executionModeMessage(); ok {
+		prepend = append(prepend, modeMsg)
+	}
 	if memMsg, ok := a.memoryMessage(); ok {
 		prepend = append(prepend, memMsg)
 	}
@@ -57,6 +61,23 @@ func (a *Agent) memoryMessage() (message.Message, bool) {
 		return message.Message{}, false
 	}
 	return message.Text(message.RoleSystem, "<workspace_memory>\n"+body+"\n</workspace_memory>"), true
+}
+
+func (a *Agent) executionModeMessage() (message.Message, bool) {
+	mode, err := execution.ParseMode(string(a.currentMode()))
+	if err != nil || mode != execution.ModePlan {
+		return message.Message{}, false
+	}
+	const body = `<execution_mode>
+mode=plan
+</execution_mode>
+Plan mode instructions:
+- This is read-only planning mode. Inspect the workspace with safe read-only tools when needed.
+- For implementation requests such as add, fix, refactor, configure, test, build, or CI setup, create a plan with the plan_write tool before starting implementation.
+- Do not create, edit, delete, move, format, install, or otherwise change project files in plan mode.
+- After writing the plan, report the plan_id and wait for the user to switch to work or auto mode before executing it.
+- If the user only asks a question, answer normally; use plan_write only when an execution plan is useful.`
+	return message.Text(message.RoleSystem, body), true
 }
 
 func (c RuntimeContext) message() (message.Message, bool) {

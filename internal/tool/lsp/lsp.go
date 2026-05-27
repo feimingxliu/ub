@@ -80,7 +80,7 @@ func (t *diagnosticsTool) Risk() tool.Risk { return tool.RiskSafe }
 func (t *diagnosticsTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var args diagnosticsArgs
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &args); err != nil {
+		if err := tool.UnmarshalArgs(raw, &args); err != nil {
 			return tool.Result{}, fmt.Errorf("diagnostics: invalid args: %w", err)
 		}
 	}
@@ -124,7 +124,7 @@ func (t *referencesTool) Risk() tool.Risk { return tool.RiskSafe }
 
 func (t *referencesTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var args referencesArgs
-	if err := json.Unmarshal(raw, &args); err != nil {
+	if err := tool.UnmarshalArgs(raw, &args); err != nil {
 		return tool.Result{}, fmt.Errorf("references: invalid args: %w", err)
 	}
 	var locations []lspruntime.Location

@@ -38,7 +38,7 @@ func (t *hoverTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *hoverTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a hoverArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("hover: invalid args: %w", err)
 	}
 	res, err := t.manager.Hover(ctx, a.File, int(a.Line), int(a.Col))
@@ -84,7 +84,7 @@ func (t *completionTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *completionTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a completionArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("completion: invalid args: %w", err)
 	}
 	maxN := int(a.Max)
@@ -137,7 +137,7 @@ func (t *documentSymbolsTool) Risk() tool.Risk            { return tool.RiskSafe
 
 func (t *documentSymbolsTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a documentSymbolsArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("document_symbols: invalid args: %w", err)
 	}
 	if strings.TrimSpace(a.File) == "" {
@@ -215,7 +215,7 @@ func (t *renameTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *renameTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a renameArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("rename: invalid args: %w", err)
 	}
 	if strings.TrimSpace(a.NewName) == "" {
@@ -269,7 +269,7 @@ func (t *codeActionTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *codeActionTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a codeActionArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("code_action: invalid args: %w", err)
 	}
 	endLine := int(a.EndLine)

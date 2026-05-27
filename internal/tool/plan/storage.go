@@ -60,9 +60,17 @@ func newPlanID(title string) string {
 	return nowFunc().Format(planTimestampForm) + "-" + slugify(title)
 }
 
+const (
+	stepMarkerPending    = " "
+	stepMarkerInProgress = ">"
+	stepMarkerDone       = "x"
+	stepMarkerSkipped    = "~"
+	stepMarkerFailed     = "!"
+)
+
 // step is one entry in a plan's Steps section.
 type step struct {
-	marker string // " ", "x", "~", "!"
+	marker string // " ", ">", "x", "~", "!"
 	index  int
 	text   string
 }
@@ -81,16 +89,18 @@ type planDoc struct {
 // checkbox character that goes inside `- [ ]`.
 func statusMarker(status string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(status)) {
+	case statusInProgress:
+		return stepMarkerInProgress, nil
 	case "done":
-		return "x", nil
+		return stepMarkerDone, nil
 	case "skipped":
-		return "~", nil
+		return stepMarkerSkipped, nil
 	case "failed":
-		return "!", nil
+		return stepMarkerFailed, nil
 	case "pending":
-		return " ", nil
+		return stepMarkerPending, nil
 	default:
-		return "", fmt.Errorf("invalid status %q (want done|skipped|failed|pending)", status)
+		return "", fmt.Errorf("invalid status %q (want in_progress|done|skipped|failed|pending)", status)
 	}
 }
 
@@ -226,11 +236,11 @@ func savePlan(path string, p planDoc) error {
 	return nil
 }
 
-// allStepsFinished reports whether every step has a non-blank marker, i.e.
-// the plan should transition to Status: complete.
+// allStepsFinished reports whether every step has a terminal marker, i.e. the
+// plan should transition to Status: complete.
 func allStepsFinished(steps []step) bool {
 	for _, s := range steps {
-		if s.marker == " " {
+		if s.marker == stepMarkerPending || s.marker == stepMarkerInProgress {
 			return false
 		}
 	}

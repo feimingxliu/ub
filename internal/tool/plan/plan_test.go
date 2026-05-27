@@ -148,7 +148,7 @@ func TestPlanUpdate_MarksDoneAndAppendsLog(t *testing.T) {
 
 	freezeTime(t, time.Date(2026, 5, 27, 10, 5, 0, 0, time.UTC))
 	u := newUpdateTool(ws)
-	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 2, Status: "done", Note: "patched"}); err != nil {
+	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: tool.IntArg(2), Status: "done", Note: "patched"}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	body := readPlan(t, ws, planID)
@@ -164,16 +164,67 @@ func TestPlanUpdate_MarksDoneAndAppendsLog(t *testing.T) {
 	}
 }
 
+func TestPlanUpdate_AcceptsStringStepIndex(t *testing.T) {
+	ws := t.TempDir()
+	w := newWriteTool(ws)
+	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b"}})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	planID := extractPlanID(t, res.Content)
+	u := newUpdateTool(ws)
+	if _, err := execTool(t, u, map[string]any{
+		"plan_id":    planID,
+		"step_index": "1",
+		"status":     "done",
+	}); err != nil {
+		t.Fatalf("update with string step_index: %v", err)
+	}
+	body := readPlan(t, ws, planID)
+	if !strings.Contains(body, "- [x] 1. a") {
+		t.Fatalf("step 1 not marked done:\n%s", body)
+	}
+}
+
+func TestPlanUpdate_InProgressIsNonTerminal(t *testing.T) {
+	ws := t.TempDir()
+	w := newWriteTool(ws)
+	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	planID := extractPlanID(t, res.Content)
+	u := newUpdateTool(ws)
+	if _, err := execTool(t, u, map[string]any{
+		"plan_id":    planID,
+		"step_index": "1",
+		"status":     "in_progress",
+		"note":       "started",
+	}); err != nil {
+		t.Fatalf("update in_progress: %v", err)
+	}
+	body := readPlan(t, ws, planID)
+	for _, want := range []string{
+		"Status: in_progress",
+		"- [>] 1. a",
+		"step 1 → in_progress: started",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan file missing %q in:\n%s", want, body)
+		}
+	}
+}
+
 func TestPlanUpdate_AutoCompleteWhenAllDone(t *testing.T) {
 	ws := t.TempDir()
 	w := newWriteTool(ws)
 	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b"}})
 	planID := extractPlanID(t, res.Content)
 	u := newUpdateTool(ws)
-	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 1, Status: "done"}); err != nil {
+	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: tool.IntArg(1), Status: "done"}); err != nil {
 		t.Fatalf("update 1: %v", err)
 	}
-	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 2, Status: "skipped"}); err != nil {
+	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: tool.IntArg(2), Status: "skipped"}); err != nil {
 		t.Fatalf("update 2: %v", err)
 	}
 	body := readPlan(t, ws, planID)
@@ -188,7 +239,7 @@ func TestPlanUpdate_OutOfRange(t *testing.T) {
 	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
 	planID := extractPlanID(t, res.Content)
 	u := newUpdateTool(ws)
-	_, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 5, Status: "done"})
+	_, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: tool.IntArg(5), Status: "done"})
 	if err == nil || !strings.Contains(err.Error(), "out of range") {
 		t.Fatalf("expected out-of-range error, got: %v", err)
 	}
@@ -200,7 +251,7 @@ func TestPlanUpdate_InvalidStatus(t *testing.T) {
 	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
 	planID := extractPlanID(t, res.Content)
 	u := newUpdateTool(ws)
-	_, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 1, Status: "wat"})
+	_, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: tool.IntArg(1), Status: "wat"})
 	if err == nil || !strings.Contains(err.Error(), "invalid status") {
 		t.Fatalf("expected invalid status, got: %v", err)
 	}
@@ -209,7 +260,7 @@ func TestPlanUpdate_InvalidStatus(t *testing.T) {
 func TestPlanUpdate_FileNotFound(t *testing.T) {
 	ws := t.TempDir()
 	u := newUpdateTool(ws)
-	_, err := execTool(t, u, updateArgs{PlanID: "missing", StepIndex: 1, Status: "done"})
+	_, err := execTool(t, u, updateArgs{PlanID: "missing", StepIndex: tool.IntArg(1), Status: "done"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("expected not-found, got: %v", err)
 	}

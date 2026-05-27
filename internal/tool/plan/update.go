@@ -13,10 +13,10 @@ import (
 )
 
 type updateArgs struct {
-	PlanID    string `json:"plan_id"   jsonschema:"required,description=ID returned by plan_write (the basename of the plan file without .md)."`
-	StepIndex int    `json:"step_index" jsonschema:"required,description=1-based step number to update."`
-	Status    string `json:"status"    jsonschema:"required,enum=done,enum=skipped,enum=failed,enum=pending,description=New step status."`
-	Note      string `json:"note,omitempty" jsonschema:"description=Optional message appended to the Log entry for this update."`
+	PlanID    string      `json:"plan_id"   jsonschema:"required,description=ID returned by plan_write (the basename of the plan file without .md)."`
+	StepIndex tool.IntArg `json:"step_index" jsonschema:"required,description=1-based step number to update."`
+	Status    string      `json:"status"    jsonschema:"required,enum=in_progress,enum=done,enum=skipped,enum=failed,enum=pending,description=New step status."`
+	Note      string      `json:"note,omitempty" jsonschema:"description=Optional message appended to the Log entry for this update."`
 }
 
 type updateTool struct {
@@ -33,14 +33,14 @@ func newUpdateTool(workspace string) *updateTool {
 
 func (t *updateTool) Name() string { return "plan_update_step" }
 func (t *updateTool) Description() string {
-	return "Update one step in a plan: mark it done / skipped / failed / pending, append a log entry, and auto-transition the plan to complete when every step has a terminal status."
+	return "Update one step in a plan: mark it in_progress / done / skipped / failed / pending, append a log entry, and auto-transition the plan to complete when every step has a terminal status."
 }
 func (t *updateTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *updateTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *updateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a updateArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
+	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("plan_update_step: invalid args: %w", err)
 	}
 	if strings.TrimSpace(a.PlanID) == "" {
@@ -56,12 +56,13 @@ func (t *updateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 	if err != nil {
 		return tool.Result{}, fmt.Errorf("plan_update_step: %w", err)
 	}
-	if a.StepIndex < 1 || a.StepIndex > len(doc.steps) {
-		return tool.Result{}, fmt.Errorf("plan_update_step: step_index %d out of range [1, %d]", a.StepIndex, len(doc.steps))
+	stepIndex := int(a.StepIndex)
+	if stepIndex < 1 || stepIndex > len(doc.steps) {
+		return tool.Result{}, fmt.Errorf("plan_update_step: step_index %d out of range [1, %d]", stepIndex, len(doc.steps))
 	}
-	doc.steps[a.StepIndex-1].marker = marker
+	doc.steps[stepIndex-1].marker = marker
 
-	logLine := fmt.Sprintf("- %s step %d → %s", nowFunc().Format("2006-01-02T15:04:05Z07:00"), a.StepIndex, strings.ToLower(strings.TrimSpace(a.Status)))
+	logLine := fmt.Sprintf("- %s step %d → %s", nowFunc().Format("2006-01-02T15:04:05Z07:00"), stepIndex, strings.ToLower(strings.TrimSpace(a.Status)))
 	if note := strings.TrimSpace(a.Note); note != "" {
 		logLine += ": " + note
 	}
