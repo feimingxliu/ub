@@ -36,6 +36,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/job"
 	lsptool "github.com/feimingxliu/ub/internal/tool/lsp"
 	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
+	"github.com/feimingxliu/ub/internal/tool/plan"
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
 	"github.com/feimingxliu/ub/internal/tooloutput"
@@ -538,6 +539,7 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 	for _, register := range []func(*tool.Registry, string) error{
 		search.Register,
 		shell.Register,
+		plan.Register,
 	} {
 		if err := register(reg, cwd); err != nil {
 			return nil, err

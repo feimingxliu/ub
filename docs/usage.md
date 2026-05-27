@@ -312,7 +312,33 @@ agent 可以用：
 
 ub 在 write / edit 工具执行后会主动给 LSP 发 `didChange`，保证 diagnostics 反映最新内容。
 
-## 10. Hooks(生命周期 shell 钩子)
+## 10. Plan-then-execute
+
+ub 提供两个 plan 工具,工作流是:**plan 模式产出 artifact → work 模式照单施工 → 每完成一步打勾**。
+
+1. **进 plan 模式**(`Shift+Tab` 循环模式,或 `--mode plan` 启动),让 agent 把思路 `plan_write` 成一个 markdown:
+
+   ```
+   plan_write(
+     title="Migrate auth middleware",
+     steps=["read existing middleware","grep call sites","write new middleware","update tests","run go test"],
+     notes="see issue #128 for compliance requirements"
+   )
+   ```
+
+   工具会在 `<workspace>/.ub/plans/<时间戳>-<slug>.md` 写一个文件,并把 `plan_id` 返回。你可以直接打开 review、改步骤(只要保留 `- [ ] N. <text>` 行的格式)。
+
+2. **切到 work 模式**继续会话。agent 用 `read` 看 plan,按顺序执行;每完成一步调 `plan_update_step`:
+
+   ```
+   plan_update_step(plan_id="20260527T..", step_index=2, status="done", note="found 12 call sites")
+   ```
+
+   状态机:`done`(`[x]`)/ `skipped`(`[~]`)/ `failed`(`[!]`)/ `pending` 回退(`[ ]`)。当所有步骤都 ≠ `[ ]` 时,文件顶部的 `Status:` 自动变 `complete`,并在 `## Log` 末尾追加一条带时间戳的记录。
+
+3. **中断恢复**:下次会话直接 `read .ub/plans/<id>.md`(或让 agent 主动 `ls .ub/plans/` 列出未完成的)。.ub/plans/ 是工作区文件,可以 commit 也可以 `.gitignore`,自己决定。
+
+## 11. Hooks(生命周期 shell 钩子)
 
 在 `~/.config/ub/config.yaml` 或项目 `.ub/config.yaml` 的 `hooks` 段挂载 shell 命令,在 agent 关键节点触发:
 
@@ -347,7 +373,7 @@ hooks:
 
 工作区(`.ub/config.yaml`)与用户(`~/.config/ub/config.yaml`)的 hook 列表是 **追加合并**,不是覆盖 —— 工作区 hook 接在用户 hook 后面跑。
 
-## 11. 故障排查
+## 12. 故障排查
 
 | 症状 | 原因 / 解决 |
 |---|---|

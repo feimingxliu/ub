@@ -1,0 +1,237 @@
+package plan
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/feimingxliu/ub/internal/tool"
+)
+
+func freezeTime(t *testing.T, instant time.Time) {
+	t.Helper()
+	orig := nowFunc
+	nowFunc = func() time.Time { return instant }
+	t.Cleanup(func() { nowFunc = orig })
+}
+
+func execTool(t *testing.T, tl tool.Tool, args any) (tool.Result, error) {
+	t.Helper()
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	return tl.Execute(context.Background(), raw)
+}
+
+func TestSlugify(t *testing.T) {
+	cases := map[string]string{
+		"":                                "plan",
+		"Fix Login Bug":                   "fix-login-bug",
+		"Path/With:Funny#Chars":           "path-with-funny-chars",
+		strings.Repeat("longtitle ", 20):  "longtitle-longtitle-longtitle-longtitle",
+		"   leading and trailing spaces ": "leading-and-trailing-spaces",
+		"-already-dashed-":                "already-dashed",
+	}
+	for in, want := range cases {
+		if got := slugify(in); got != want {
+			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNewPlanID_MonotonicallyDifferentTimestamps(t *testing.T) {
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	a := newPlanID("hello")
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 1, 0, time.UTC))
+	b := newPlanID("hello")
+	if a == b {
+		t.Fatalf("plan id must differ with second-resolution clock advance: %s == %s", a, b)
+	}
+}
+
+func TestPlanWrite_HappyPath(t *testing.T) {
+	ws := t.TempDir()
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	tl := newWriteTool(ws)
+	res, err := execTool(t, tl, writeArgs{
+		Title: "Fix Login Bug",
+		Steps: []string{"reproduce", "patch", "test"},
+		Notes: "see issue #42",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(res.Content, "plan_id=20260527T100000Z-fix-login-bug") {
+		t.Fatalf("Content missing plan_id: %q", res.Content)
+	}
+	body, err := os.ReadFile(filepath.Join(ws, ".ub/plans/20260527T100000Z-fix-login-bug.md"))
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	content := string(body)
+	for _, want := range []string{
+		"# Fix Login Bug",
+		"Status: in_progress",
+		"## Steps",
+		"- [ ] 1. reproduce",
+		"- [ ] 2. patch",
+		"- [ ] 3. test",
+		"## Notes",
+		"see issue #42",
+		"## Log",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("plan file missing %q in:\n%s", want, content)
+		}
+	}
+	if len(res.Files) != 1 || res.Files[0].Kind != tool.KindCreate {
+		t.Fatalf("Result.Files = %+v", res.Files)
+	}
+}
+
+func TestPlanWrite_EmptyStepsRejected(t *testing.T) {
+	ws := t.TempDir()
+	tl := newWriteTool(ws)
+	_, err := execTool(t, tl, writeArgs{Title: "x", Steps: []string{}})
+	if err == nil || !strings.Contains(err.Error(), "steps is required") {
+		t.Fatalf("expected steps-required error, got: %v", err)
+	}
+}
+
+func TestPlanWrite_EmptyTitleRejected(t *testing.T) {
+	ws := t.TempDir()
+	tl := newWriteTool(ws)
+	_, err := execTool(t, tl, writeArgs{Title: "", Steps: []string{"x"}})
+	if err == nil || !strings.Contains(err.Error(), "title is required") {
+		t.Fatalf("expected title-required error, got: %v", err)
+	}
+}
+
+func TestPlanUpdate_MarksDoneAndAppendsLog(t *testing.T) {
+	ws := t.TempDir()
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	w := newWriteTool(ws)
+	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b", "c"}})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	planID := extractPlanID(t, res.Content)
+
+	freezeTime(t, time.Date(2026, 5, 27, 10, 5, 0, 0, time.UTC))
+	u := newUpdateTool(ws)
+	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 2, Status: "done", Note: "patched"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	body := readPlan(t, ws, planID)
+	if !strings.Contains(body, "- [x] 2. b") {
+		t.Fatalf("step 2 not marked done:\n%s", body)
+	}
+	if !strings.Contains(body, "step 2 → done: patched") {
+		t.Fatalf("log line missing:\n%s", body)
+	}
+	// Status must stay in_progress because steps 1 and 3 are still open.
+	if !strings.Contains(body, "Status: in_progress") {
+		t.Fatalf("status changed prematurely:\n%s", body)
+	}
+}
+
+func TestPlanUpdate_AutoCompleteWhenAllDone(t *testing.T) {
+	ws := t.TempDir()
+	w := newWriteTool(ws)
+	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b"}})
+	planID := extractPlanID(t, res.Content)
+	u := newUpdateTool(ws)
+	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 1, Status: "done"}); err != nil {
+		t.Fatalf("update 1: %v", err)
+	}
+	if _, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 2, Status: "skipped"}); err != nil {
+		t.Fatalf("update 2: %v", err)
+	}
+	body := readPlan(t, ws, planID)
+	if !strings.Contains(body, "Status: complete") {
+		t.Fatalf("status not auto-completed:\n%s", body)
+	}
+}
+
+func TestPlanUpdate_OutOfRange(t *testing.T) {
+	ws := t.TempDir()
+	w := newWriteTool(ws)
+	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
+	planID := extractPlanID(t, res.Content)
+	u := newUpdateTool(ws)
+	_, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 5, Status: "done"})
+	if err == nil || !strings.Contains(err.Error(), "out of range") {
+		t.Fatalf("expected out-of-range error, got: %v", err)
+	}
+}
+
+func TestPlanUpdate_InvalidStatus(t *testing.T) {
+	ws := t.TempDir()
+	w := newWriteTool(ws)
+	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
+	planID := extractPlanID(t, res.Content)
+	u := newUpdateTool(ws)
+	_, err := execTool(t, u, updateArgs{PlanID: planID, StepIndex: 1, Status: "wat"})
+	if err == nil || !strings.Contains(err.Error(), "invalid status") {
+		t.Fatalf("expected invalid status, got: %v", err)
+	}
+}
+
+func TestPlanUpdate_FileNotFound(t *testing.T) {
+	ws := t.TempDir()
+	u := newUpdateTool(ws)
+	_, err := execTool(t, u, updateArgs{PlanID: "missing", StepIndex: 1, Status: "done"})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected not-found, got: %v", err)
+	}
+}
+
+func TestRegister_RegistersTwoTools(t *testing.T) {
+	reg := tool.New()
+	if err := Register(reg, t.TempDir()); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	names := map[string]bool{}
+	for _, tl := range reg.All() {
+		names[tl.Name()] = true
+	}
+	for _, want := range []string{"plan_write", "plan_update_step"} {
+		if !names[want] {
+			t.Errorf("missing tool %s in %v", want, names)
+		}
+	}
+}
+
+func TestRegister_RejectsEmpties(t *testing.T) {
+	if err := Register(nil, "/tmp"); err == nil {
+		t.Fatalf("expected nil registry error")
+	}
+	if err := Register(tool.New(), ""); err == nil {
+		t.Fatalf("expected empty workspace error")
+	}
+}
+
+func extractPlanID(t *testing.T, content string) string {
+	t.Helper()
+	for _, line := range strings.Split(content, "\n") {
+		if id, ok := strings.CutPrefix(line, "plan_id="); ok {
+			return id
+		}
+	}
+	t.Fatalf("plan_id not in content:\n%s", content)
+	return ""
+}
+
+func readPlan(t *testing.T, ws, planID string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(ws, ".ub/plans", planID+".md"))
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	return string(body)
+}
