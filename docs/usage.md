@@ -19,6 +19,7 @@
 | `ub sessions ls` | 列出当前工作区的 session |
 | `ub sessions rm <id>` | 删除指定 session（事件 CASCADE 一起删） |
 | `ub sessions clear --yes` | 清空当前工作区所有 session |
+| `ub sessions clear --all --yes` | 清空所有工作区的 session（跨 workspace） |
 | `ub rollout show <id>` | 漂亮打印某个 session 的所有事件 |
 | `ub rollout show <id> --json` | 输出原始 JSONL（机器可读） |
 | `ub rollout show <id> --turns 5..10` | 只看第 5 到 10 轮 |

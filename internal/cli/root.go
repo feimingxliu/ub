@@ -355,15 +355,19 @@ func newSessionsCmd() *cobra.Command {
 			return runSessionsRM(cmd, args)
 		},
 	})
-	var yes bool
+	var (
+		yes      bool
+		clearAll bool
+	)
 	clearCmd := &cobra.Command{
 		Use:   "clear",
 		Short: "Delete all sessions in the current workspace",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSessionsClear(cmd, yes)
+			return runSessionsClear(cmd, yes, clearAll)
 		},
 	}
 	clearCmd.Flags().BoolVar(&yes, "yes", false, "confirm deletion")
+	clearCmd.Flags().BoolVar(&clearAll, "all", false, "clear sessions across all workspaces")
 	cmd.AddCommand(clearCmd)
 	return cmd
 }
@@ -1246,7 +1250,7 @@ func runSessionsRM(cmd *cobra.Command, ids []string) error {
 	return nil
 }
 
-func runSessionsClear(cmd *cobra.Command, yes bool) error {
+func runSessionsClear(cmd *cobra.Command, yes, all bool) error {
 	if !yes {
 		return fmt.Errorf("refusing to delete sessions without --yes")
 	}
@@ -1260,11 +1264,16 @@ func runSessionsClear(cmd *cobra.Command, yes bool) error {
 	}
 	defer st.Close()
 
-	cwd, err := currentWorkspace()
-	if err != nil {
-		return err
+	var deleted int64
+	if all {
+		deleted, err = st.DeleteAllSessions(cmd.Context())
+	} else {
+		cwd, werr := currentWorkspace()
+		if werr != nil {
+			return werr
+		}
+		deleted, err = st.DeleteWorkspaceSessions(cmd.Context(), cwd)
 	}
-	deleted, err := st.DeleteWorkspaceSessions(cmd.Context(), cwd)
 	if err != nil {
 		return err
 	}

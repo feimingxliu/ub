@@ -176,6 +176,19 @@ func (s *Store) DeleteWorkspaceSessions(ctx context.Context, workspace string) (
 	return n, nil
 }
 
+// DeleteAllSessions removes every session across all workspaces.
+func (s *Store) DeleteAllSessions(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM sessions")
+	if err != nil {
+		return 0, fmt.Errorf("delete all sessions: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete all sessions rows affected: %w", err)
+	}
+	return n, nil
+}
+
 // PruneOptions controls age-based session pruning.
 type PruneOptions struct {
 	MaxAge                time.Duration

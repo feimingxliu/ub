@@ -205,6 +205,91 @@ func TestSessionsClearDeletesCurrentWorkspaceOnly(t *testing.T) {
 	}
 }
 
+func TestSessionsClearAllDeletesEveryWorkspace(t *testing.T) {
+	temp := t.TempDir()
+	workspace := filepath.Join(temp, "repo")
+	other := filepath.Join(temp, "other")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(workspace)
+	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
+	otherKey := mustCanonicalTestWorkspace(t, other)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.UnixMilli(1_700_000_000_000).UTC()
+	for _, sess := range []store.Session{
+		{ID: "current-1", Workspace: workspaceKey, Title: "one", Model: "fake/model", CreatedAt: now, UpdatedAt: now},
+		{ID: "current-2", Workspace: workspaceKey, Title: "two", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Second)},
+		{ID: "elsewhere", Workspace: otherKey, Title: "other", Model: "fake/model", CreatedAt: now, UpdatedAt: now.Add(time.Hour)},
+	} {
+		if err := st.CreateSession(context.Background(), sess); err != nil {
+			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
+		}
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCmd()
+	out := &bytes.Buffer{}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"sessions", "clear", "--all", "--yes"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("sessions clear --all: %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "deleted 3 sessions" {
+		t.Fatalf("sessions clear --all output = %q, want deleted 3 sessions", got)
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, id := range []string{"current-1", "current-2", "elsewhere"} {
+		if _, err := st.GetSession(context.Background(), id); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("GetSession(%s) err = %v, want ErrNotFound", id, err)
+		}
+	}
+}
+
+func TestSessionsClearAllRequiresYes(t *testing.T) {
+	temp := t.TempDir()
+	workspace := filepath.Join(temp, "repo")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(workspace)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"sessions", "clear", "--all"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected confirmation error")
+	}
+	if !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("confirmation error = %v", err)
+	}
+}
+
 func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 	temp := t.TempDir()
 	workspace := filepath.Join(temp, "repo")
