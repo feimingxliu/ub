@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.0] - 2026-05-27
+
+
+### Added
+
+- Clear sessions across all workspaces ([c37b069](https://github.com/feimingxliu/ub/commit/c37b069bc1bd341e7fa6b28fcf0a2fef68efcedf))
+- Add multiedit tool with atomic batch semantics [V2-S3-05] ([0c13ee5](https://github.com/feimingxliu/ub/commit/0c13ee5de8b0fe0db41c3fe5dc7cb7773d750abd))
+- Add tool_result snapshot tool [V2-S3-08] ([b945f6f](https://github.com/feimingxliu/ub/commit/b945f6fdae0badfbb6b4960c82243bfb20b4b9e8))
+- Shell hooks at 4 lifecycle points [V2-S3-01] ([9d869d7](https://github.com/feimingxliu/ub/commit/9d869d74644f897b12c603477838120ea06f030d))
+- Plan_write + plan_update_step tools [V2-S3-04] ([91a6172](https://github.com/feimingxliu/ub/commit/91a6172cb1049ce7f6e3c8305efd92dc0c0404c5))
+- Hover, completion, document_symbols, rename, code_action [V2-S3-07] ([7d5f789](https://github.com/feimingxliu/ub/commit/7d5f789cb36659d30d3a7892eb19913403101d58))
+- Full_max_bytes cap, custom dir, shell_metadata block [V2-S3-09] ([f13ae7b](https://github.com/feimingxliu/ub/commit/f13ae7b871dbac761d75aac79f901197b7f95693))
+- Workspace + global memory with remember tool [V2-S3-02] ([ccc013a](https://github.com/feimingxliu/ub/commit/ccc013acb01e75a28d0d46456a150a9c64f61ed1))
+- StreamingTool interface + bash streams partial output [V2-S3-06] ([c738ed6](https://github.com/feimingxliu/ub/commit/c738ed675e7193245c6abd2757b041120b470efa))
+- Task tool dispatches sub-agents [V2-S3-03] ([9fa9591](https://github.com/feimingxliu/ub/commit/9fa959178deb8415ee396ca79989f96b1fcef848))
+
+
+### CI
+
+- Stabilize release workflows ([b6fa58b](https://github.com/feimingxliu/ub/commit/b6fa58be1e5d659068066338114c3911be488551))
+
+
+### Documentation
+
+- Sync and archive 9 V2 §3 changes ([e598c44](https://github.com/feimingxliu/ub/commit/e598c449edc00cd0fda124a297696324aee5d2c7))
+
+
+### Fixed
+
+- Handle tool-call runtime regressions ([77508d3](https://github.com/feimingxliu/ub/commit/77508d33570f802973149cfe7d50158ade36ae8f))
+- Harden tool runtime boundaries ([e5466a0](https://github.com/feimingxliu/ub/commit/e5466a020ffc07243ce9fc58405bc93e3d0ff470))
+
+
+### Performance
+
+- Defer tui startup work ([7f7f287](https://github.com/feimingxliu/ub/commit/7f7f28713a0a417f939d8c20e674b5a50fd39709))
+
 ## [0.2.7] - 2026-05-25
 
 
@@ -13,6 +50,11 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - Backfill v0.2.1 through v0.2.6 ([870fc5d](https://github.com/feimingxliu/ub/commit/870fc5db965845ed24250d200c973935f06fa2d3))
+
+
+### Maintenance
+
+- V0.2.7 ([5cd7b66](https://github.com/feimingxliu/ub/commit/5cd7b6650bde2717b8d3cba6bbec33c3af905fc7))
 
 ## [0.2.6] - 2026-05-23
 
