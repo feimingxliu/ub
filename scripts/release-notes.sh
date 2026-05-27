@@ -43,4 +43,19 @@ if extract_section "## [$version]"; then
 fi
 
 echo "warning: $changelog has no [$version] section; using [Unreleased]" >&2
-extract_section "## [Unreleased]"
+if extract_section "## [Unreleased]"; then
+	exit 0
+fi
+
+echo "warning: $changelog has no [Unreleased] section; using git log fallback" >&2
+previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)"
+if [ -n "$previous_tag" ]; then
+	echo "Changes since $previous_tag:"
+	echo
+	git log --pretty='- %s (%h)' "$previous_tag..HEAD"
+	exit 0
+fi
+
+echo "Recent changes:"
+echo
+git log --pretty='- %s (%h)' -n 50 HEAD

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -63,7 +62,7 @@ func (t *rememberTool) Execute(_ context.Context, raw json.RawMessage) (tool.Res
 	}
 	rel := path
 	if scope == string(memory.ScopeWorkspace) && t.workspace != "" {
-		if r, err := filepath.Rel(t.workspace, path); err == nil && !strings.HasPrefix(r, "..") {
+		if r, err := tool.RelToRoot(t.workspace, path); err == nil && !strings.HasPrefix(r, "..") {
 			rel = r
 		}
 	}

@@ -38,7 +38,7 @@ func TestPath_GlobalUsesXDG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Path: %v", err)
 	}
-	if p != "/tmp/cfg/ub/memory.md" {
+	if p != filepath.Join("/tmp/cfg", "ub", "memory.md") {
 		t.Fatalf("path = %s", p)
 	}
 }

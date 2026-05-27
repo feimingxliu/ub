@@ -28,6 +28,9 @@ guidance lives in [`CONTRIBUTING.md`](CONTRIBUTING.md).
   `schema/config.schema.json`.
 - Use smoke commands such as `./ub --version`, `./ub run --help`, and
   `./ub config show` for CLI-visible changes.
+- Platform workflow runs tests on Windows. Keep path assertions portable with
+  `filepath.Join`, `filepath.ToSlash`, or existing repo path helpers instead of
+  hard-coding `/` separators.
 
 ## Documentation Sync
 
@@ -42,3 +45,13 @@ guidance lives in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - Keep commits narrow. If a request covers several roadmap tasks, stage and
   commit each task separately.
 - Include the validation performed in the commit body when useful.
+
+## Releases
+
+- Prefer `make release VERSION=x.y.z` for releases so `CHANGELOG.md`, the
+  release commit, and the annotated tag stay in sync.
+- Before pushing a manual `vX.Y.Z` tag, run
+  `make release-notes VERSION=x.y.z` and ensure it succeeds.
+- If a tag-triggered Release or Platform workflow fails after a tag push,
+  delete both the local tag and `origin` tag, fix the root cause, then create
+  and push a fresh annotated tag from the fixed commit.
