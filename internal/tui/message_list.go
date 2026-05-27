@@ -21,7 +21,10 @@ const (
 	errorRole     = "error"
 )
 
-const maxThinkingSummaryRunes = 180
+const (
+	maxThinkingSummaryRunes    = 180
+	maxToolPartialPreviewRunes = 12000
+)
 
 const (
 	thinkingGroupName = "thinking"
@@ -1142,7 +1145,48 @@ func mergeActivityMessage(existing, incoming message) message {
 	if existing.kind == thinkingMessage && incoming.kind == thinkingMessage {
 		return mergeThinkingMessage(existing, incoming)
 	}
+	if existing.kind == toolMessage && incoming.kind == toolMessage {
+		return mergeToolMessage(existing, incoming)
+	}
 	return incoming
+}
+
+func mergeToolMessage(existing, incoming message) message {
+	if incoming.status != "running" {
+		return incoming
+	}
+	if incoming.detail == "" {
+		incoming.detail = existing.detail
+	} else if existing.detail != "" {
+		incoming.detail = truncateToolPartialPreview(existing.detail + incoming.detail)
+	}
+	if genericRunningToolTitle(incoming) && strings.TrimSpace(existing.title) != "" {
+		incoming.title = existing.title
+		incoming.text = existing.text
+	}
+	return incoming
+}
+
+func genericRunningToolTitle(item message) bool {
+	if item.status != "running" {
+		return false
+	}
+	action := strings.TrimSpace(toolAction(item.name))
+	return action != "" && strings.TrimSpace(item.title) == action && strings.TrimSpace(item.text) == action
+}
+
+func truncateToolPartialPreview(text string) string {
+	runes := []rune(text)
+	if len(runes) <= maxToolPartialPreviewRunes {
+		return text
+	}
+	marker := "[earlier output truncated]\n"
+	markerRunes := []rune(marker)
+	budget := maxToolPartialPreviewRunes - len(markerRunes)
+	if budget <= 0 {
+		return string(runes[len(runes)-maxToolPartialPreviewRunes:])
+	}
+	return marker + string(runes[len(runes)-budget:])
 }
 
 func mergeThinkingMessage(existing, incoming message) message {

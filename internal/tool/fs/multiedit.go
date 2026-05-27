@@ -18,6 +18,47 @@ type multiEditArgs struct {
 	Edits []editArgs `json:"edits" jsonschema:"required,description=Edits applied atomically. Same-path edits are accumulated in array order: edit N sees the result of edits 1..N-1."`
 }
 
+func (a *multiEditArgs) UnmarshalJSON(raw []byte) error {
+	type alias multiEditArgs
+	var aux struct {
+		Edits json.RawMessage `json:"edits"`
+	}
+	if err := json.Unmarshal(raw, &aux); err != nil {
+		return err
+	}
+	edits, err := parseMultiEdits(aux.Edits)
+	if err != nil {
+		return err
+	}
+	*a = multiEditArgs(alias{Edits: edits})
+	return nil
+}
+
+func parseMultiEdits(raw json.RawMessage) ([]editArgs, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var edits []editArgs
+	if err := json.Unmarshal(raw, &edits); err == nil {
+		return edits, nil
+	}
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return nil, fmt.Errorf("edits must be an array of edit objects: %w", err)
+	}
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(encoded, "[") {
+		return nil, fmt.Errorf("edits must be an array of edit objects")
+	}
+	if err := json.Unmarshal([]byte(encoded), &edits); err != nil {
+		return nil, fmt.Errorf("edits string must contain a JSON array of edit objects: %w", err)
+	}
+	return edits, nil
+}
+
 type multiEditTool struct {
 	root     string
 	notifier ChangeNotifier

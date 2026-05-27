@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
@@ -22,6 +23,26 @@ import (
 func TestEffectiveTUIEventTimeoutDisabledByDefault(t *testing.T) {
 	if got := effectiveTUIEventTimeout(2 * time.Minute); got != 0 {
 		t.Fatalf("effectiveTUIEventTimeout = %s, want disabled", got)
+	}
+}
+
+func TestConvertAgentEventToolPartialOutput(t *testing.T) {
+	got := convertAgentEvent(agent.Event{
+		Type:      agent.EventToolPartialOutput,
+		ToolUseID: "call_1",
+		ToolName:  "bash",
+		Status:    "stdout",
+		Summary:   "cmd=go test ./...",
+		Content:   "ok\n",
+	})
+	if got.Type != tui.EventToolPartialOutput ||
+		got.ToolUseID != "call_1" ||
+		got.ToolName != "bash" ||
+		got.Status != "stdout" ||
+		got.Summary != "cmd=go test ./..." ||
+		got.Content != "ok\n" ||
+		got.IsError {
+		t.Fatalf("converted partial event = %#v", got)
 	}
 }
 

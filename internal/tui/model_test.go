@@ -719,6 +719,37 @@ func TestToolActivityUpdatesInPlace(t *testing.T) {
 	}
 }
 
+func TestToolPartialOutputUpdatesRunningToolDetail(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 3
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "running", Summary: "cmd=go test ./..."},
+		{Type: EventToolPartialOutput, ToolUseID: "call_1", ToolName: "bash", Status: "stdout", Summary: "cmd=go test ./...", Content: "one\n"},
+		{Type: EventToolPartialOutput, ToolUseID: "call_1", ToolName: "bash", Status: "stdout", Summary: "cmd=go test ./...", Content: "two\n"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 3, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("tool partial event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	got := model.MessageTexts()
+	if len(got) != 1 || got[0] != "tools: 1 running · now: cmd=go test ./..." {
+		t.Fatalf("messages = %#v, want one running tool activity", got)
+	}
+	if len(model.messages.items) != 1 || len(model.messages.items[0].entries) != 1 {
+		t.Fatalf("items = %#v, want one tool entry", model.messages.items)
+	}
+	entry := model.messages.items[0].entries[0]
+	if entry.detail != "one\ntwo\n" {
+		t.Fatalf("tool partial detail = %q, want accumulated chunks", entry.detail)
+	}
+}
+
 func TestThinkingActivityDeltasAccumulateInGroup(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})

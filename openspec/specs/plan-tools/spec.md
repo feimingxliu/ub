@@ -33,13 +33,20 @@ Steps 段下每一步为一行,格式 `- [<m>] <i>. <text>`:`<m>` 取值 `空格
 
 ### Requirement: plan_write 工具
 
-系统 SHALL 提供 `plan_write` 工具,`Risk` 为 `RiskSafe`。input schema MUST 含 `title: string`(必填)、`steps: []string`(必填,至少 1 条)、可选 `notes: string`。空 title 或空 steps 数组 MUST 返回错误并不写盘。生成的 plan_id 与目标路径冲突时(已存在同名文件)MUST 返回错误并不覆盖现有文件。Execute 成功后 `Result.Content` MUST 包含 plan_id、绝对路径与完整初始 markdown;`Result.Files` MUST 含一条 `{Path:".ub/plans/<id>.md", Kind:"create"}`。
+系统 SHALL 提供 `plan_write` 工具,`Risk` 为 `RiskSafe`。input schema MUST 含 `title: string`(必填)、`steps: []string`(必填,至少 1 条)、可选 `notes: string`。agent runtime MUST 只在 plan 模式向 provider 暴露 `plan_write`;work/auto 模式下若 provider 仍发起 `plan_write` 调用,MUST 返回错误且不执行写盘。空 title 或空 steps 数组 MUST 返回错误并不写盘。生成的 plan_id 与目标路径冲突时(已存在同名文件)MUST 返回错误并不覆盖现有文件。Execute 成功后 `Result.Content` MUST 包含 plan_id、绝对路径与完整初始 markdown;`Result.Files` MUST 含一条 `{Path:".ub/plans/<id>.md", Kind:"create"}`。
 
 #### Scenario: 写新 plan
 
 - **GIVEN** workspace 中尚无 `.ub/plans/` 目录
 - **WHEN** 调用 `plan_write(title="Fix login bug", steps=["repro","patch","test"])`
 - **THEN** 生成的 `<workspace>/.ub/plans/<id>.md` MUST 存在,内容 MUST 同时包含 `# Fix login bug`、`Status: in_progress`、`- [ ] 1. repro`、`- [ ] 2. patch`、`- [ ] 3. test`、`## Notes`、`## Log`
+
+#### Scenario: 非 plan 模式不暴露 plan_write
+
+- **GIVEN** 当前 execution mode 是 `auto`
+- **WHEN** agent runtime 构造 provider tools 列表
+- **THEN** tools 列表 MUST NOT 包含 `plan_write`
+- **AND** 若 provider 仍发起 `plan_write`,tool result MUST 是错误且不得创建 plan 文件
 
 #### Scenario: 空 steps 拒绝
 
@@ -92,4 +99,3 @@ Execute MUST:
 - **GIVEN** 一个空 Registry 与一个临时 workspace
 - **WHEN** 调用 `plan.Register(reg, workspace)`
 - **THEN** Registry MUST 含 `plan_write` 与 `plan_update_step`
-

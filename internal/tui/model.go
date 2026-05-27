@@ -1104,6 +1104,16 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 			m.activitySummary = summary
 		}
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
+	case EventToolPartialOutput:
+		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
+		m.messages.appendOrUpdateActivityInGroup(
+			activityGroupKeyForName(m.runID, toolGroupName),
+			toolGroupName,
+			toolPartialActivity(event),
+		)
+		m.status.state = statusTool
+		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventShellOutput:
 		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
 		role := systemRole
@@ -1152,6 +1162,19 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		return nil
 	default:
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
+	}
+}
+
+func toolPartialActivity(event Event) Event {
+	return Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    event.ToolUseID,
+		ToolName:     event.ToolName,
+		Status:       "running",
+		Summary:      event.Summary,
+		Content:      event.Content,
+		IsError:      event.IsError,
 	}
 }
 

@@ -202,7 +202,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	tools, err := toolDefinitions(a.tools)
+	tools, err := toolDefinitions(a.tools, a.currentMode())
 	if err != nil {
 		return Result{}, err
 	}
@@ -495,6 +495,11 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
 		return result
 	}
+	if !toolAvailableInMode(call.Name, a.currentMode()) {
+		result := tool.Result{Content: fmt.Sprintf("tool %q is only available in plan mode", call.Name), IsError: true}
+		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		return result
+	}
 	var preview *tool.Preview
 	if previewable, ok := t.(tool.PreviewableTool); ok {
 		pv, err := previewable.Preview(ctx, call.Input)
@@ -591,6 +596,7 @@ func (a *Agent) executeToolCall(ctx context.Context, t tool.Tool, call toolCall)
 			err error
 		}{res: res, err: err}
 	}()
+	summary := SummarizeToolInput(call.Name, call.Input)
 	for ev := range events {
 		data := ev.Data
 		if len(data) > streamPartialMaxBytes {
@@ -601,6 +607,7 @@ func (a *Agent) executeToolCall(ctx context.Context, t tool.Tool, call toolCall)
 			ToolUseID: call.ID,
 			ToolName:  call.Name,
 			Status:    string(ev.Kind),
+			Summary:   summary,
 			Content:   data,
 		})
 	}
@@ -701,10 +708,13 @@ func (a *Agent) recordError(ctx context.Context, sessionID string, turn int, err
 	return err
 }
 
-func toolDefinitions(reg *tool.Registry) ([]provider.ToolDefinition, error) {
+func toolDefinitions(reg *tool.Registry, mode execution.Mode) ([]provider.ToolDefinition, error) {
 	tools := reg.All()
 	defs := make([]provider.ToolDefinition, 0, len(tools))
 	for _, t := range tools {
+		if !toolAvailableInMode(t.Name(), mode) {
+			continue
+		}
 		raw, err := json.Marshal(t.Schema())
 		if err != nil {
 			return nil, fmt.Errorf("marshal schema for tool %q: %w", t.Name(), err)
@@ -716,6 +726,19 @@ func toolDefinitions(reg *tool.Registry) ([]provider.ToolDefinition, error) {
 		})
 	}
 	return defs, nil
+}
+
+func toolAvailableInMode(name string, mode execution.Mode) bool {
+	parsed, err := execution.ParseMode(string(mode))
+	if err != nil {
+		parsed = execution.ModeWork
+	}
+	switch name {
+	case "plan_write":
+		return parsed == execution.ModePlan
+	default:
+		return true
+	}
 }
 
 func cloneMessages(messages []message.Message) []message.Message {

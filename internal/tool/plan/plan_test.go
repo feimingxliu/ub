@@ -94,6 +94,30 @@ func TestPlanWrite_HappyPath(t *testing.T) {
 	}
 }
 
+func TestPlanWrite_AcceptsJSONEncodedStepsString(t *testing.T) {
+	ws := t.TempDir()
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	tl := newWriteTool(ws)
+	res, err := execTool(t, tl, map[string]any{
+		"title": "Fix Trackpad Zoom",
+		"steps": `["disable chromium pinch zoom","smooth wheel zoom","run typecheck"]`,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	planID := extractPlanID(t, res.Content)
+	body := readPlan(t, ws, planID)
+	for _, want := range []string{
+		"- [ ] 1. disable chromium pinch zoom",
+		"- [ ] 2. smooth wheel zoom",
+		"- [ ] 3. run typecheck",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan file missing %q in:\n%s", want, body)
+		}
+	}
+}
+
 func TestPlanWrite_EmptyStepsRejected(t *testing.T) {
 	ws := t.TempDir()
 	tl := newWriteTool(ws)

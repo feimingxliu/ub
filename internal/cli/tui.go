@@ -1138,6 +1138,16 @@ func convertAgentEvent(event agent.Event) tui.Event {
 			ContextReset:      event.ContextReset,
 			ContextKind:       event.ContextKind,
 		}
+	case agent.EventToolPartialOutput:
+		return tui.Event{
+			Type:      tui.EventToolPartialOutput,
+			ToolUseID: event.ToolUseID,
+			ToolName:  event.ToolName,
+			Status:    event.Status,
+			Summary:   event.Summary,
+			Content:   event.Content,
+			IsError:   event.IsError,
+		}
 	case agent.EventToolCallStart:
 		return tui.Event{Type: tui.EventToolCallStart, ToolName: event.ToolName}
 	case agent.EventToolCallEnd:

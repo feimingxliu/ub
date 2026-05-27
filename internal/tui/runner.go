@@ -122,15 +122,16 @@ type SessionRunner interface {
 type EventType string
 
 const (
-	EventDeltaText     EventType = "delta_text"
-	EventActivity      EventType = "activity"
-	EventContext       EventType = "context"
-	EventToolCallStart EventType = "tool_call_start"
-	EventToolCallEnd   EventType = "tool_call_end"
-	EventPermission    EventType = "permission"
-	EventShellOutput   EventType = "shell_output"
-	EventDone          EventType = "done"
-	EventError         EventType = "error"
+	EventDeltaText         EventType = "delta_text"
+	EventActivity          EventType = "activity"
+	EventContext           EventType = "context"
+	EventToolPartialOutput EventType = "tool_partial_output"
+	EventToolCallStart     EventType = "tool_call_start"
+	EventToolCallEnd       EventType = "tool_call_end"
+	EventPermission        EventType = "permission"
+	EventShellOutput       EventType = "shell_output"
+	EventDone              EventType = "done"
+	EventError             EventType = "error"
 )
 
 // Event is one Agent-to-TUI progress message.

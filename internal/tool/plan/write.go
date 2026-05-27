@@ -20,6 +20,53 @@ type writeArgs struct {
 	Notes string   `json:"notes,omitempty" jsonschema:"description=Optional free-form context written under the Notes section."`
 }
 
+func (a *writeArgs) UnmarshalJSON(raw []byte) error {
+	type alias writeArgs
+	var aux struct {
+		Title string          `json:"title"`
+		Steps json.RawMessage `json:"steps"`
+		Notes string          `json:"notes,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &aux); err != nil {
+		return err
+	}
+	steps, err := parseWriteSteps(aux.Steps)
+	if err != nil {
+		return err
+	}
+	*a = writeArgs(alias{
+		Title: aux.Title,
+		Steps: steps,
+		Notes: aux.Notes,
+	})
+	return nil
+}
+
+func parseWriteSteps(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var steps []string
+	if err := json.Unmarshal(raw, &steps); err == nil {
+		return steps, nil
+	}
+	var encoded string
+	if err := json.Unmarshal(raw, &encoded); err != nil {
+		return nil, fmt.Errorf("steps must be an array of strings: %w", err)
+	}
+	encoded = strings.TrimSpace(encoded)
+	if encoded == "" {
+		return nil, nil
+	}
+	if !strings.HasPrefix(encoded, "[") {
+		return nil, fmt.Errorf("steps must be an array of strings")
+	}
+	if err := json.Unmarshal([]byte(encoded), &steps); err != nil {
+		return nil, fmt.Errorf("steps string must contain a JSON array of strings: %w", err)
+	}
+	return steps, nil
+}
+
 type writeTool struct {
 	workspace string
 	schema    *jsonschema.Schema

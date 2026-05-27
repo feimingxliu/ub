@@ -110,6 +110,23 @@ func TestMultiEdit_PreviewDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestMultiEdit_AcceptsJSONEncodedEditsString(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "foo\nbar\n")
+
+	me := newMultiEditTool(root)
+	raw := json.RawMessage(`{
+		"edits": "[{\"path\":\"a.txt\",\"old\":\"foo\",\"new\":\"FOO\"},{\"path\":\"a.txt\",\"old\":\"bar\",\"new\":\"BAR\"}]"
+	}`)
+	if _, err := me.Execute(context.Background(), raw); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+	if string(got) != "FOO\nBAR\n" {
+		t.Fatalf("file content = %q", got)
+	}
+}
+
 func TestMultiEdit_EmptyEdits(t *testing.T) {
 	root := t.TempDir()
 	me := newMultiEditTool(root)

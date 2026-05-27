@@ -683,6 +683,52 @@ func TestAgentPlanModeRejectsEditWithoutModifyingFile(t *testing.T) {
 	}
 }
 
+func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
+	reg := tool.New()
+	planWrite := &namedSafeTool{name: "plan_write"}
+	if err := reg.Register(planWrite); err != nil {
+		t.Fatalf("register plan_write: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "read"}); err != nil {
+		t.Fatalf("register read: %v", err)
+	}
+	tools, err := toolDefinitions(reg, execution.ModeAuto)
+	if err != nil {
+		t.Fatalf("toolDefinitions auto: %v", err)
+	}
+	if toolNamesContain(tools, "plan_write") {
+		t.Fatalf("auto mode should not advertise plan_write: %#v", tools)
+	}
+	if !toolNamesContain(tools, "read") {
+		t.Fatalf("auto mode should keep non-plan tools: %#v", tools)
+	}
+	tools, err = toolDefinitions(reg, execution.ModePlan)
+	if err != nil {
+		t.Fatalf("toolDefinitions plan: %v", err)
+	}
+	if !toolNamesContain(tools, "plan_write") {
+		t.Fatalf("plan mode should advertise plan_write: %#v", tools)
+	}
+
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("plan_write", map[string]any{"title": "x", "steps": []string{"a"}}), fake.Done()},
+		{fake.TextDelta("blocked"), fake.Done()},
+	}}
+	a := newTestAgent(t, p, reg, perm, execution.ModeAuto)
+	if _, err := a.Run(context.Background(), Request{Prompt: "make a plan", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if planWrite.executeCalls != 0 {
+		t.Fatalf("plan_write executed in auto mode")
+	}
+	last := lastMessage(t, p.requests[1].Messages)
+	block := last.Content[0]
+	if !block.IsError || !strings.Contains(block.Output, "only available in plan mode") {
+		t.Fatalf("tool result block = %#v, want plan-mode denial", block)
+	}
+}
+
 func TestAgentPreviewPassesThroughPermissionAndExecuteAfterAllow(t *testing.T) {
 	reg := tool.New()
 	pt := &previewExecTool{}
@@ -1433,6 +1479,15 @@ func lastMessage(t *testing.T, messages []message.Message) message.Message {
 	return messages[len(messages)-1]
 }
 
+func toolNamesContain(tools []provider.ToolDefinition, name string) bool {
+	for _, tl := range tools {
+		if tl.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func tailString(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -1459,6 +1514,26 @@ type approvalAgent struct {
 
 func (a approvalAgent) ReviewCommand(context.Context, approval.Request) (approval.Result, error) {
 	return a.result, a.err
+}
+
+type namedSafeTool struct {
+	name         string
+	executeCalls int
+	schema       *jsonschema.Schema
+}
+
+func (t *namedSafeTool) Name() string        { return t.name }
+func (t *namedSafeTool) Description() string { return "named safe test tool." }
+func (t *namedSafeTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *namedSafeTool) Risk() tool.Risk { return tool.RiskSafe }
+func (t *namedSafeTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	t.executeCalls++
+	return tool.Result{Content: "ok"}, nil
 }
 
 type previewExecTool struct {
