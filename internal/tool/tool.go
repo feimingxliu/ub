@@ -52,6 +52,39 @@ type PreviewableTool interface {
 	Preview(ctx context.Context, args json.RawMessage) (Preview, error)
 }
 
+// StreamEventKind classifies a streamed chunk.
+type StreamEventKind string
+
+const (
+	// StreamStdout marks a chunk that came out of the tool's stdout-like
+	// channel.
+	StreamStdout StreamEventKind = "stdout"
+	// StreamStderr marks an stderr-like channel chunk.
+	StreamStderr StreamEventKind = "stderr"
+	// StreamInfo marks an out-of-band tool progress note (start, kill
+	// reason, etc.).
+	StreamInfo StreamEventKind = "info"
+)
+
+// StreamEvent is one incremental output chunk from a streaming tool. The
+// dispatcher forwards each event into the agent EventSink as an
+// EventToolPartialOutput so the TUI can render running progress.
+type StreamEvent struct {
+	Kind StreamEventKind
+	Data string
+}
+
+// StreamingTool is an optional interface implemented by long-running tools
+// (bash, future job_output --follow) that want to push partial output to
+// the TUI before Execute finishes. Implementations MUST still implement
+// Execute as a fallback for callers that don't drive streaming. The
+// dispatcher detects StreamingTool via a type assertion; tools that don't
+// implement it keep their existing blocking Execute semantics.
+type StreamingTool interface {
+	Tool
+	ExecuteStream(ctx context.Context, args json.RawMessage, events chan<- StreamEvent) (Result, error)
+}
+
 // Preview is the human-facing description of what a write-class tool is
 // about to do. It is computed without touching disk state.
 type Preview struct {

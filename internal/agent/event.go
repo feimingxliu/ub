@@ -4,14 +4,15 @@ package agent
 type EventType string
 
 const (
-	EventDeltaText     EventType = "delta_text"
-	EventActivity      EventType = "activity"
-	EventContext       EventType = "context"
-	EventToolCallStart EventType = "tool_call_start"
-	EventToolCallEnd   EventType = "tool_call_end"
-	EventPermission    EventType = "permission"
-	EventDone          EventType = "done"
-	EventError         EventType = "error"
+	EventDeltaText         EventType = "delta_text"
+	EventActivity          EventType = "activity"
+	EventContext           EventType = "context"
+	EventToolCallStart     EventType = "tool_call_start"
+	EventToolCallEnd       EventType = "tool_call_end"
+	EventToolPartialOutput EventType = "tool_partial_output"
+	EventPermission        EventType = "permission"
+	EventDone              EventType = "done"
+	EventError             EventType = "error"
 )
 
 // ActivityKind identifies a structured Agent activity event.

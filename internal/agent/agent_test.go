@@ -1516,6 +1516,110 @@ func (t *recordSessionTool) Execute(ctx context.Context, _ json.RawMessage) (too
 	return tool.Result{Content: "ok"}, nil
 }
 
+// streamingFakeTool exists only in tests to exercise the agent's
+// StreamingTool dispatch path. It emits two stdout StreamEvents and a
+// final Result that mirrors the concatenated stream.
+type streamingFakeTool struct {
+	schema *jsonschema.Schema
+}
+
+func (t *streamingFakeTool) Name() string        { return "streamer" }
+func (t *streamingFakeTool) Description() string { return "emit two partial events." }
+func (t *streamingFakeTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *streamingFakeTool) Risk() tool.Risk { return tool.RiskSafe }
+func (t *streamingFakeTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	return tool.Result{Content: "AB"}, nil
+}
+
+func (t *streamingFakeTool) ExecuteStream(_ context.Context, _ json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
+	events <- tool.StreamEvent{Kind: tool.StreamStdout, Data: "A"}
+	events <- tool.StreamEvent{Kind: tool.StreamStdout, Data: "B"}
+	return tool.Result{Content: "AB"}, nil
+}
+
+func TestAgentForwardsStreamingToolPartialOutput(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(&streamingFakeTool{}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("streamer", map[string]any{}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	var partials []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Events: func(e Event) {
+			if e.Type == EventToolPartialOutput {
+				partials = append(partials, e)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(partials) != 2 {
+		t.Fatalf("expected 2 partial events, got %d", len(partials))
+	}
+	if partials[0].Content != "A" || partials[1].Content != "B" {
+		t.Fatalf("partial chunks = %q %q", partials[0].Content, partials[1].Content)
+	}
+	if partials[0].Status != "stdout" {
+		t.Fatalf("status = %q, want stdout", partials[0].Status)
+	}
+}
+
+func TestAgentDoesNotEmitPartialForPlainTool(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("read", map[string]any{"path": "x.txt"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	var partials int
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Events: func(e Event) {
+			if e.Type == EventToolPartialOutput {
+				partials++
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if partials != 0 {
+		t.Fatalf("non-streaming tool produced %d partial events, want 0", partials)
+	}
+}
+
 // fakeHookRunner records every Run call and returns whatever the test
 // pre-staged for each Kind.
 type fakeHookRunner struct {

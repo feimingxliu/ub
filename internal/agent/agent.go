@@ -529,7 +529,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 			return result
 		}
 	}
-	result, err := t.Execute(ctx, call.Input)
+	result, err := a.executeToolCall(ctx, t, call)
 	if err != nil {
 		result := tool.Result{Content: err.Error(), IsError: true}
 		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
@@ -556,6 +556,50 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 	}
 	a.emitToolActivity(call, status, summary, content, result.IsError)
 	return result
+}
+
+// streamPartialMaxBytes caps each forwarded chunk so a chatty tool can't
+// flood the event sink. Chunks beyond this size get a tail marker.
+const streamPartialMaxBytes = 4 * 1024
+
+// executeToolCall picks the streaming path for tools that opt in, plain
+// Execute otherwise. For streaming tools, each StreamEvent emitted while
+// the tool is running is forwarded into the agent EventSink as an
+// EventToolPartialOutput so the TUI can render running progress without
+// waiting for the final Result.
+func (a *Agent) executeToolCall(ctx context.Context, t tool.Tool, call toolCall) (tool.Result, error) {
+	streamer, ok := t.(tool.StreamingTool)
+	if !ok {
+		return t.Execute(ctx, call.Input)
+	}
+	events := make(chan tool.StreamEvent, 64)
+	resultCh := make(chan struct {
+		res tool.Result
+		err error
+	}, 1)
+	go func() {
+		res, err := streamer.ExecuteStream(ctx, call.Input, events)
+		close(events)
+		resultCh <- struct {
+			res tool.Result
+			err error
+		}{res: res, err: err}
+	}()
+	for ev := range events {
+		data := ev.Data
+		if len(data) > streamPartialMaxBytes {
+			data = data[:streamPartialMaxBytes] + " ... [chunk truncated]"
+		}
+		a.emit(Event{
+			Type:      EventToolPartialOutput,
+			ToolUseID: call.ID,
+			ToolName:  call.Name,
+			Status:    string(ev.Kind),
+			Content:   data,
+		})
+	}
+	r := <-resultCh
+	return r.res, r.err
 }
 
 func (a *Agent) limitToolResult(sessionID string, call toolCall, result tool.Result) tool.Result {

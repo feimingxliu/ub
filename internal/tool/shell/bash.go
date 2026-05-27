@@ -44,7 +44,19 @@ func (t *bashTool) Description() string {
 func (t *bashTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *bashTool) Risk() tool.Risk            { return tool.RiskExec }
 
+// ExecuteStream runs the same command Execute would but pushes stdout /
+// stderr chunks into events as they arrive, so the TUI can render running
+// output. The final Result is identical to Execute's (same metadata block,
+// same trailing stdout/stderr sections).
+func (t *bashTool) ExecuteStream(ctx context.Context, raw json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
+	return t.run(ctx, raw, events)
+}
+
 func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
+	return t.run(ctx, raw, nil)
+}
+
+func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
 	if runtime.GOOS == "windows" {
 		return tool.Result{}, fmt.Errorf("bash: not supported on windows in V1")
 	}
@@ -85,8 +97,13 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	cmd := exec.Command("/bin/sh", "-c", a.Command)
 	cmd.Dir = absCwd
 	cmd.Stdin = devNull
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	if events != nil {
+		cmd.Stdout = &streamingWriter{cap: stdout, events: events, kind: tool.StreamStdout}
+		cmd.Stderr = &streamingWriter{cap: stderr, events: events, kind: tool.StreamStderr}
+	} else {
+		cmd.Stdout = stdout
+		cmd.Stderr = stderr
+	}
 	procgroup.Set(cmd)
 
 	start := time.Now()
@@ -163,6 +180,33 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 		Content: assembleContent(exitCode, duration, stdout, stderr, errorLine, timedOut, aborted),
 		IsError: isError,
 	}, nil
+}
+
+// streamingWriter fans bytes into both a cap-bound buffer (kept by the
+// bash tool for its final Result.Content) and an events channel (one
+// StreamEvent per Write call). The events chan is non-blocking via the
+// agent's buffered chan; if the chan is closed or unbuffered, drops are
+// silent — partial output is best-effort and never gates the underlying
+// command's progress.
+type streamingWriter struct {
+	cap    *capWriter
+	events chan<- tool.StreamEvent
+	kind   tool.StreamEventKind
+}
+
+func (w *streamingWriter) Write(p []byte) (int, error) {
+	n, err := w.cap.Write(p)
+	// Always emit the chunk we received (not the truncated cap buffer) so
+	// the TUI sees real output even if the cap is already exhausted.
+	defer func() {
+		// Channel send is wrapped in recover-on-closed via select-default;
+		// a closed events chan would panic on send.
+		select {
+		case w.events <- tool.StreamEvent{Kind: w.kind, Data: string(p)}:
+		default:
+		}
+	}()
+	return n, err
 }
 
 // assembleContent formats Result.Content with the stable header/body layout

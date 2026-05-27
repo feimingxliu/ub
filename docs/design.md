@@ -203,6 +203,8 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 
 **Registry**：本地工具静态注册，MCP 工具运行时注册。同名冲突时 MCP 走 `mcp__<server>__<tool>` 前缀（Anthropic 规范）。
 
+**Streaming tools**：工具可选择实现 `StreamingTool` 接口(继承 `Tool` 之上多一个 `ExecuteStream(ctx, args, events chan<- StreamEvent)`)。agent runtime 检测到该接口时,在新 goroutine 跑 `ExecuteStream`,把每条 `StreamEvent{Kind,Data}` 转成 `EventToolPartialOutput` 推到 EventSink,让 TUI 在工具未结束前看到滚动预览。bash 已接入;其他工具仍同步 `Execute`,不发 partial 事件。chunk 在 emit 前截到 4KB。
+
 **两阶段调用流程**（仅 PreviewableTool）：
 ```
 1. agent 解析 tool_call
