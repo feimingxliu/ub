@@ -312,7 +312,42 @@ agent 可以用：
 
 ub 在 write / edit 工具执行后会主动给 LSP 发 `didChange`，保证 diagnostics 反映最新内容。
 
-## 10. 故障排查
+## 10. Hooks(生命周期 shell 钩子)
+
+在 `~/.config/ub/config.yaml` 或项目 `.ub/config.yaml` 的 `hooks` 段挂载 shell 命令,在 agent 关键节点触发:
+
+```yaml
+hooks:
+  pre_tool_call:
+    - command: ["./scripts/audit.sh"]   # argv,非 shell 字符串
+      tools: ["bash"]                    # 空 = 所有 tool
+      timeout: 5s                        # 默认 10s,最大 60s
+      on_failure: warn                   # warn / block;block 只在 pre_tool_call 生效
+      env: ["HOME", "PATH"]              # env 白名单;默认仅 PATH
+  post_tool_call:
+    - command: ["gofmt", "-w", "."]
+      tools: ["edit", "write", "multiedit"]
+  pre_user_turn:
+    - command: ["./scripts/snapshot-wip.sh"]
+  post_user_turn:
+    - command: ["./scripts/notify-done.sh"]
+```
+
+子进程能拿到:
+
+- **stdin**:JSON,字段 `event` / `session_id` / `turn`,tool 阶段还有 `tool.{name,use_id,args}`,post_tool_call 还有 `result.{content,is_error}`
+- **env**:`UB_HOOK_EVENT` / `UB_HOOK_SESSION_ID` / `UB_HOOK_TURN`(以及 tool 阶段的 `UB_HOOK_TOOL_NAME` / `UB_HOOK_TOOL_USE_ID`),加上配置 `env` 白名单里列出来的父进程变量
+
+行为约定:
+
+- `pre_tool_call` 配 `on_failure: block` 且 hook exit ≠ 0 时,工具 **不会执行**,模型看到一个带 hook stderr 的 IsError tool_result
+- 其他三个触发点(`post_tool_call` / `pre_user_turn` / `post_user_turn`)的 `block` 设定会被忽略;hook 失败只通过 TUI activity 流提示,不会改 tool result 也不阻断 user turn
+- timeout 到达时子进程会被 SIGKILL,outcome.Err 含 `timeout` 字样
+- stdout 与 stderr 各自截断到 4KB,剩余直接丢弃
+
+工作区(`.ub/config.yaml`)与用户(`~/.config/ub/config.yaml`)的 hook 列表是 **追加合并**,不是覆盖 —— 工作区 hook 接在用户 hook 后面跑。
+
+## 11. 故障排查
 
 | 症状 | 原因 / 解决 |
 |---|---|

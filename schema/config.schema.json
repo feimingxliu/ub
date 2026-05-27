@@ -95,6 +95,66 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "HookSpec": {
+      "properties": {
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeout": {
+          "type": "integer"
+        },
+        "on_failure": {
+          "type": "string"
+        },
+        "env": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "HooksConfig": {
+      "properties": {
+        "pre_tool_call": {
+          "items": {
+            "$ref": "#/$defs/HookSpec"
+          },
+          "type": "array"
+        },
+        "post_tool_call": {
+          "items": {
+            "$ref": "#/$defs/HookSpec"
+          },
+          "type": "array"
+        },
+        "pre_user_turn": {
+          "items": {
+            "$ref": "#/$defs/HookSpec"
+          },
+          "type": "array"
+        },
+        "post_user_turn": {
+          "items": {
+            "$ref": "#/$defs/HookSpec"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "JobToolConfig": {
       "properties": {
         "max_concurrent": {
@@ -430,6 +490,9 @@
     },
     "cleanup": {
       "$ref": "#/$defs/CleanupConfig"
+    },
+    "hooks": {
+      "$ref": "#/$defs/HooksConfig"
     }
   },
   "additionalProperties": false,

@@ -46,6 +46,7 @@ type Config struct {
 	Tools           ToolsConfig                `yaml:"tools,omitempty"        json:"tools,omitempty"`
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
+	Hooks           HooksConfig                `yaml:"hooks,omitempty"         json:"hooks,omitempty"`
 
 	Unknown map[string]any `yaml:",inline" json:"-"`
 }
@@ -172,6 +173,26 @@ type ContextToolResultConfig struct {
 	InlineMaxLines   int           `yaml:"inline_max_lines,omitempty"  json:"inline_max_lines,omitempty"`
 	SpilloverEnabled *bool         `yaml:"spillover_enabled,omitempty" json:"spillover_enabled,omitempty"`
 	SpilloverMaxAge  time.Duration `yaml:"spillover_max_age,omitempty" json:"spillover_max_age,omitempty"`
+}
+
+// HooksConfig holds shell hook lists keyed by trigger kind: pre_tool_call,
+// post_tool_call, pre_user_turn, post_user_turn. Unknown trigger kinds are
+// preserved during YAML load but ignored at runtime, so forward-compat
+// configurations don't fail to parse.
+type HooksConfig struct {
+	PreToolCall  []HookSpec `yaml:"pre_tool_call,omitempty"   json:"pre_tool_call,omitempty"`
+	PostToolCall []HookSpec `yaml:"post_tool_call,omitempty"  json:"post_tool_call,omitempty"`
+	PreUserTurn  []HookSpec `yaml:"pre_user_turn,omitempty"   json:"pre_user_turn,omitempty"`
+	PostUserTurn []HookSpec `yaml:"post_user_turn,omitempty"  json:"post_user_turn,omitempty"`
+}
+
+// HookSpec describes one shell hook entry.
+type HookSpec struct {
+	Command   []string      `yaml:"command,omitempty"     json:"command,omitempty"`
+	Tools     []string      `yaml:"tools,omitempty"       json:"tools,omitempty"`
+	Timeout   time.Duration `yaml:"timeout,omitempty"     json:"timeout,omitempty"`
+	OnFailure string        `yaml:"on_failure,omitempty"  json:"on_failure,omitempty"`
+	Env       []string      `yaml:"env,omitempty"         json:"env,omitempty"`
 }
 
 // CleanupConfig controls best-effort startup cleanup for persisted sessions and

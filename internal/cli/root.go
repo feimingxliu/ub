@@ -18,6 +18,7 @@ import (
 	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/hook"
 	logx "github.com/feimingxliu/ub/internal/log"
 	lspruntime "github.com/feimingxliu/ub/internal/lsp"
 	"github.com/feimingxliu/ub/internal/maintenance"
@@ -455,6 +456,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		SummaryModel:     summarySetup.Model,
 		Context:          cfg.Context,
 		Runtime:          agentRuntimeContext(tools.Workspace),
+		Hooks:            hook.New(cfg.Hooks),
 	})
 	if err != nil {
 		return err

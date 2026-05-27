@@ -12,6 +12,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -62,6 +63,7 @@ type Options struct {
 	Context          config.ContextConfig
 	Runtime          RuntimeContext
 	ToolOutputState  string
+	Hooks            hook.Runner
 }
 
 // Agent runs a single headless agent loop.
@@ -83,6 +85,7 @@ type Agent struct {
 	contextCfg       config.ContextConfig
 	runtime          RuntimeContext
 	toolOutputState  string
+	hooks            hook.Runner
 }
 
 // Request is one Agent run input.
@@ -134,6 +137,10 @@ func New(opts Options) (*Agent, error) {
 			toolOutputState = stateRoot
 		}
 	}
+	hooks := opts.Hooks
+	if hooks == nil {
+		hooks = hook.NopRunner{}
+	}
 	return &Agent{
 		provider:         opts.Provider,
 		tools:            opts.Tools,
@@ -152,6 +159,7 @@ func New(opts Options) (*Agent, error) {
 		contextCfg:       opts.Context,
 		runtime:          opts.Runtime.normalized(),
 		toolOutputState:  toolOutputState,
+		hooks:            hooks,
 	}, nil
 }
 
@@ -160,6 +168,22 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	if req.Turn <= 0 {
 		req.Turn = 1
 	}
+	defer func() {
+		// Wrapped in a closure so the hooks.Run call itself is deferred,
+		// not just emitHookOutcomes — otherwise the Run would fire before
+		// the loop even starts (defer args are evaluated eagerly).
+		a.emitHookOutcomes(a.hooks.Run(ctx, hook.Event{
+			Kind:      hook.KindPostUserTurn,
+			SessionID: req.SessionID,
+			Turn:      req.Turn,
+		}))
+	}()
+	a.emitHookOutcomes(a.hooks.Run(ctx, hook.Event{
+		Kind:      hook.KindPreUserTurn,
+		SessionID: req.SessionID,
+		Turn:      req.Turn,
+	}))
+
 	userMsg := message.Text(message.RoleUser, req.Prompt)
 	messages := cloneMessages(req.History)
 	messages = append(messages, userMsg)
@@ -436,6 +460,23 @@ func usagePayload(usage *provider.Usage) rollout.UsagePayload {
 
 func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) tool.Result {
 	ctx = tool.WithSessionID(ctx, sessionID)
+	preDec := a.hooks.Run(ctx, hook.Event{
+		Kind:      hook.KindPreToolCall,
+		SessionID: sessionID,
+		ToolName:  call.Name,
+		ToolUseID: call.ID,
+		ToolArgs:  call.Input,
+	})
+	a.emitHookOutcomes(preDec)
+	if preDec.Block {
+		reason := strings.TrimSpace(preDec.Reason)
+		if reason == "" {
+			reason = "pre_tool_call hook blocked"
+		}
+		result := tool.Result{Content: fmt.Sprintf("pre_tool_call hook blocked %s: %s", call.Name, reason), IsError: true}
+		a.emitToolActivity(call, "blocked", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		return result
+	}
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
@@ -489,6 +530,14 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		return a.limitToolResult(sessionID, call, result)
 	}
 	result = a.limitToolResult(sessionID, call, result)
+	a.emitHookOutcomes(a.hooks.Run(ctx, hook.Event{
+		Kind:      hook.KindPostToolCall,
+		SessionID: sessionID,
+		ToolName:  call.Name,
+		ToolUseID: call.ID,
+		ToolArgs:  call.Input,
+		Result:    &result,
+	}))
 	status := "done"
 	if result.IsError {
 		status = "failed"

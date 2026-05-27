@@ -15,6 +15,7 @@ import (
 	"github.com/feimingxliu/ub/internal/approval"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/hook"
 	logx "github.com/feimingxliu/ub/internal/log"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/modelinfo"
@@ -404,6 +405,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		SummaryModel:     r.summaryModel,
 		Context:          r.contextCfg,
 		Runtime:          agentRuntimeContext(r.tools.Workspace),
+		Hooks:            hook.New(r.cfg.Hooks),
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},

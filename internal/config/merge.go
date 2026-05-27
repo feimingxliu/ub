@@ -66,7 +66,18 @@ func mergeInto(dst, src *Config) {
 	mergeTools(&dst.Tools, src.Tools)
 	mergeContext(&dst.Context, src.Context)
 	mergeCleanup(&dst.Cleanup, src.Cleanup)
+	mergeHooks(&dst.Hooks, src.Hooks)
 	mergeUnknown(&dst.Unknown, src.Unknown)
+}
+
+// mergeHooks appends each later layer's hook list to the earlier layer's so
+// project-level hooks ADD to user-level hooks instead of replacing them. The
+// order of execution at runtime follows the slice order.
+func mergeHooks(dst *HooksConfig, src HooksConfig) {
+	dst.PreToolCall = append(dst.PreToolCall, src.PreToolCall...)
+	dst.PostToolCall = append(dst.PostToolCall, src.PostToolCall...)
+	dst.PreUserTurn = append(dst.PreUserTurn, src.PreUserTurn...)
+	dst.PostUserTurn = append(dst.PostUserTurn, src.PostUserTurn...)
 }
 
 func mergeApprovalAgent(dst *ApprovalAgentConfig, src ApprovalAgentConfig) {

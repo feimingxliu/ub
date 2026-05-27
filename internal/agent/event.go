@@ -22,6 +22,7 @@ const (
 	ActivityTool       ActivityKind = "tool"
 	ActivityPermission ActivityKind = "permission"
 	ActivityNotice     ActivityKind = "notice"
+	ActivityHook       ActivityKind = "hook"
 )
 
 // Event reports Agent progress to interactive callers such as the TUI.

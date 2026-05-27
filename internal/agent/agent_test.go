@@ -17,6 +17,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -1513,6 +1514,130 @@ func (t *recordSessionTool) Risk() tool.Risk { return tool.RiskSafe }
 func (t *recordSessionTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
 	t.got = tool.SessionIDFromContext(ctx)
 	return tool.Result{Content: "ok"}, nil
+}
+
+// fakeHookRunner records every Run call and returns whatever the test
+// pre-staged for each Kind.
+type fakeHookRunner struct {
+	calls     []hook.Event
+	decisions map[hook.Kind]hook.Decision
+}
+
+func (f *fakeHookRunner) Run(_ context.Context, ev hook.Event) hook.Decision {
+	f.calls = append(f.calls, ev)
+	if f.decisions == nil {
+		return hook.Decision{}
+	}
+	return f.decisions[ev.Kind]
+}
+
+func TestAgentFiresAllFourHookKinds(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	runner := &fakeHookRunner{}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Hooks:      runner,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess", Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	kinds := make([]hook.Kind, 0, len(runner.calls))
+	for _, c := range runner.calls {
+		kinds = append(kinds, c.Kind)
+	}
+	want := []hook.Kind{
+		hook.KindPreUserTurn,
+		hook.KindPreToolCall,
+		hook.KindPostToolCall,
+		hook.KindPostUserTurn,
+	}
+	if !reflect.DeepEqual(kinds, want) {
+		t.Fatalf("hook kinds = %v, want %v", kinds, want)
+	}
+	// pre_tool_call must carry the tool name + args we observed.
+	for _, c := range runner.calls {
+		if c.Kind == hook.KindPreToolCall {
+			if c.ToolName != "read" || c.ToolUseID == "" || len(c.ToolArgs) == 0 {
+				t.Fatalf("pre_tool_call event = %#v", c)
+			}
+		}
+		if c.Kind == hook.KindPostToolCall && c.Result == nil {
+			t.Fatalf("post_tool_call missing Result")
+		}
+	}
+}
+
+func TestAgentPreToolCallHookCanBlockExecution(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	runner := &fakeHookRunner{
+		decisions: map[hook.Kind]hook.Decision{
+			hook.KindPreToolCall: {Block: true, Reason: "policy denied"},
+		},
+	}
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Hooks:      runner,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess", Prompt: "go", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(p.requests) < 2 {
+		t.Fatalf("expected at least 2 provider calls, got %d", len(p.requests))
+	}
+	last := lastMessage(t, p.requests[1].Messages)
+	if last.Role != message.RoleTool || len(last.Content) != 1 {
+		t.Fatalf("expected tool_result message: %#v", last)
+	}
+	block := last.Content[0]
+	if block.Type != message.BlockToolResult || !block.IsError || !strings.Contains(block.Output, "policy denied") {
+		t.Fatalf("blocked tool_result = %#v", block)
+	}
+	// post_tool_call must still fire when pre_tool_call blocks? In this
+	// implementation pre-block short-circuits *before* Execute and returns
+	// early — so post_tool_call should NOT fire. Verify that.
+	for _, c := range runner.calls {
+		if c.Kind == hook.KindPostToolCall {
+			t.Fatalf("post_tool_call should be skipped after pre-block, got: %#v", c)
+		}
+	}
 }
 
 func TestAgentInjectsSessionIDIntoToolContext(t *testing.T) {

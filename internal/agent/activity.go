@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
 )
@@ -43,6 +45,59 @@ func (a *Agent) emitToolActivity(call toolCall, status, summary, content string,
 		Content:      truncateActivityDetail(content),
 		IsError:      isError,
 	})
+}
+
+// emitHookOutcomes turns one Decision into one Activity per hook outcome so
+// the TUI and rollout can show "which hook ran, did it succeed, what did it
+// say." Skipped (filtered-out) hooks produce no outcome here, so they're
+// silently absent — matching the user's intent.
+func (a *Agent) emitHookOutcomes(dec hook.Decision) {
+	if len(dec.Outcomes) == 0 {
+		return
+	}
+	for _, out := range dec.Outcomes {
+		status := "done"
+		summary := fmt.Sprintf("hook %s exit=%d in %s", strings.Join(out.Command, " "), out.ExitCode, out.Duration.Round(time.Millisecond))
+		isError := false
+		if out.Err != nil {
+			status = "failed"
+			isError = true
+		} else if out.ExitCode != 0 {
+			status = "failed"
+			isError = true
+		}
+		if dec.Block {
+			status = "blocked"
+			isError = true
+		}
+		var content strings.Builder
+		if out.Stdout != "" {
+			content.WriteString("stdout:\n")
+			content.WriteString(out.Stdout)
+		}
+		if out.Stderr != "" {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString("stderr:\n")
+			content.WriteString(out.Stderr)
+		}
+		if out.Err != nil {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString("err: ")
+			content.WriteString(out.Err.Error())
+		}
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityHook,
+			Status:       status,
+			Summary:      truncateActivitySummary(summary),
+			Content:      truncateActivityDetail(content.String()),
+			IsError:      isError,
+		})
+	}
 }
 
 func (a *Agent) emitPermissionActivity(toolName, source, decision, reason string, allowed bool) {
