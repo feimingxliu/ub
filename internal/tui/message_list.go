@@ -1153,6 +1153,9 @@ func mergeActivityMessage(existing, incoming message) message {
 
 func mergeToolMessage(existing, incoming message) message {
 	if incoming.status != "running" {
+		if shouldKeepExistingToolDetail(existing, incoming) {
+			incoming.detail = existing.detail
+		}
 		return incoming
 	}
 	if incoming.detail == "" {
@@ -1165,6 +1168,44 @@ func mergeToolMessage(existing, incoming message) message {
 		incoming.text = existing.text
 	}
 	return incoming
+}
+
+func shouldKeepExistingToolDetail(existing, incoming message) bool {
+	existingDetail := strings.TrimSpace(existing.detail)
+	if existingDetail == "" {
+		return false
+	}
+	incomingDetail := strings.TrimSpace(incoming.detail)
+	if incomingDetail == "" {
+		return true
+	}
+	if !meaningfulToolDetail(incomingDetail, incoming) {
+		return true
+	}
+	if shellMetadataOnlyDetail(incomingDetail) {
+		return true
+	}
+	return false
+}
+
+func shellMetadataOnlyDetail(detail string) bool {
+	if !strings.HasPrefix(detail, "<shell_metadata>") {
+		return false
+	}
+	withoutMetadata := detail
+	if closeIndex := strings.Index(withoutMetadata, "</shell_metadata>"); closeIndex >= 0 {
+		withoutMetadata = withoutMetadata[closeIndex+len("</shell_metadata>"):]
+	} else {
+		return true
+	}
+	withoutMetadata = strings.TrimSpace(withoutMetadata)
+	if withoutMetadata == "" {
+		return true
+	}
+	withoutMetadata = strings.TrimPrefix(withoutMetadata, "--- stdout ---")
+	withoutMetadata = strings.TrimSpace(withoutMetadata)
+	withoutMetadata = strings.TrimPrefix(withoutMetadata, "--- stderr ---")
+	return strings.TrimSpace(withoutMetadata) == ""
 }
 
 func genericRunningToolTitle(item message) bool {

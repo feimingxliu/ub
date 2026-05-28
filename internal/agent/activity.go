@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	maxActivitySummaryRunes = 180
-	maxActivityDetailRunes  = 4000
+	maxActivitySummaryRunes    = 180
+	maxActivityDetailRunes     = 4000
+	maxToolActivityDetailRunes = 12000
+	shellMetadataOpenTag       = "<shell_metadata>\n"
+	shellMetadataCloseTag      = "</shell_metadata>"
 )
 
 func (a *Agent) emitThinkingActivity(summary, detail string) (Event, bool) {
@@ -42,7 +45,7 @@ func (a *Agent) emitToolActivity(call toolCall, status, summary, content string,
 		ToolName:     call.Name,
 		Status:       status,
 		Summary:      truncateActivitySummary(summary),
-		Content:      truncateActivityDetail(content),
+		Content:      truncateToolActivityDetail(content),
 		IsError:      isError,
 	})
 }
@@ -226,11 +229,53 @@ func summarizeToolResult(result tool.Result) string {
 	return truncateActivitySummary(redactText("content", firstLine(content)))
 }
 
-func toolResultDetail(result tool.Result) string {
+// ToolActivityResult returns the short title summary and expandable detail used
+// by live TUI events and rollout resume reconstruction.
+func ToolActivityResult(toolName, inputSummary string, result tool.Result) (string, string) {
+	summary := strings.TrimSpace(inputSummary)
+	if len(result.Files) > 0 || summary == "" {
+		summary = summarizeToolResult(result)
+	}
+	return truncateActivitySummary(summary), truncateToolActivityDetail(toolActivityDetail(toolName, result))
+}
+
+func toolActivityDetail(toolName string, result tool.Result) string {
+	content := strings.TrimRight(result.Content, " \t\r\n")
+	if strings.TrimSpace(toolName) == "bash" {
+		if detail, ok := shellToolDetail(content); ok {
+			return detail
+		}
+	}
+	fileDetail, hasDiff := fileToolResultDetail(result)
 	if len(result.Files) == 0 {
+		if strings.TrimSpace(content) != "" {
+			return content
+		}
 		return summarizeToolResult(result)
 	}
+	if !hasDiff && strings.TrimSpace(content) != "" {
+		return content
+	}
+	if strings.TrimSpace(fileDetail) != "" {
+		return toolResultDetail(result)
+	}
+	if strings.TrimSpace(content) != "" {
+		return content
+	}
+	return summarizeToolResult(result)
+}
+
+func toolResultDetail(result tool.Result) string {
+	detail, _ := fileToolResultDetail(result)
+	if strings.TrimSpace(detail) == "" {
+		return summarizeToolResult(result)
+	}
+	return detail
+}
+
+func fileToolResultDetail(result tool.Result) (string, bool) {
 	var b strings.Builder
+	hasDiff := false
 	for _, file := range result.Files {
 		path := strings.TrimSpace(file.Path)
 		if path == "" {
@@ -247,14 +292,32 @@ func toolResultDetail(result tool.Result) string {
 		b.WriteString(" ")
 		b.WriteString(path)
 		if diff := strings.TrimRight(file.UnifiedDiff, "\n"); strings.TrimSpace(diff) != "" {
+			hasDiff = true
 			b.WriteString("\n")
 			b.WriteString(diff)
 		}
 	}
-	if strings.TrimSpace(b.String()) == "" {
-		return summarizeToolResult(result)
+	return b.String(), hasDiff
+}
+
+func shellToolDetail(content string) (string, bool) {
+	if !strings.HasPrefix(content, shellMetadataOpenTag) {
+		return "", false
 	}
-	return b.String()
+	closeIndex := strings.Index(content, shellMetadataCloseTag)
+	if closeIndex < 0 {
+		return "", false
+	}
+	metadata := strings.TrimSpace(content[len(shellMetadataOpenTag):closeIndex])
+	rest := strings.TrimLeft(content[closeIndex+len(shellMetadataCloseTag):], "\n")
+	rest = strings.TrimRight(rest, " \t\r\n")
+	if metadata == "" {
+		return rest, true
+	}
+	if rest == "" {
+		return metadata, true
+	}
+	return metadata + "\n" + rest, true
 }
 
 func reasoningSummary(text, fallback string) string {
@@ -366,16 +429,24 @@ func truncateActivitySummary(text string) string {
 }
 
 func truncateActivityDetail(text string) string {
+	return truncateActivityDetailToRunes(text, maxActivityDetailRunes)
+}
+
+func truncateToolActivityDetail(text string) string {
+	return truncateActivityDetailToRunes(text, maxToolActivityDetailRunes)
+}
+
+func truncateActivityDetailToRunes(text string, maxRunes int) string {
 	text = strings.TrimRight(text, " \t\r\n")
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
 	runes := []rune(text)
-	if len(runes) <= maxActivityDetailRunes {
+	if len(runes) <= maxRunes {
 		return text
 	}
 	marker := "\n... (truncated)"
-	budget := maxActivityDetailRunes - len([]rune(marker))
+	budget := maxRunes - len([]rune(marker))
 	if budget < 0 {
 		budget = 0
 	}

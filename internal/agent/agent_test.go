@@ -1079,6 +1079,43 @@ func TestToolResultDetailUsesUnifiedDiff(t *testing.T) {
 	}
 }
 
+func TestToolActivityResultKeepsPlainToolDetail(t *testing.T) {
+	summary, detail := ToolActivityResult("read", "path=README.md", tool.Result{Content: "1\tfirst\n2\tsecond"})
+	if summary != "path=README.md" {
+		t.Fatalf("summary = %q, want input summary", summary)
+	}
+	if detail != "1\tfirst\n2\tsecond" {
+		t.Fatalf("detail = %q, want full tool content", detail)
+	}
+}
+
+func TestToolActivityResultFormatsShellDetail(t *testing.T) {
+	content := "<shell_metadata>\nexit_code=0\nduration_ms=12\n</shell_metadata>\n--- stdout ---\nok\n--- stderr ---\nwarn\n"
+	_, detail := ToolActivityResult("bash", "cmd=test", tool.Result{Content: content})
+	if strings.Contains(detail, "<shell_metadata>") || strings.Contains(detail, "</shell_metadata>") {
+		t.Fatalf("detail still contains shell metadata tags: %q", detail)
+	}
+	for _, want := range []string{"exit_code=0", "duration_ms=12", "--- stdout ---", "ok", "--- stderr ---", "warn"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail missing %q: %q", want, detail)
+		}
+	}
+}
+
+func TestToolActivityResultUsesContentWhenFilesHaveNoDiff(t *testing.T) {
+	content := "plan_id=plan-1\npath=.ub/plans/plan-1.md\n\n# Plan\n\n- [ ] inspect"
+	summary, detail := ToolActivityResult("plan_write", "title=Plan", tool.Result{
+		Content: content,
+		Files:   []tool.FileChange{{Path: ".ub/plans/plan-1.md", Kind: tool.KindCreate}},
+	})
+	if summary != "create .ub/plans/plan-1.md" {
+		t.Fatalf("summary = %q, want file summary", summary)
+	}
+	if detail != content {
+		t.Fatalf("detail = %q, want plan content", detail)
+	}
+}
+
 func TestAgentWritesRolloutEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {

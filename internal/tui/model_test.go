@@ -750,6 +750,37 @@ func TestToolPartialOutputUpdatesRunningToolDetail(t *testing.T) {
 	}
 }
 
+func TestToolPartialOutputSurvivesGenericFinalDetail(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 3
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "running", Summary: "cmd=go test ./..."},
+		{Type: EventToolPartialOutput, ToolUseID: "call_1", ToolName: "bash", Status: "stdout", Summary: "cmd=go test ./...", Content: "one\n"},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "done", Summary: "cmd=go test ./...", Content: "<shell_metadata>"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 3, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("activity event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	got := model.MessageTexts()
+	if len(got) != 1 || got[0] != "tools: 1 done · last: Ran cmd=go test ./..." {
+		t.Fatalf("messages = %#v, want one completed tool activity", got)
+	}
+	entry := model.messages.items[0].entries[0]
+	if entry.status != "done" {
+		t.Fatalf("tool status = %q, want done", entry.status)
+	}
+	if entry.detail != "one\n" {
+		t.Fatalf("tool detail = %q, want preserved partial output", entry.detail)
+	}
+}
+
 func TestThinkingActivityDeltasAccumulateInGroup(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})

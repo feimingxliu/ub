@@ -485,18 +485,21 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 			reason = "pre_tool_call hook blocked"
 		}
 		result := tool.Result{Content: fmt.Sprintf("pre_tool_call hook blocked %s: %s", call.Name, reason), IsError: true}
-		a.emitToolActivity(call, "blocked", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		a.emitToolActivity(call, "blocked", summary, detail, true)
 		return result
 	}
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
-		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		a.emitToolActivity(call, "failed", summary, detail, true)
 		return result
 	}
 	if !toolAvailableInMode(call.Name, a.currentMode()) {
 		result := tool.Result{Content: fmt.Sprintf("tool %q is only available in plan mode", call.Name), IsError: true}
-		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		a.emitToolActivity(call, "failed", summary, detail, true)
 		return result
 	}
 	var preview *tool.Preview
@@ -504,7 +507,8 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		pv, err := previewable.Preview(ctx, call.Input)
 		if err != nil {
 			result := tool.Result{Content: fmt.Sprintf("preview %q: %v", call.Name, err), IsError: true}
-			a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
 		preview = &pv
@@ -523,7 +527,8 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		if err != nil {
 			a.emitPermissionActivity(call.Name, "permission", "error", err.Error(), false)
 			result := tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
-			a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
 		if (t.Risk() == tool.RiskExec || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
@@ -535,15 +540,18 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 				reason = string(result.Decision)
 			}
 			result := tool.Result{Content: fmt.Sprintf("permission denied for %q: %s", call.Name, reason), IsError: true}
-			a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
+			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
 	}
 	result, err := a.executeToolCall(ctx, t, call)
 	if err != nil {
 		result := tool.Result{Content: err.Error(), IsError: true}
-		a.emitToolActivity(call, "failed", SummarizeToolInput(call.Name, call.Input), summarizeToolResult(result), true)
-		return a.limitToolResult(sessionID, call, result)
+		result = a.limitToolResult(sessionID, call, result)
+		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		a.emitToolActivity(call, "failed", summary, detail, true)
+		return result
 	}
 	result = a.limitToolResult(sessionID, call, result)
 	a.emitHookOutcomes(a.hooks.Run(ctx, hook.Event{
@@ -558,12 +566,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 	if result.IsError {
 		status = "failed"
 	}
-	summary := SummarizeToolInput(call.Name, call.Input)
-	content := summarizeToolResult(result)
-	if len(result.Files) > 0 {
-		summary = summarizeToolResult(result)
-		content = toolResultDetail(result)
-	}
+	summary, content := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
 	return result
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/feimingxliu/ub/internal/reasoning"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
+	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -1106,6 +1107,22 @@ func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessi
 			return nil
 		}
 
+		if event.Type == rollout.TypeToolResult {
+			var payload rollout.ToolResultPayload
+			if err := json.Unmarshal(event.Payload, &payload); err != nil {
+				return fmt.Errorf("decode rollout tool_result event %s: %w", event.ID, err)
+			}
+			out = appendToolResultForTUI(out, toolUses, event.Turn, payload.ToolUseID, payload.ToolName, tool.Result{
+				Content:        payload.Output,
+				IsError:        payload.IsError,
+				Files:          payload.Files,
+				Truncated:      payload.Truncated,
+				OriginalBytes:  payload.OriginalBytes,
+				FullOutputPath: payload.FullOutputPath,
+			})
+			return nil
+		}
+
 		msg, ok, err := rollout.MessageFromEvent(event)
 		if err != nil {
 			return err
@@ -1171,25 +1188,37 @@ func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.
 			if strings.TrimSpace(block.ToolUseID) == "" {
 				continue
 			}
-			toolUse := toolUses[block.ToolUseID]
-			status := "done"
-			if block.IsError {
-				status = "failed"
-			}
-			toolName := fallbackString(toolUse.ToolName, "tool")
-			out = append(out, tui.InitialMessage{
-				Turn:         turn,
-				ActivityKind: "tool",
-				ToolUseID:    block.ToolUseID,
-				ToolName:     toolName,
-				Status:       status,
-				Summary:      agent.SummarizeToolInput(toolName, toolUse.Input),
-				Content:      block.Output,
-				IsError:      block.IsError,
+			out = appendToolResultForTUI(out, toolUses, turn, block.ToolUseID, "", tool.Result{
+				Content: block.Output,
+				IsError: block.IsError,
 			})
 		}
 	}
 	return out
+}
+
+func appendToolResultForTUI(out []tui.InitialMessage, toolUses map[string]message.ContentBlock, turn int, toolUseID, toolName string, result tool.Result) []tui.InitialMessage {
+	toolUse := toolUses[toolUseID]
+	toolName = fallbackString(toolName, toolUse.ToolName)
+	if strings.TrimSpace(toolName) == "" {
+		toolName = "tool"
+	}
+	status := "done"
+	if result.IsError {
+		status = "failed"
+	}
+	inputSummary := agent.SummarizeToolInput(toolName, toolUse.Input)
+	summary, detail := agent.ToolActivityResult(toolName, inputSummary, result)
+	return append(out, tui.InitialMessage{
+		Turn:         turn,
+		ActivityKind: "tool",
+		ToolUseID:    toolUseID,
+		ToolName:     toolName,
+		Status:       status,
+		Summary:      summary,
+		Content:      detail,
+		IsError:      result.IsError,
+	})
 }
 
 func activityMessageForTUI(activity rollout.ActivityPayload, turn int) tui.InitialMessage {

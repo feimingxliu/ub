@@ -265,6 +265,22 @@ func TestMessagesForTUIRestoresToolActivity(t *testing.T) {
 	}
 }
 
+func TestMessagesForTUIRestoresShellActivityWithoutMetadataTags(t *testing.T) {
+	shellOutput := "<shell_metadata>\nexit_code=0\nduration_ms=5\n</shell_metadata>\n--- stdout ---\nok\n--- stderr ---\n"
+	messages := []message.Message{
+		message.New(message.RoleAssistant, message.ToolUseBlock("call_bash", "bash", json.RawMessage(`{"command":"echo ok"}`))),
+		message.New(message.RoleTool, message.ToolResultBlock("call_bash", shellOutput, false)),
+	}
+
+	got := messagesForTUI(messages)
+	if len(got) != 2 {
+		t.Fatalf("messagesForTUI len = %d, want 2: %#v", len(got), got)
+	}
+	if strings.Contains(got[1].Content, "<shell_metadata>") || !strings.Contains(got[1].Content, "ok") {
+		t.Fatalf("shell detail = %q, want formatted output without metadata tags", got[1].Content)
+	}
+}
+
 func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
 	userEvent, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "inspect"))
 	if err != nil {
@@ -294,6 +310,34 @@ func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
 	}
 	if got[1].ActivityKind != "thinking" || got[1].Summary != "checking files" || got[1].Content != "checking files in repo" {
 		t.Fatalf("thinking activity = %#v", got[1])
+	}
+}
+
+func TestMessagesForTUIFromRolloutUsesToolResultPayloadDetail(t *testing.T) {
+	assistantEvent, err := rollout.AssistantMessage("sess_1", 1,
+		message.New(message.RoleAssistant, message.ToolUseBlock("call_plan", "plan_write", json.RawMessage(`{"title":"Plan","steps":["inspect"]}`))))
+	if err != nil {
+		t.Fatalf("AssistantMessage: %v", err)
+	}
+	toolResultEvent, err := rollout.ToolResult("sess_1", 1, "call_plan", "plan_write", tool.Result{
+		Content: "plan_id=plan-1\npath=.ub/plans/plan-1.md\n\n# Plan\n\n- [ ] inspect",
+		Files:   []tool.FileChange{{Path: ".ub/plans/plan-1.md", Kind: tool.KindCreate}},
+	})
+	if err != nil {
+		t.Fatalf("ToolResult: %v", err)
+	}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{
+		events: []rollout.Event{assistantEvent, toolResultEvent},
+	}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("messages len = %d, want 2: %#v", len(got), got)
+	}
+	if got[1].Summary != "create .ub/plans/plan-1.md" || !strings.Contains(got[1].Content, "# Plan") {
+		t.Fatalf("tool result activity = %#v", got[1])
 	}
 }
 
