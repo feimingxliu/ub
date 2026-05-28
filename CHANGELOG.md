@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.1] - 2026-05-28
+
+
+### Fixed
+
+- Harden plan mode tool handling ([e7c6de8](https://github.com/feimingxliu/ub/commit/e7c6de8a5766f0d3b3d5b357883cd7fc7c215618))
+- Preserve tool activity details ([6c3bdb7](https://github.com/feimingxliu/ub/commit/6c3bdb77c27b2b8c1eadaac92bff3974f8160c3a))
+
 ## [0.3.0] - 2026-05-27
 
 
@@ -33,6 +41,11 @@ All notable changes to this project are documented here.
 
 - Handle tool-call runtime regressions ([77508d3](https://github.com/feimingxliu/ub/commit/77508d33570f802973149cfe7d50158ade36ae8f))
 - Harden tool runtime boundaries ([e5466a0](https://github.com/feimingxliu/ub/commit/e5466a020ffc07243ce9fc58405bc93e3d0ff470))
+
+
+### Maintenance
+
+- V0.3.0 ([f15b263](https://github.com/feimingxliu/ub/commit/f15b263a2ecd1d3a0929ea522aa30cf550401969))
 
 
 ### Performance
