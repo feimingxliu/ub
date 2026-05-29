@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/config"
@@ -13,6 +14,9 @@ func selectProviderModel(ctx context.Context, providerName string, providerCfg c
 	if model != "" {
 		return model, nil
 	}
+	if configured := firstConfiguredProviderModel(providerCfg); configured != "" {
+		return configured, nil
+	}
 	check := checkProvider(ctx, providerName, providerCfg)
 	if len(check.Models) > 0 {
 		return check.Models[0], nil
@@ -21,6 +25,24 @@ func selectProviderModel(ctx context.Context, providerName string, providerCfg c
 		return "", nil
 	}
 	return "", missingModelError(providerName, check)
+}
+
+func firstConfiguredProviderModel(providerCfg config.ProviderConfig) string {
+	if len(providerCfg.Models) == 0 {
+		return ""
+	}
+	models := make([]string, 0, len(providerCfg.Models))
+	for model := range providerCfg.Models {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			models = append(models, model)
+		}
+	}
+	sort.Strings(models)
+	if len(models) == 0 {
+		return ""
+	}
+	return models[0]
 }
 
 func providerRequiresModel(providerType string) bool {

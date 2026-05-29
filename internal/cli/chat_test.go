@@ -379,6 +379,37 @@ providers:
 	}
 }
 
+func TestChatProviderOverrideUsesProviderModelInsteadOfDefaultModel(t *testing.T) {
+	captureRequests = nil
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `default_provider: cliproxyapi
+default_model: gpt-5.4
+providers:
+  cliproxyapi:
+    type: capture
+  vibecoding:
+    type: capture
+    models:
+      "openai/glm-5.1": {}
+`)
+	t.Chdir(temp)
+
+	cmd := newRootCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"chat", "--provider", "vibecoding", "hello"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("chat provider override: %v", err)
+	}
+	if len(captureRequests) != 1 {
+		t.Fatalf("capture request len = %d, want 1", len(captureRequests))
+	}
+	if got := captureRequests[0].Model; got != "openai/glm-5.1" {
+		t.Fatalf("model = %q, want provider configured model", got)
+	}
+}
+
 func TestChatPassesReasoningForConfiguredModel(t *testing.T) {
 	captureRequests = nil
 	temp := t.TempDir()

@@ -942,22 +942,34 @@ func readChatPrompt(cmd *cobra.Command, promptArg string) (string, error) {
 
 func selectChatProvider(cfg *config.Config, providerFlag, modelFlag string) (string, string, error) {
 	providerName := strings.TrimSpace(providerFlag)
+	providerExplicit := providerName != ""
 	model := strings.TrimSpace(modelFlag)
 	if cfg != nil {
-		if model == "" {
-			model = strings.TrimSpace(cfg.DefaultModel)
-		}
 		if providerName == "" {
 			providerName = strings.TrimSpace(cfg.DefaultProvider)
 		}
 		if providerName == "" {
 			providerName = firstConfiguredProvider(cfg.Providers)
 		}
+		if model == "" && defaultModelAppliesToProvider(cfg, providerName, providerExplicit) {
+			model = strings.TrimSpace(cfg.DefaultModel)
+		}
 	}
 	if providerName == "" {
 		return "", "", fmt.Errorf("provider required: set --provider, default_provider, or configure at least one provider")
 	}
 	return providerName, model, nil
+}
+
+func defaultModelAppliesToProvider(cfg *config.Config, providerName string, providerExplicit bool) bool {
+	if cfg == nil || strings.TrimSpace(cfg.DefaultModel) == "" {
+		return false
+	}
+	if !providerExplicit {
+		return true
+	}
+	defaultProvider := strings.TrimSpace(cfg.DefaultProvider)
+	return defaultProvider == "" || strings.TrimSpace(providerName) == defaultProvider
 }
 
 func firstConfiguredProvider(providers map[string]config.ProviderConfig) string {
