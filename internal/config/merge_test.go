@@ -67,10 +67,19 @@ func TestMergeScalarsMapsAndSlices(t *testing.T) {
 
 func TestMergeDefaults(t *testing.T) {
 	cleanupEnabled := false
+	promptWorkspaceEnabled := false
 	got := Merge(Defaults(), &Config{
 		TUI:           TUIConfig{Theme: "light"},
 		ExecutionMode: ModePlan,
 		Reasoning:     reasoning.Config{Effort: reasoning.EffortHigh},
+		Prompt: PromptConfig{
+			WorkspaceInstructions: PromptSectionConfig{
+				Enabled:  &promptWorkspaceEnabled,
+				MaxChars: 2048,
+			},
+			GitSnapshot:  PromptSectionConfig{MaxChars: 1024},
+			CompactStyle: CompactStyleShort,
+		},
 		ApprovalAgent: ApprovalAgentConfig{
 			Provider:  "openai",
 			Model:     "gpt-test",
@@ -114,6 +123,14 @@ func TestMergeDefaults(t *testing.T) {
 	}
 	if got.Reasoning.Effort != reasoning.EffortHigh || got.ApprovalAgent.Reasoning.Effort != reasoning.EffortLow {
 		t.Fatalf("reasoning = %#v approval=%#v", got.Reasoning, got.ApprovalAgent.Reasoning)
+	}
+	if got.Prompt.WorkspaceInstructions.Enabled == nil || *got.Prompt.WorkspaceInstructions.Enabled {
+		t.Fatalf("prompt workspace enabled = %#v, want false", got.Prompt.WorkspaceInstructions.Enabled)
+	}
+	if got.Prompt.WorkspaceInstructions.MaxChars != 2048 ||
+		got.Prompt.GitSnapshot.MaxChars != 1024 ||
+		got.Prompt.CompactStyle != CompactStyleShort {
+		t.Fatalf("prompt = %#v", got.Prompt)
 	}
 	if len(got.ToolsDisabled) != 1 || got.ToolsDisabled[0] != "bash" {
 		t.Fatalf("tools disabled = %#v", got.ToolsDisabled)

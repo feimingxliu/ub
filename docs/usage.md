@@ -194,6 +194,28 @@ context:
     spillover_max_age: 24h          # 溢出文件保留时长
 ```
 
+### 6.5 Prompt harness
+
+每次 agent 请求都会额外注入一组不写入 rollout history 的 system context:
+
+- coding-agent 行为原则:先读文件再改、优先专用工具、失败后先诊断、只汇报真实验证状态
+- workspace instructions:工作区根目录的 `AGENTS.md` / `CLAUDE.md` / `.ub/instructions.md`
+- git snapshot:启动时的 branch / default branch / `git status --short` / 最近提交,并明确标注为非实时快照
+- workspace memory:`.ub/memory.md` 与全局 memory,见 §12
+
+相关配置:
+
+```yaml
+prompt:
+  workspace_instructions:
+    enabled: true
+    max_chars: 12000
+  git_snapshot:
+    enabled: true
+    max_chars: 4000
+  compact_style: structured   # short / structured
+```
+
 ## 7. 常见工作流
 
 ### 7.1 让 ub 改代码并跑测试

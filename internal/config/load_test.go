@@ -33,6 +33,15 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.TUI.Theme == "" {
 		t.Fatalf("defaults not applied: %#v", cfg)
 	}
+	if cfg.Prompt.WorkspaceInstructions.Enabled == nil ||
+		!*cfg.Prompt.WorkspaceInstructions.Enabled ||
+		cfg.Prompt.WorkspaceInstructions.MaxChars != DefaultPromptWorkspaceInstructionsMaxChars ||
+		cfg.Prompt.GitSnapshot.Enabled == nil ||
+		!*cfg.Prompt.GitSnapshot.Enabled ||
+		cfg.Prompt.GitSnapshot.MaxChars != DefaultPromptGitSnapshotMaxChars ||
+		cfg.Prompt.CompactStyle != CompactStyleStructured {
+		t.Fatalf("prompt defaults not applied: %#v", cfg.Prompt)
+	}
 	if cfg.Tools.Job.MaxConcurrent != 50 ||
 		cfg.Tools.Job.Retention.String() != "8h0m0s" ||
 		cfg.Tools.Job.CleanupInterval.String() != "5m0s" {
@@ -45,6 +54,38 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Cleanup.Logs.MaxSizeMB != 10 ||
 		cfg.Cleanup.Logs.MaxBackups != 5 {
 		t.Fatalf("cleanup defaults not applied: %#v", cfg.Cleanup)
+	}
+}
+
+func TestLoadFromDirsParsesPromptConfig(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `prompt:
+  workspace_instructions:
+    enabled: false
+    max_chars: 1111
+  git_snapshot:
+    enabled: false
+    max_chars: 2222
+  compact_style: short
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Prompt.WorkspaceInstructions.Enabled == nil || *cfg.Prompt.WorkspaceInstructions.Enabled {
+		t.Fatalf("workspace instructions enabled = %#v, want false", cfg.Prompt.WorkspaceInstructions.Enabled)
+	}
+	if cfg.Prompt.GitSnapshot.Enabled == nil || *cfg.Prompt.GitSnapshot.Enabled {
+		t.Fatalf("git snapshot enabled = %#v, want false", cfg.Prompt.GitSnapshot.Enabled)
+	}
+	if cfg.Prompt.WorkspaceInstructions.MaxChars != 1111 ||
+		cfg.Prompt.GitSnapshot.MaxChars != 2222 ||
+		cfg.Prompt.CompactStyle != CompactStyleShort {
+		t.Fatalf("prompt = %#v", cfg.Prompt)
 	}
 }
 

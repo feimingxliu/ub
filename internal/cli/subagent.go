@@ -40,6 +40,7 @@ type cliSubagentRunner struct {
 	reasoningCfg     *reasoning.Config
 	maxContextTokens int
 	contextCfg       config.ContextConfig
+	promptCfg        config.PromptConfig
 	runtime          agent.RuntimeContext
 	hooks            hook.Runner
 	defaultMaxTurns  int
@@ -65,6 +66,7 @@ func (r *cliSubagentRunner) RunSubagent(ctx context.Context, prompt string, maxT
 		Reasoning:        r.reasoningCfg,
 		MaxContextTokens: r.maxContextTokens,
 		Context:          r.contextCfg,
+		Prompt:           r.promptCfg,
 		Runtime:          r.runtime,
 		Hooks:            subagentHookRunner{inner: r.hooks},
 		WorkspaceRoot:    r.workspaceRoot,

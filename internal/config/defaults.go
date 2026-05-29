@@ -2,14 +2,32 @@ package config
 
 import "time"
 
+const (
+	DefaultPromptWorkspaceInstructionsMaxChars = 12000
+	DefaultPromptGitSnapshotMaxChars           = 4000
+)
+
 // Defaults returns the built-in configuration used as the lowest-priority
 // layer in Load(). It contains values that let ub start sanely with no
 // user configuration at all.
 func Defaults() *Config {
 	cleanupEnabled := true
 	toolSpilloverEnabled := true
+	promptWorkspaceInstructionsEnabled := true
+	promptGitSnapshotEnabled := true
 	return &Config{
 		ExecutionMode: ModeWork,
+		Prompt: PromptConfig{
+			WorkspaceInstructions: PromptSectionConfig{
+				Enabled:  &promptWorkspaceInstructionsEnabled,
+				MaxChars: DefaultPromptWorkspaceInstructionsMaxChars,
+			},
+			GitSnapshot: PromptSectionConfig{
+				Enabled:  &promptGitSnapshotEnabled,
+				MaxChars: DefaultPromptGitSnapshotMaxChars,
+			},
+			CompactStyle: CompactStyleStructured,
+		},
 		TUI: TUIConfig{
 			Theme: "dark",
 		},

@@ -1,0 +1,15 @@
+Update the anchored conversation summary for the main coding agent.
+
+If the conversation already contains a prior "Conversation summary", merge it with later progress instead of stacking summaries. Do not invent details. Keep only durable context needed to continue accurately.
+
+Return Markdown with exactly these sections:
+
+## Goal
+## Constraints & Preferences
+## Progress
+## Key Decisions
+## Critical Context
+## Relevant Files
+
+Conversation to summarize:
+{{conversation}}

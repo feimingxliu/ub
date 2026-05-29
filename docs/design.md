@@ -374,6 +374,15 @@ default_model: claude-sonnet-4-7   # 可省略；provider 可列模型时自动�
 small_model: openai/gpt-4o-mini   # 用于 summary、生成标题、approval fallback
 execution_mode: work               # work / plan / auto
 
+prompt:
+  workspace_instructions:
+    enabled: true                   # 注入 AGENTS.md / CLAUDE.md / .ub/instructions.md
+    max_chars: 12000
+  git_snapshot:
+    enabled: true                   # 注入启动时 git 快照；不是实时状态
+    max_chars: 4000
+  compact_style: structured         # short / structured
+
 approval_agent:
   provider: openai
   model: gpt-4o-mini               # 可省略；优先 small_model，再按 provider 模型列表 fallback

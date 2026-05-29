@@ -124,7 +124,10 @@ func applyRuntimeOptions(cfg *Config, opts LoadOptions) error {
 		}
 		cfg.ExecutionMode = mode
 	}
-	return ValidateExecutionMode(cfg.ExecutionMode)
+	if err := ValidateExecutionMode(cfg.ExecutionMode); err != nil {
+		return err
+	}
+	return ValidatePromptConfig(cfg.Prompt)
 }
 
 func selectedProfile(opts LoadOptions) (string, error) {
@@ -157,8 +160,14 @@ func (c *Config) ApplyProfile(name string) error {
 	if err := ValidateExecutionMode(profile.ExecutionMode); err != nil {
 		return fmt.Errorf("profile %q: %w", name, err)
 	}
+	if err := ValidatePromptConfig(profile.Prompt); err != nil {
+		return fmt.Errorf("profile %q: %w", name, err)
+	}
 	overlay := profile.toConfig()
 	merged := Merge(c, overlay)
+	if err := ValidatePromptConfig(merged.Prompt); err != nil {
+		return fmt.Errorf("profile %q: %w", name, err)
+	}
 	*c = *merged
 	return nil
 }
@@ -171,6 +180,7 @@ func (p ProfileConfig) toConfig() *Config {
 		ExecutionMode:   p.ExecutionMode,
 		MaxTurns:        p.MaxTurns,
 		Reasoning:       p.Reasoning,
+		Prompt:          p.Prompt,
 		ApprovalAgent:   p.ApprovalAgent,
 		Providers:       p.Providers,
 		ToolsDisabled:   p.ToolsDisabled,
@@ -190,5 +200,15 @@ func ValidateExecutionMode(mode string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown execution_mode %q", mode)
+	}
+}
+
+// ValidatePromptConfig checks known prompt harness options.
+func ValidatePromptConfig(prompt PromptConfig) error {
+	switch strings.TrimSpace(prompt.CompactStyle) {
+	case "", CompactStyleShort, CompactStyleStructured:
+		return nil
+	default:
+		return fmt.Errorf("unknown prompt.compact_style %q", prompt.CompactStyle)
 	}
 }

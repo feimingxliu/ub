@@ -295,6 +295,9 @@
         "reasoning": {
           "$ref": "#/$defs/Config"
         },
+        "prompt": {
+          "$ref": "#/$defs/PromptConfig"
+        },
         "approval_agent": {
           "$ref": "#/$defs/ApprovalAgentConfig"
         },
@@ -336,6 +339,37 @@
         },
         "cleanup": {
           "$ref": "#/$defs/CleanupConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PromptConfig": {
+      "properties": {
+        "workspace_instructions": {
+          "$ref": "#/$defs/PromptSectionConfig"
+        },
+        "git_snapshot": {
+          "$ref": "#/$defs/PromptSectionConfig"
+        },
+        "compact_style": {
+          "type": "string",
+          "enum": [
+            "short",
+            "structured"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "PromptSectionConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_chars": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,
@@ -457,6 +491,9 @@
     },
     "reasoning": {
       "$ref": "#/$defs/Config"
+    },
+    "prompt": {
+      "$ref": "#/$defs/PromptConfig"
     },
     "approval_agent": {
       "$ref": "#/$defs/ApprovalAgentConfig"

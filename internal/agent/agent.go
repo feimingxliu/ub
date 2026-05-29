@@ -61,6 +61,7 @@ type Options struct {
 	SummaryProvider  provider.Provider
 	SummaryModel     string
 	Context          config.ContextConfig
+	Prompt           config.PromptConfig
 	Runtime          RuntimeContext
 	ToolOutputState  string
 	Hooks            hook.Runner
@@ -86,7 +87,9 @@ type Agent struct {
 	summaryProvider  provider.Provider
 	summaryModel     string
 	contextCfg       config.ContextConfig
+	promptCfg        config.PromptConfig
 	runtime          RuntimeContext
+	startupPrompt    []message.Message
 	toolOutputState  string
 	hooks            hook.Runner
 	workspaceRoot    string
@@ -147,6 +150,12 @@ func New(opts Options) (*Agent, error) {
 	if hooks == nil {
 		hooks = hook.NopRunner{}
 	}
+	runtime := opts.Runtime.normalized()
+	workspaceRoot := strings.TrimSpace(opts.WorkspaceRoot)
+	if workspaceRoot == "" {
+		workspaceRoot = runtime.Workspace
+	}
+	promptCfg := effectivePromptConfig(opts.Prompt)
 	return &Agent{
 		provider:         opts.Provider,
 		tools:            opts.Tools,
@@ -163,10 +172,12 @@ func New(opts Options) (*Agent, error) {
 		summaryProvider:  opts.SummaryProvider,
 		summaryModel:     strings.TrimSpace(opts.SummaryModel),
 		contextCfg:       opts.Context,
-		runtime:          opts.Runtime.normalized(),
+		promptCfg:        promptCfg,
+		runtime:          runtime,
+		startupPrompt:    buildStartupPromptMessages(runtime, workspaceRoot, promptCfg),
 		toolOutputState:  toolOutputState,
 		hooks:            hooks,
-		workspaceRoot:    strings.TrimSpace(opts.WorkspaceRoot),
+		workspaceRoot:    workspaceRoot,
 		memoryMaxChars:   opts.MemoryMaxChars,
 		subagentRunner:   opts.SubagentRunner,
 	}, nil

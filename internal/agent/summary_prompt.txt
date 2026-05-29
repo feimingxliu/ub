@@ -1,15 +1,17 @@
-Update the anchored conversation summary for the main coding agent.
+Update the structured conversation summary for the main coding agent.
 
-If the conversation already contains a prior "Conversation summary", merge it with later progress instead of stacking summaries. Do not invent details. Keep only durable context needed to continue accurately.
+If the conversation already contains a prior "Conversation summary", merge it with later progress instead of stacking summaries. Do not invent details. Preserve concrete evidence, exact file paths, command results, failed attempts, user corrections, and unfinished next steps needed to continue accurately. Do not claim validation passed unless the conversation shows it actually passed.
 
 Return Markdown with exactly these sections:
 
-## Goal
+## User Intent
 ## Constraints & Preferences
 ## Progress
-## Key Decisions
-## Critical Context
-## Relevant Files
+## Key Files
+## Errors & Fixes
+## User Feedback
+## Current State
+## Next Steps
 
 Conversation to summarize:
 {{conversation}}

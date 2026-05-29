@@ -25,6 +25,9 @@ const (
 //go:embed summary_prompt.txt
 var summaryPromptTemplate string
 
+//go:embed summary_short_prompt.txt
+var summaryShortPromptTemplate string
+
 type preparedMessages struct {
 	messages        []message.Message
 	requestMessages []message.Message
@@ -182,7 +185,7 @@ func (a *Agent) generateSummary(ctx context.Context, messages []message.Message)
 	if model == "" {
 		model = a.model
 	}
-	prompt := strings.ReplaceAll(summaryPromptTemplate, "{{conversation}}", renderMessages(messages))
+	prompt := strings.ReplaceAll(a.summaryPromptTemplate(), "{{conversation}}", renderMessages(messages))
 	request := []message.Message{message.Text(message.RoleUser, prompt)}
 	estimated := contextmgr.Estimate(request, model)
 	stream, err := p.Chat(ctx, provider.Request{
@@ -231,6 +234,13 @@ done:
 		return "", errors.New("summary provider returned empty summary")
 	}
 	return text, nil
+}
+
+func (a *Agent) summaryPromptTemplate() string {
+	if strings.TrimSpace(a.promptCfg.CompactStyle) == config.CompactStyleShort {
+		return summaryShortPromptTemplate
+	}
+	return summaryPromptTemplate
 }
 
 func observeInputUsage(model string, estimated, actual int) {

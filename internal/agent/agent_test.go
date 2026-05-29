@@ -245,10 +245,6 @@ func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
 		t.Fatalf("requests = %d, want 1", len(p.requests))
 	}
 	got := p.requests[0].Messages
-	if len(got) == 0 || got[0].Role != message.RoleSystem {
-		t.Fatalf("first request message = %#v, want runtime system context", got)
-	}
-	runtimeText := got[0].Text()
 	for _, want := range []string{
 		"<cwd>/tmp/workspace</cwd>",
 		"<shell>/bin/sh</shell>",
@@ -257,12 +253,44 @@ func TestAgentInjectsRuntimeContextWithoutPersistingIt(t *testing.T) {
 		"Use read only for regular files",
 		"use the cwd parameter",
 	} {
-		if !strings.Contains(runtimeText, want) {
-			t.Fatalf("runtime context missing %q:\n%s", want, runtimeText)
+		if !containsText(got, want) {
+			t.Fatalf("runtime context missing %q:\n%#v", want, got)
 		}
 	}
 	if containsText(res.Messages, "<environment_context>") {
 		t.Fatalf("runtime context leaked into result history: %#v", res.Messages)
+	}
+}
+
+func TestAgentInjectsCodingHarnessInstructionsWithoutPersistingThem(t *testing.T) {
+	reg := tool.New()
+	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Model:    "fake/model",
+		Mode:     execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{Prompt: "fix a bug", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	got := p.requests[0].Messages
+	for _, want := range []string{
+		"<coding_agent_instructions>",
+		"Read the relevant files before proposing or applying edits",
+		"Prefer purpose-built tools",
+		"Do not claim tests, builds, or checks passed unless they actually ran and passed",
+	} {
+		if !containsText(got, want) {
+			t.Fatalf("coding harness missing %q:\n%#v", want, got)
+		}
+	}
+	if containsText(res.Messages, "<coding_agent_instructions>") {
+		t.Fatalf("coding harness leaked into result history: %#v", res.Messages)
 	}
 }
 
@@ -1210,12 +1238,18 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 	if summary.requests[0].Model != "small" {
 		t.Fatalf("summary model = %q, want small", summary.requests[0].Model)
 	}
+	summaryPrompt := summary.requests[0].Messages[0].Text()
+	for _, want := range []string{"## User Intent", "## Errors & Fixes", "## User Feedback", "## Next Steps"} {
+		if !strings.Contains(summaryPrompt, want) {
+			t.Fatalf("structured summary prompt missing %q:\n%s", want, summaryPrompt)
+		}
+	}
 	if len(main.requests) != 1 {
 		t.Fatalf("main requests = %d, want 1", len(main.requests))
 	}
 	got := main.requests[0].Messages
-	if len(got) == 0 || got[0].Role != message.RoleSystem || !strings.Contains(got[0].Text(), "summary of early work") {
-		t.Fatalf("main request first message = %#v", got)
+	if !containsText(got, "summary of early work") {
+		t.Fatalf("main request missing summary: %#v", got)
 	}
 	if containsText(got, "user 1") || containsText(got, "user 2") || containsText(got, "user 3") {
 		t.Fatalf("main request kept summarized messages: %#v", got)
@@ -1227,6 +1261,46 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 	}
 	if !hasEventType(writer.events, rollout.TypeSummary) {
 		t.Fatalf("events missing summary: %#v", writer.events)
+	}
+}
+
+func TestAgentSummaryPromptCanUseShortStyle(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps: provider.Caps{MaxContextTokens: 20},
+		scripts: []fake.Script{
+			{fake.TextDelta("final"), fake.Done()},
+		},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("short summary"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context: config.ContextConfig{
+			TriggerRatio:    0.01,
+			KeepRecentTurns: 3,
+		},
+		Prompt: config.PromptConfig{CompactStyle: config.CompactStyleShort},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_sum_short", Prompt: "current prompt", Turn: 7, History: turnHistory(5)}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("summary requests = %d, want 1", len(summary.requests))
+	}
+	prompt := summary.requests[0].Messages[0].Text()
+	if !strings.Contains(prompt, "## Goal") || strings.Contains(prompt, "## User Intent") {
+		t.Fatalf("short summary prompt =\n%s", prompt)
 	}
 }
 
@@ -1397,7 +1471,7 @@ func TestAgentDoesNotSummarizeBelowThreshold(t *testing.T) {
 	if len(summary.requests) != 0 {
 		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
 	}
-	if got := main.requests[0].Messages; containsRole(got, message.RoleSystem) {
+	if got := main.requests[0].Messages; containsText(got, "summary should not run") {
 		t.Fatalf("main request unexpectedly summarized: %#v", got)
 	}
 }
@@ -1441,7 +1515,7 @@ func TestAgentUsesModelContextOverrideForSummaryThreshold(t *testing.T) {
 	if !ok || contextEvent.ContextMaxTokens != 1_000_000 {
 		t.Fatalf("context event = %#v ok=%v, want model override max", contextEvent, ok)
 	}
-	if got := main.requests[0].Messages; containsRole(got, message.RoleSystem) {
+	if got := main.requests[0].Messages; containsText(got, "summary should not run") {
 		t.Fatalf("main request unexpectedly summarized: %#v", got)
 	}
 }
@@ -1486,7 +1560,7 @@ func TestAgentUsageCalibratesTokenEstimate(t *testing.T) {
 	msgs := []message.Message{message.Text(message.RoleUser, "calibrate")}
 	before := contextmgr.Estimate(msgs, model)
 	main := &scriptProvider{scripts: []fake.Script{
-		{fake.Usage(before*2, 1), fake.TextDelta("ok"), fake.Done()},
+		{fake.Usage(before*1000, 1), fake.TextDelta("ok"), fake.Done()},
 	}}
 	a, err := New(Options{
 		Provider:   main,
@@ -1533,15 +1607,6 @@ func turnHistory(turns int) []message.Message {
 func containsText(messages []message.Message, text string) bool {
 	for _, msg := range messages {
 		if strings.Contains(msg.Text(), text) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsRole(messages []message.Message, role message.Role) bool {
-	for _, msg := range messages {
-		if msg.Role == role {
 			return true
 		}
 	}

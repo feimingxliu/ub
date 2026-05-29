@@ -35,6 +35,7 @@ type Config struct {
 	ExecutionMode   string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
 	MaxTurns        int                        `yaml:"max_turns,omitempty"     json:"max_turns,omitempty"`
 	Reasoning       reasoning.Config           `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
+	Prompt          PromptConfig               `yaml:"prompt,omitempty"        json:"prompt,omitempty"`
 	ApprovalAgent   ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
 	Providers       map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
 	Profiles        map[string]ProfileConfig   `yaml:"profiles,omitempty"      json:"profiles,omitempty"`
@@ -61,6 +62,7 @@ type ProfileConfig struct {
 	ExecutionMode   string                     `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
 	MaxTurns        int                        `yaml:"max_turns,omitempty"     json:"max_turns,omitempty"`
 	Reasoning       reasoning.Config           `yaml:"reasoning,omitempty"     json:"reasoning,omitempty"`
+	Prompt          PromptConfig               `yaml:"prompt,omitempty"        json:"prompt,omitempty"`
 	ApprovalAgent   ApprovalAgentConfig        `yaml:"approval_agent,omitempty" json:"approval_agent,omitempty"`
 	Providers       map[string]ProviderConfig  `yaml:"providers,omitempty"     json:"providers,omitempty"`
 	ToolsDisabled   []string                   `yaml:"tools_disabled,omitempty" json:"tools_disabled,omitempty"`
@@ -99,6 +101,26 @@ type ModelConfig struct {
 	SupportedEfforts  []reasoning.Effort `yaml:"supported_efforts,omitempty"  json:"supported_efforts,omitempty"`
 	DefaultEffort     reasoning.Effort   `yaml:"default_effort,omitempty"     json:"default_effort,omitempty"`
 	MaxContextTokens  int                `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"`
+}
+
+const (
+	CompactStyleShort      = "short"
+	CompactStyleStructured = "structured"
+)
+
+// PromptConfig controls non-conversation context injected into coding-agent
+// provider requests. These sections are not persisted in rollout history.
+type PromptConfig struct {
+	WorkspaceInstructions PromptSectionConfig `yaml:"workspace_instructions,omitempty" json:"workspace_instructions,omitempty"`
+	GitSnapshot           PromptSectionConfig `yaml:"git_snapshot,omitempty"           json:"git_snapshot,omitempty"`
+	CompactStyle          string              `yaml:"compact_style,omitempty"          json:"compact_style,omitempty" jsonschema:"enum=short,enum=structured"`
+}
+
+// PromptSectionConfig controls one dynamic prompt section. Enabled is a
+// pointer so later layers can explicitly turn on-by-default sections off.
+type PromptSectionConfig struct {
+	Enabled  *bool `yaml:"enabled,omitempty"   json:"enabled,omitempty"`
+	MaxChars int   `yaml:"max_chars,omitempty" json:"max_chars,omitempty"`
 }
 
 // ProviderScriptEvent is used by the fake provider to produce deterministic

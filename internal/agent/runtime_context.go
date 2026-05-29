@@ -28,10 +28,7 @@ func (c RuntimeContext) normalized() RuntimeContext {
 
 func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message {
 	out := cloneMessages(messages)
-	var prepend []message.Message
-	if runtimeMsg, ok := a.runtime.message(); ok {
-		prepend = append(prepend, runtimeMsg)
-	}
+	prepend := cloneMessages(a.startupPrompt)
 	if modeMsg, ok := a.executionModeMessage(); ok {
 		prepend = append(prepend, modeMsg)
 	}

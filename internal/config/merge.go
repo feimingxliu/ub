@@ -53,6 +53,7 @@ func mergeInto(dst, src *Config) {
 		dst.MaxTurns = src.MaxTurns
 	}
 	mergeReasoning(&dst.Reasoning, src.Reasoning)
+	mergePrompt(&dst.Prompt, src.Prompt)
 	mergeApprovalAgent(&dst.ApprovalAgent, src.ApprovalAgent)
 	mergeProviderMap(&dst.Providers, src.Providers)
 	mergeProfileMap(&dst.Profiles, src.Profiles)
@@ -72,6 +73,24 @@ func mergeInto(dst, src *Config) {
 }
 
 func mergeMemory(dst *MemoryConfig, src MemoryConfig) {
+	if src.MaxChars != 0 {
+		dst.MaxChars = src.MaxChars
+	}
+}
+
+func mergePrompt(dst *PromptConfig, src PromptConfig) {
+	mergePromptSection(&dst.WorkspaceInstructions, src.WorkspaceInstructions)
+	mergePromptSection(&dst.GitSnapshot, src.GitSnapshot)
+	if src.CompactStyle != "" {
+		dst.CompactStyle = src.CompactStyle
+	}
+}
+
+func mergePromptSection(dst *PromptSectionConfig, src PromptSectionConfig) {
+	if src.Enabled != nil {
+		enabled := *src.Enabled
+		dst.Enabled = &enabled
+	}
 	if src.MaxChars != 0 {
 		dst.MaxChars = src.MaxChars
 	}
