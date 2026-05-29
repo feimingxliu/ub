@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.2] - 2026-05-29
+
+
+### Added
+
+- Add workspace instruction harness ([8ec904e](https://github.com/feimingxliu/ub/commit/8ec904e662f3615af61cd7f8f03ce058c67b31d0))
+- Strengthen coding-agent guidance ([f736dc5](https://github.com/feimingxliu/ub/commit/f736dc5aea057be9f7b581907d98b40688b7aa95))
+- Run init through agent ([78cd265](https://github.com/feimingxliu/ub/commit/78cd2650ea152aa1e9496ede54150bbbcc0ae4c1))
+
+
+### Documentation
+
+- Expand prompt harness roadmap ([9851fe6](https://github.com/feimingxliu/ub/commit/9851fe64d8bf2cdb959a8796438933eb9c8244ed))
+
+
+### Fixed
+
+- Avoid marking mixed tool groups failed ([1d48d74](https://github.com/feimingxliu/ub/commit/1d48d74e43006486e5048d39dbbd518ac2d7ac0d))
+
+
+### Tests
+
+- Cover harness behavior regressions ([86a6bf3](https://github.com/feimingxliu/ub/commit/86a6bf37696430d43c72432642ef57ae6b667eb0))
+
 ## [0.3.1] - 2026-05-28
 
 
@@ -9,6 +33,11 @@ All notable changes to this project are documented here.
 
 - Harden plan mode tool handling ([e7c6de8](https://github.com/feimingxliu/ub/commit/e7c6de8a5766f0d3b3d5b357883cd7fc7c215618))
 - Preserve tool activity details ([6c3bdb7](https://github.com/feimingxliu/ub/commit/6c3bdb77c27b2b8c1eadaac92bff3974f8160c3a))
+
+
+### Maintenance
+
+- V0.3.1 ([b01e321](https://github.com/feimingxliu/ub/commit/b01e321d790a415fcfe7867ed62741f58084477a))
 
 ## [0.3.0] - 2026-05-27
 
