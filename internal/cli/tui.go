@@ -638,6 +638,7 @@ func (r *tuiAgentRunner) sessionState() tui.SessionState {
 		Models:    r.Models(),
 		Effort:    r.Effort(),
 		Efforts:   r.Efforts(),
+		Mode:      string(r.currentMode()),
 		Turn:      r.Turn(),
 		Messages:  r.Messages(),
 	}

@@ -362,11 +362,15 @@ func TestTUIRunnerModeSwitchPersistsAndRestores(t *testing.T) {
 	}
 
 	runner.mode = execution.ModeWork
-	if _, err := runner.SwitchSession(context.Background(), state.ID); err != nil {
+	restored, err := runner.SwitchSession(context.Background(), state.ID)
+	if err != nil {
 		t.Fatalf("SwitchSession: %v", err)
 	}
 	if got := runner.currentMode(); got != execution.ModePlan {
 		t.Fatalf("restored mode = %q, want plan", got)
+	}
+	if restored.Mode != "plan" {
+		t.Fatalf("restored state mode = %q, want plan", restored.Mode)
 	}
 }
 

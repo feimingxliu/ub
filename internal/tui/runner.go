@@ -124,6 +124,7 @@ type SessionState struct {
 	Models    []string
 	Effort    string
 	Efforts   []string
+	Mode      string
 	Turn      int
 	Messages  []InitialMessage
 }
