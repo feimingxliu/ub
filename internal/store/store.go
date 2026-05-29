@@ -39,6 +39,7 @@ type Session struct {
 	ID        string
 	Workspace string
 	Title     string
+	Provider  string
 	Model     string
 	Summary   string
 	CreatedAt time.Time

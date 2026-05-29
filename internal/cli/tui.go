@@ -229,7 +229,7 @@ func effectiveTUIEventTimeout(timeout time.Duration) time.Duration {
 
 func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- tui.Event) error {
 	if r.state == nil {
-		state, err := startChatRollout(r.cmd, prompt, r.model, chatOptions{})
+		state, err := startChatRollout(r.cmd, prompt, r.providerName, r.model, chatOptions{})
 		if err != nil {
 			return err
 		}
@@ -246,12 +246,12 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		Prompt:    prompt,
 	})
 	if err != nil {
-		_ = finishChatSession(r.cmd, r.state, prompt, r.model)
+		_ = finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 		return err
 	}
 	r.state.history = result.Messages
 	r.state.nextTurn++
-	return finishChatSession(r.cmd, r.state, prompt, r.model)
+	return finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 }
 
 func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) error {
@@ -268,13 +268,13 @@ func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) e
 		History:   r.state.history,
 	})
 	if err != nil {
-		_ = finishChatSession(r.cmd, r.state, "", r.model)
+		_ = finishChatSession(r.cmd, r.state, "", r.providerName, r.model)
 		return err
 	}
 	if !result.Noop {
 		r.state.history = result.Messages
 	}
-	return finishChatSession(r.cmd, r.state, "", r.model)
+	return finishChatSession(r.cmd, r.state, "", r.providerName, r.model)
 }
 
 func (r *tuiAgentRunner) RunShell(ctx context.Context, command string, events chan<- tui.Event) error {
@@ -477,6 +477,7 @@ func (r *tuiAgentRunner) ListSessions(ctx context.Context) ([]tui.SessionInfo, e
 		out = append(out, tui.SessionInfo{
 			ID:        sess.ID,
 			Title:     sess.Title,
+			Provider:  sess.Provider,
 			Model:     sess.Model,
 			UpdatedAt: sess.UpdatedAt,
 			Current:   sess.ID == current,
@@ -490,7 +491,7 @@ func (r *tuiAgentRunner) Doctor(ctx context.Context) (string, error) {
 }
 
 func (r *tuiAgentRunner) NewSession(ctx context.Context) (tui.SessionState, error) {
-	state, err := startChatRollout(r.cmd, "", r.model, chatOptions{})
+	state, err := startChatRollout(r.cmd, "", r.providerName, r.model, chatOptions{})
 	if err != nil {
 		return tui.SessionState{}, err
 	}
@@ -513,7 +514,7 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 	if id == "" {
 		return tui.SessionState{}, fmt.Errorf("session id is empty")
 	}
-	state, err := startChatRollout(r.cmd, "", r.model, chatOptions{SessionID: id})
+	state, err := startChatRollout(r.cmd, "", r.providerName, r.model, chatOptions{SessionID: id})
 	if err != nil {
 		return tui.SessionState{}, err
 	}
@@ -532,10 +533,8 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 	r.state = state
 	r.closedStore = false
 	r.invalidateMessageCache()
-	if strings.TrimSpace(state.session.Model) != "" {
-		r.model = state.session.Model
-		r.models = appendModelCandidate(r.models, state.session.Model)
-		r.refreshReasoning()
+	if err := r.restoreSessionProviderModel(ctx, state.session); err != nil {
+		return tui.SessionState{}, err
 	}
 	if state.mode != "" {
 		r.modeMu.Lock()
@@ -543,6 +542,47 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 		r.modeMu.Unlock()
 	}
 	return r.sessionState(), nil
+}
+
+func (r *tuiAgentRunner) restoreSessionProviderModel(ctx context.Context, sess store.Session) error {
+	sessionProvider := strings.TrimSpace(sess.Provider)
+	sessionModel := strings.TrimSpace(sess.Model)
+	if sessionProvider == "" {
+		sessionProvider = r.inferSessionProvider(ctx, sessionModel)
+	}
+	if sessionProvider == "" {
+		if sessionModel != "" {
+			r.model = sessionModel
+			r.models = appendModelCandidate(r.models, sessionModel)
+			r.refreshReasoning()
+		}
+		return nil
+	}
+	if _, err := r.setProviderModel(ctx, sessionProvider, sessionModel); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *tuiAgentRunner) inferSessionProvider(ctx context.Context, model string) string {
+	model = strings.TrimSpace(model)
+	if r == nil || r.cfg == nil || model == "" {
+		return ""
+	}
+	for _, providerName := range sortedProviderNames(r.cfg.Providers) {
+		providerCfg := r.cfg.Providers[providerName]
+		if modelInList(configuredProviderModels(providerCfg, ""), model) {
+			return providerName
+		}
+	}
+	for _, providerName := range sortedProviderNames(r.cfg.Providers) {
+		providerCfg := r.cfg.Providers[providerName]
+		check := r.checkProvider(ctx, providerName, providerCfg)
+		if modelInList(check.Models, model) {
+			return providerName
+		}
+	}
+	return ""
 }
 
 func (r *tuiAgentRunner) CurrentSessionID() string {
@@ -591,10 +631,15 @@ func (r *tuiAgentRunner) sessionState() tui.SessionState {
 		return tui.SessionState{}
 	}
 	return tui.SessionState{
-		ID:       r.state.sessionID,
-		Model:    r.model,
-		Turn:     r.Turn(),
-		Messages: r.Messages(),
+		ID:        r.state.sessionID,
+		Provider:  r.providerName,
+		Providers: r.Providers(),
+		Model:     r.model,
+		Models:    r.Models(),
+		Effort:    r.Effort(),
+		Efforts:   r.Efforts(),
+		Turn:      r.Turn(),
+		Messages:  r.Messages(),
 	}
 }
 
@@ -615,7 +660,28 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 		r.summaryModel = model
 	}
 	r.refreshReasoning()
-	return nil
+	return r.persistSessionProviderModel(r.cmd.Context())
+}
+
+func (r *tuiAgentRunner) persistSessionProviderModel(ctx context.Context) error {
+	if r == nil || r.state == nil || r.closedStore {
+		return nil
+	}
+	r.state.session.Provider = r.providerName
+	r.state.session.Model = r.model
+	r.state.session.UpdatedAt = time.Now().UTC()
+	return r.state.store.UpdateSession(ctx, r.state.session)
+}
+
+func (r *tuiAgentRunner) providerSelection() tui.ProviderSelection {
+	return tui.ProviderSelection{
+		Provider:  r.providerName,
+		Providers: r.Providers(),
+		Model:     r.model,
+		Models:    r.Models(),
+		Effort:    r.Effort(),
+		Efforts:   r.Efforts(),
+	}
 }
 
 func (r *tuiAgentRunner) RefreshModels(ctx context.Context) ([]string, error) {
@@ -626,6 +692,13 @@ func (r *tuiAgentRunner) RefreshModels(ctx context.Context) ([]string, error) {
 }
 
 func (r *tuiAgentRunner) SetProvider(providerName, model string) (tui.ProviderSelection, error) {
+	if r == nil || r.cmd == nil {
+		return tui.ProviderSelection{}, fmt.Errorf("provider switching is unavailable")
+	}
+	return r.setProviderModel(r.cmd.Context(), providerName, model)
+}
+
+func (r *tuiAgentRunner) setProviderModel(ctx context.Context, providerName, model string) (tui.ProviderSelection, error) {
 	providerName = strings.TrimSpace(providerName)
 	if providerName == "" {
 		return tui.ProviderSelection{}, fmt.Errorf("provider cannot be empty")
@@ -673,14 +746,10 @@ func (r *tuiAgentRunner) SetProvider(providerName, model string) (tui.ProviderSe
 		r.permission.SetApprovalAgent(approvalSetup.Agent)
 	}
 	r.refreshReasoning()
-	return tui.ProviderSelection{
-		Provider:  r.providerName,
-		Providers: r.Providers(),
-		Model:     r.model,
-		Models:    r.Models(),
-		Effort:    r.Effort(),
-		Efforts:   r.Efforts(),
-	}, nil
+	if err := r.persistSessionProviderModel(ctx); err != nil {
+		return tui.ProviderSelection{}, err
+	}
+	return r.providerSelection(), nil
 }
 
 func (r *tuiAgentRunner) modelForProviderSwitch(providerName string, providerCfg config.ProviderConfig, model string) (string, error) {
@@ -690,6 +759,17 @@ func (r *tuiAgentRunner) modelForProviderSwitch(providerName string, providerCfg
 	}
 	if r != nil && r.cfg != nil && strings.TrimSpace(r.cfg.DefaultProvider) == providerName && strings.TrimSpace(r.cfg.DefaultModel) != "" {
 		return strings.TrimSpace(r.cfg.DefaultModel), nil
+	}
+	candidates := r.providerModels(r.cmd.Context(), providerName, providerCfg, "")
+	currentModel := strings.TrimSpace(r.model)
+	if currentModel != "" && (len(candidates) == 0 || modelInList(candidates, currentModel)) {
+		return currentModel, nil
+	}
+	if configured := firstConfiguredProviderModel(providerCfg); configured != "" {
+		return configured, nil
+	}
+	if len(candidates) > 0 {
+		return candidates[0], nil
 	}
 	return r.selectProviderModel(r.cmd.Context(), providerName, providerCfg, "")
 }
@@ -855,6 +935,9 @@ func (r *tuiAgentRunner) selectProviderModel(ctx context.Context, providerName s
 	model = strings.TrimSpace(model)
 	if model != "" {
 		return model, nil
+	}
+	if configured := firstConfiguredProviderModel(providerCfg); configured != "" {
+		return configured, nil
 	}
 	check := r.checkProvider(ctx, providerName, providerCfg)
 	if len(check.Models) > 0 {

@@ -109,6 +109,7 @@ type InitialMessage struct {
 type SessionInfo struct {
 	ID        string
 	Title     string
+	Provider  string
 	Model     string
 	UpdatedAt time.Time
 	Current   bool
@@ -116,10 +117,15 @@ type SessionInfo struct {
 
 // SessionState is the restored state for a selected session.
 type SessionState struct {
-	ID       string
-	Model    string
-	Turn     int
-	Messages []InitialMessage
+	ID        string
+	Provider  string
+	Providers []string
+	Model     string
+	Models    []string
+	Effort    string
+	Efforts   []string
+	Turn      int
+	Messages  []InitialMessage
 }
 
 // SessionRunner optionally lets slash commands list and switch persisted sessions.

@@ -256,7 +256,7 @@ ub --resume                  # 弹列表选
 ub --resume=abc123           # 直接切到 session abc123
 ```
 
-Resume 时会恢复最后一次 `ModeSwitch` 设置的 mode；如果该 session 从未切过 mode，使用当前 CLI/config 默认。
+Resume 时会恢复 session 上次使用的 provider/model，以及最后一次 `ModeSwitch` 设置的 mode；如果该 session 从未切过 mode，使用当前 CLI/config 默认。旧版本 session 没有 provider 元数据时，ub 会按模型配置和远端模型列表尽力推断。
 
 ### 7.5 调试某次会话
 

@@ -113,10 +113,11 @@
 
 - F-SESS-1：每个工作目录可有多个 session；session 默认按时间命名，可改名
 - F-SESS-2：`ub` 启动时列出最近 session，可继续或新建
-- F-SESS-3：Rollout 事件类型：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、`Summary`、`ModelSwitch`、`ModeSwitch`、`PermissionDecision`、`Error`
-- F-SESS-4：Rollout 以 JSONL 写入 SQLite 的 BLOB 列；SQLite 开启 WAL + `synchronous=NORMAL`。**耐久性保证**：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 事件；操作系统断电可能丢最后若干条未刷盘事件——这是可接受的，不为此牺牲性能去逐条 fsync
-- F-SESS-5：CLI 子命令 `ub rollout show <id>` 可漂亮打印一轮事件流
-- F-SESS-6：启动时 MAY 执行 best-effort 自动清理：默认删除 30 天未更新且不属于对应 workspace 最近 20 个的 session；events MUST 只随 session 删除级联清理，不做单 session 内局部裁剪
+- F-SESS-3：Session 元数据 MUST 持久化当前主对话 provider 与 model；恢复 session 时 MUST 还原二者，避免把旧 session 的 model 发给当前默认 provider
+- F-SESS-4：Rollout 事件类型：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、`Summary`、`ModelSwitch`、`ModeSwitch`、`PermissionDecision`、`Error`
+- F-SESS-5：Rollout 以 JSONL 写入 SQLite 的 BLOB 列；SQLite 开启 WAL + `synchronous=NORMAL`。**耐久性保证**：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 事件；操作系统断电可能丢最后若干条未刷盘事件——这是可接受的，不为此牺牲性能去逐条 fsync
+- F-SESS-6：CLI 子命令 `ub rollout show <id>` 可漂亮打印一轮事件流
+- F-SESS-7：启动时 MAY 执行 best-effort 自动清理：默认删除 30 天未更新且不属于对应 workspace 最近 20 个的 session；events MUST 只随 session 删除级联清理，不做单 session 内局部裁剪
 
 ### 4.7 上下文管理
 
@@ -158,7 +159,7 @@
 - F-TUI-2：输入框支持多行编辑、历史输入浏览、命令补全（`/` 开头）；Tab 用于补全候选，Shift+Tab 用于切换执行模式（包括运行中和审批弹窗中）；Esc 中断当前操作而不是退出；聊天区支持 PageUp/PageDown 滚动历史输出；TUI 默认不启用鼠标追踪，终端内直接拖拽选择文字 MUST 可用于复制；中文/日文等 IME 预编辑必须跟随输入框真实光标，不得漂移到状态栏或其他 footer 行
 - F-TUI-3：Diff 渲染：以 split 或 unified 模式预览 edit 操作；write / edit 工具完成后的活动摘要默认折叠，`Ctrl+O` 展开最近工具组后 MUST 只显示文件级变更摘要，再按一次 `Ctrl+O` MUST 展开最近 write / edit 工具项的文件级变更详情（优先 unified diff）；用户 MUST 可用 `Ctrl+N` / `Ctrl+P` 在多个活动块与工具项之间移动焦点，并用 `Enter` / `Space` 折叠或展开当前焦点；diff 元信息、增删行必须有明显着色
 - F-TUI-4：权限弹窗：阻塞式 modal，列出工具名、参数预览、风险等级
-- F-TUI-5：命令：`/provider`、`/model`、`/approval-model`、`/effort`、`/mode`、`/compact`、`/init`、`/clear`、`/new`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/provider` 可在 TUI 内切换当前主对话 provider，并可同时指定目标 model；`/compact` 主动压缩当前 session 上下文；`/init` MUST 启动一轮普通 agent 任务来调研当前 workspace 并创建或改进 `AGENTS.md`，已有文件 MUST 尽量保留准确人工内容并通过常规 edit/write 工具产生可见过程和 diff；`/clear` 只清空当前聊天区显示；`/new` 创建并切换到新的空 session，同时清空本地消息、排队输入和 context 状态栏；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级；`/help` MUST 同时列出 slash 命令、输入前缀、键盘快捷键、picker/permission 快捷键和复制相关行为
+- F-TUI-5：命令：`/provider`、`/model`、`/approval-model`、`/effort`、`/mode`、`/compact`、`/init`、`/clear`、`/new`、`/help`、`/config`、`/sessions`、`/quit`、`/exit`；`/provider` 可在 TUI 内切换当前主对话 provider，并可同时指定目标 model；不指定 model 时 MUST 优先保留目标 provider 可用的当前 model，否则选择目标 provider 的默认/配置模型；切换结果 MUST 写回当前 session 元数据；`/compact` 主动压缩当前 session 上下文；`/init` MUST 启动一轮普通 agent 任务来调研当前 workspace 并创建或改进 `AGENTS.md`，已有文件 MUST 尽量保留准确人工内容并通过常规 edit/write 工具产生可见过程和 diff；`/clear` 只清空当前聊天区显示；`/new` 创建并切换到新的空 session，同时清空本地消息、排队输入和 context 状态栏；`/sessions` 可切换当前 workspace 的历史 session；`/effort` 只允许选择当前模型支持的思考等级；`/help` MUST 同时列出 slash 命令、输入前缀、键盘快捷键、picker/permission 快捷键和复制相关行为
 - F-TUI-6：TUI 启动支持 `ub --provider <name>` 与 `ub --model <id>` 临时覆盖当前主对话 provider/model；支持 `ub --resume` 打开当前 workspace 的历史 session 选择器，支持 `ub --resume=<id>` 或 `ub --resume <id>` 恢复指定 session
 - F-TUI-7：TUI MUST 在聊天区以紧凑活动行展示 thinking、工具排队/运行/完成/失败、审批结果和错误摘要；thinking 与 tool activity MUST 按同一 Agent turn 拆成两个独立可折叠区域展示，审批结果归入 tool 区域；同一轮连续 thinking delta MUST 合并到 thinking 区域，并在折叠摘要中展示可读片段；同一个 tool call 的状态更新 MUST 合并到 tool 区域的同一行，避免 queued/running/done 刷屏；活动行参与宽度换行与聊天区滚动，且不得展示完整工具 JSON 或 secret 值
 - F-TUI-8：Agent turn 运行中输入普通消息并按 Enter 时，TUI MUST 将该消息加入本地队列而不是启动并发 Agent turn；当前 turn 正常结束后 MUST 按 FIFO 自动发送下一条队列消息。运行中上下方向键 SHOULD 优先浏览并编辑已排队消息；slash 命令输入不得作为队列消息发送

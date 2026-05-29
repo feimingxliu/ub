@@ -142,6 +142,131 @@ func TestTUIRunnerSetProviderSwitchesProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestTUIRunnerSetProviderPersistsActiveSessionProvider(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  primary:
+    type: fake
+  manual:
+    type: fake
+`)
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {Type: "fake"},
+			"manual":  {Type: "fake"},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	state, err := runner.NewSession(context.Background())
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if _, err := runner.SetProvider("manual", "manual/model"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	sessions := readOnlySessions(t, temp)
+	if len(sessions) != 1 || sessions[0].ID != state.ID {
+		t.Fatalf("sessions = %#v, want session %s", sessions, state.ID)
+	}
+	if sessions[0].Provider != "manual" || sessions[0].Model != "manual/model" {
+		t.Fatalf("persisted provider/model = %q/%q, want manual/manual/model", sessions[0].Provider, sessions[0].Model)
+	}
+}
+
+func TestTUIRunnerSwitchSessionRestoresProviderAndModel(t *testing.T) {
+	temp := t.TempDir()
+	writeChatConfig(t, temp, `providers:
+  primary:
+    type: fake
+  manual:
+    type: fake
+`)
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {Type: "fake"},
+			"manual":  {Type: "fake"},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	first, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "manual", "manual/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner first: %v", err)
+	}
+	state, err := first.NewSession(context.Background())
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	second, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner second: %v", err)
+	}
+	defer second.Close()
+	restored, err := second.SwitchSession(context.Background(), state.ID)
+	if err != nil {
+		t.Fatalf("SwitchSession: %v", err)
+	}
+	if second.providerName != "manual" || second.model != "manual/model" {
+		t.Fatalf("restored provider/model = %q/%q, want manual/manual/model", second.providerName, second.model)
+	}
+	if restored.Provider != "manual" || restored.Model != "manual/model" {
+		t.Fatalf("restored state = %#v, want manual/manual-model", restored)
+	}
+}
+
+func TestTUIRunnerSetProviderKeepsCurrentModelWhenAvailable(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {Type: "fake"},
+			"manual": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"shared/model": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "shared/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	state, err := runner.SetProvider("manual", "")
+	if err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if state.Model != "shared/model" || runner.model != "shared/model" {
+		t.Fatalf("model after provider switch = state %q runner %q, want shared/model", state.Model, runner.model)
+	}
+}
+
 func TestTUIRunnerRefreshModelsMergesConfiguredAndProviderModels(t *testing.T) {
 	cfg := config.ProviderConfig{
 		Type:    "openai-compat",
@@ -197,7 +322,7 @@ func TestTUIRunnerNewSessionCreatesBlankSession(t *testing.T) {
 		t.Fatalf("sessions = %#v, want one blank-title new session", sessions)
 	}
 
-	if err := finishChatSession(cmd, runner.state, "first prompt", "fake/test"); err != nil {
+	if err := finishChatSession(cmd, runner.state, "first prompt", "fake", "fake/test"); err != nil {
 		t.Fatalf("finishChatSession: %v", err)
 	}
 	sessions = readOnlySessions(t, temp)

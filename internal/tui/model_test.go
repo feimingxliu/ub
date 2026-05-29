@@ -3378,6 +3378,9 @@ func (r *scriptedRunner) NewSession(context.Context) (SessionState, error) {
 		state.ID = "new-session"
 	}
 	r.currentSessionID = state.ID
+	if state.Provider != "" {
+		r.provider = state.Provider
+	}
 	if state.Model != "" {
 		r.model = state.Model
 	}
@@ -3387,6 +3390,9 @@ func (r *scriptedRunner) NewSession(context.Context) (SessionState, error) {
 func (r *scriptedRunner) SwitchSession(_ context.Context, id string) (SessionState, error) {
 	state := r.sessionStates[id]
 	r.currentSessionID = id
+	if state.Provider != "" {
+		r.provider = state.Provider
+	}
 	if state.Model != "" {
 		r.model = state.Model
 	}

@@ -1699,9 +1699,22 @@ func (m *Model) applySessionState(state SessionState) {
 	m.resetQueuedPromptNavigation()
 	m.resetPromptHistoryNavigation()
 	m.scrollToBottom()
+	if strings.TrimSpace(state.Provider) != "" {
+		m.status.provider = state.Provider
+		m.providers = normalizeOptions(state.Providers, state.Provider)
+	}
 	if strings.TrimSpace(state.Model) != "" {
 		m.status.model = state.Model
-		m.models = normalizeModels(m.models, state.Model)
+		if len(state.Models) > 0 {
+			m.models = normalizeModels(state.Models, state.Model)
+		} else {
+			m.models = normalizeModels(m.models, state.Model)
+		}
+	}
+	if state.Effort != "" || len(state.Efforts) > 0 {
+		m.status.effort = defaultString(state.Effort, "none")
+		m.efforts = normalizeOptions(state.Efforts, m.status.effort)
+	} else if strings.TrimSpace(state.Model) != "" {
 		m.refreshEffortFromRunner()
 	}
 	m.status.turn = state.Turn

@@ -76,11 +76,11 @@ func TestMigrationIdempotent(t *testing.T) {
 	defer st.Close()
 
 	var count int
-	if err := st.db.QueryRow("SELECT COUNT(*) FROM schema_version WHERE version = 1").Scan(&count); err != nil {
+	if err := st.db.QueryRow("SELECT COUNT(*) FROM schema_version WHERE version IN (1, 2)").Scan(&count); err != nil {
 		t.Fatalf("count schema_version: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("migration version rows = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("migration version rows = %d, want 2", count)
 	}
 }
 
@@ -95,6 +95,7 @@ func TestSessionCRUD(t *testing.T) {
 		ID:        "s1",
 		Workspace: "/repo",
 		Title:     "first",
+		Provider:  "fake",
 		Model:     "fake/model",
 		Summary:   "summary",
 		CreatedAt: created,
@@ -111,6 +112,7 @@ func TestSessionCRUD(t *testing.T) {
 	assertSessionEqual(t, *got, sess)
 
 	sess.Title = "renamed"
+	sess.Provider = "other"
 	sess.Model = "other/model"
 	sess.UpdatedAt = updated.Add(time.Minute)
 	if err := st.UpdateSession(ctx, sess); err != nil {

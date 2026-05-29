@@ -439,7 +439,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
-	state, err := startChatRollout(cmd, prompt, model, chatOptions{})
+	state, err := startChatRollout(cmd, prompt, providerName, model, chatOptions{})
 	if err != nil {
 		return err
 	}
@@ -492,13 +492,13 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		Prompt:    prompt,
 	})
 	if err != nil {
-		_ = finishChatSession(cmd, state, prompt, model)
+		_ = finishChatSession(cmd, state, prompt, providerName, model)
 		return err
 	}
 	if _, err := io.WriteString(cmd.OutOrStdout(), result.Text); err != nil {
 		return err
 	}
-	return finishChatSession(cmd, state, prompt, model)
+	return finishChatSession(cmd, state, prompt, providerName, model)
 }
 
 type toolRuntime struct {
@@ -664,7 +664,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 		return fmt.Errorf("create provider %q: %w", providerName, err)
 	}
 
-	state, err := startChatRollout(cmd, prompt, model, opts)
+	state, err := startChatRollout(cmd, prompt, providerName, model, opts)
 	if err != nil {
 		return err
 	}
@@ -697,7 +697,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 			if err := recordAssistantMessage(cmd, state.rollout, state.sessionID, state.nextTurn, assistant.String()); err != nil {
 				return err
 			}
-			if err := finishChatSession(cmd, state, prompt, model); err != nil {
+			if err := finishChatSession(cmd, state, prompt, providerName, model); err != nil {
 				return err
 			}
 			return nil
@@ -737,7 +737,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 			if err := recordAssistantMessage(cmd, state.rollout, state.sessionID, state.nextTurn, assistant.String()); err != nil {
 				return err
 			}
-			if err := finishChatSession(cmd, state, prompt, model); err != nil {
+			if err := finishChatSession(cmd, state, prompt, providerName, model); err != nil {
 				return err
 			}
 			return nil
@@ -763,7 +763,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 	}
 }
 
-func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions) (*chatSessionState, error) {
+func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, opts chatOptions) (*chatSessionState, error) {
 	path, err := store.DefaultPath()
 	if err != nil {
 		return nil, fmt.Errorf("locate session store: %w", err)
@@ -815,6 +815,7 @@ func startChatRollout(cmd *cobra.Command, prompt, model string, opts chatOptions
 		ID:        sessionID,
 		Workspace: cwd,
 		Title:     chatTitle(prompt),
+		Provider:  providerName,
 		Model:     model,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -870,7 +871,8 @@ func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) (
 	return history, maxTurn + 1, restoredMode, nil
 }
 
-func finishChatSession(cmd *cobra.Command, state *chatSessionState, prompt, model string) error {
+func finishChatSession(cmd *cobra.Command, state *chatSessionState, prompt, providerName, model string) error {
+	state.session.Provider = providerName
 	state.session.Model = model
 	state.session.UpdatedAt = time.Now().UTC()
 	if state.session.Title == "" {
@@ -1048,7 +1050,7 @@ func printAllSessions(out io.Writer, sessions []store.Session) error {
 
 func printSessionTable(out io.Writer, sessions []store.Session) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tUPDATED\tTITLE\tMODEL"); err != nil {
+	if _, err := fmt.Fprintln(w, "ID\tUPDATED\tTITLE\tPROVIDER\tMODEL"); err != nil {
 		return err
 	}
 	for _, sess := range sessions {
@@ -1056,15 +1058,20 @@ func printSessionTable(out io.Writer, sessions []store.Session) error {
 		if title == "" {
 			title = "(untitled)"
 		}
+		provider := sess.Provider
+		if provider == "" {
+			provider = "-"
+		}
 		model := sess.Model
 		if model == "" {
 			model = "-"
 		}
 		if _, err := fmt.Fprintf(
-			w, "%s\t%s\t%s\t%s\n",
+			w, "%s\t%s\t%s\t%s\t%s\n",
 			sess.ID,
 			sess.UpdatedAt.Local().Format(time.RFC3339),
 			title,
+			provider,
 			model,
 		); err != nil {
 			return err

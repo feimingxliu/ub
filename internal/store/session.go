@@ -25,14 +25,15 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 	}
 	_, err := s.db.ExecContext(
 		ctx, `INSERT INTO sessions
-		(id, workspace, title, created_at, updated_at, summary, model)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		(id, workspace, title, created_at, updated_at, summary, provider, model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.ID,
 		sess.Workspace,
 		sess.Title,
 		timeToMillis(sess.CreatedAt),
 		timeToMillis(sess.UpdatedAt),
 		sess.Summary,
+		sess.Provider,
 		sess.Model,
 	)
 	if err != nil {
@@ -43,7 +44,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 
 // GetSession returns one session by id.
 func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, model
+	row := s.db.QueryRowContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, provider, model
 		FROM sessions WHERE id = ?`, id)
 	sess, err := scanSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -63,7 +64,7 @@ func (s *Store) ListSessions(ctx context.Context, workspace string, limit int) (
 	if limit > maxListLimit {
 		limit = maxListLimit
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, model
+	rows, err := s.db.QueryContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, provider, model
 		FROM sessions
 		WHERE workspace = ?
 		ORDER BY updated_at DESC
@@ -89,7 +90,7 @@ func (s *Store) ListSessions(ctx context.Context, workspace string, limit int) (
 
 // ListAllSessions lists all sessions grouped by workspace order.
 func (s *Store) ListAllSessions(ctx context.Context) ([]Session, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, model
+	rows, err := s.db.QueryContext(ctx, `SELECT id, workspace, title, created_at, updated_at, summary, provider, model
 		FROM sessions
 		ORDER BY workspace ASC, updated_at DESC, id ASC`)
 	if err != nil {
@@ -121,13 +122,14 @@ func (s *Store) UpdateSession(ctx context.Context, sess Session) error {
 	}
 	res, err := s.db.ExecContext(
 		ctx, `UPDATE sessions
-		SET workspace = ?, title = ?, created_at = ?, updated_at = ?, summary = ?, model = ?
+		SET workspace = ?, title = ?, created_at = ?, updated_at = ?, summary = ?, provider = ?, model = ?
 		WHERE id = ?`,
 		sess.Workspace,
 		sess.Title,
 		timeToMillis(sess.CreatedAt),
 		timeToMillis(sess.UpdatedAt),
 		sess.Summary,
+		sess.Provider,
 		sess.Model,
 		sess.ID,
 	)
@@ -255,6 +257,7 @@ func scanSession(row sessionScanner) (*Session, error) {
 		&createdAt,
 		&updatedAt,
 		&sess.Summary,
+		&sess.Provider,
 		&sess.Model,
 	); err != nil {
 		return nil, err

@@ -125,11 +125,15 @@ func (p *sessionPicker) view(width int, styles tuitheme.Styles) string {
 		if model == "" {
 			model = "-"
 		}
+		provider := sess.Provider
+		if provider == "" {
+			provider = "-"
+		}
 		updated := "-"
 		if !sess.UpdatedAt.IsZero() {
 			updated = sess.UpdatedAt.Local().Format("2006-01-02 15:04")
 		}
-		line := truncateText(fmt.Sprintf("%s%s %s  %s  %s  %s", marker, current, sess.ID, updated, model, title), width)
+		line := truncateText(fmt.Sprintf("%s%s %s  %s  %s/%s  %s", marker, current, sess.ID, updated, provider, model, title), width)
 		if i == p.index {
 			b.WriteString(styles.Render(styles.Picker.Selected, line))
 			continue
@@ -143,6 +147,7 @@ func sessionMatchesQuery(sess SessionInfo, query string) bool {
 	haystacks := []string{
 		sess.ID,
 		sess.Title,
+		sess.Provider,
 		sess.Model,
 	}
 	if !sess.UpdatedAt.IsZero() {
