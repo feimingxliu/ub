@@ -691,6 +691,43 @@ func TestActivityEventsSplitThinkingAndTools(t *testing.T) {
 	}
 }
 
+func TestToolGroupMixedFailureDoesNotFailWholeGroup(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 7
+	model.events = make(chan Event)
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_read", ToolName: "read", Status: "done", Summary: "path=main.go"},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_bash", ToolName: "bash", Status: "failed", Summary: "cmd=go test ./...", IsError: true},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 7, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("activity event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	if len(model.messages.items) != 1 {
+		t.Fatalf("messages = %#v, want one tool group", model.MessageTexts())
+	}
+	group := model.messages.items[0]
+	if group.status != activityStatusPartialFailed {
+		t.Fatalf("group status = %q, want %q", group.status, activityStatusPartialFailed)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "1 failed") || !strings.Contains(got[0], "1 done") {
+		t.Fatalf("messages = %#v, want mixed failure counts", got)
+	}
+	group.collapsed = false
+	model.messages.items[0] = group
+	view := viewString(model)
+	for _, want := range []string{"! tools: 1 failed, 1 done", "✓ Read path=main.go", "× Ran cmd=go test ./... failed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestToolActivityUpdatesInPlace(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true

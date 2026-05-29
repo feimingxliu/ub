@@ -26,6 +26,8 @@ const (
 	maxToolPartialPreviewRunes = 12000
 )
 
+const activityStatusPartialFailed = "partial_failed"
+
 const (
 	thinkingGroupName = "thinking"
 	toolGroupName     = "tool"
@@ -1485,19 +1487,33 @@ func activityGroupStatus(entries []message) string {
 	if len(entries) == 0 {
 		return "running"
 	}
+	failed := 0
+	done := 0
 	hasQueued := false
+	hasRunning := false
 	for _, entry := range entries {
 		switch entry.status {
 		case "failed", "error", "deny", "denied":
-			return "failed"
+			failed++
 		case "running", "started":
-			return "running"
+			hasRunning = true
 		case "queued":
 			hasQueued = true
+		default:
+			done++
 		}
+	}
+	if hasRunning {
+		return "running"
 	}
 	if hasQueued {
 		return "queued"
+	}
+	if failed > 0 {
+		if done > 0 {
+			return activityStatusPartialFailed
+		}
+		return "failed"
 	}
 	return "done"
 }
@@ -1668,6 +1684,8 @@ func activityStatusIcon(kind messageKind, status string) string {
 		switch status {
 		case "failed", "error":
 			return "×"
+		case activityStatusPartialFailed:
+			return "!"
 		case "queued", "running", "started":
 			return "…"
 		default:
