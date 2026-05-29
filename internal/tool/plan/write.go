@@ -81,7 +81,7 @@ func newWriteTool(workspace string) *writeTool {
 
 func (t *writeTool) Name() string { return "plan_write" }
 func (t *writeTool) Description() string {
-	return "Write a new plan markdown to <workspace>/.ub/plans/<id>.md with a title, ordered steps, and optional notes. In plan mode, use this before implementation work. Returns the plan_id used by plan_update_step."
+	return "Write a new plan markdown to <workspace>/.ub/plans/<id>.md with a title, ordered steps, and optional notes. Available only in plan mode. Use before multi-step implementation work, risky changes, or tasks needing review; include inspection, edit, validation, and rollback/checkpoint steps. Returns the plan_id used by plan_update_step."
 }
 func (t *writeTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *writeTool) Risk() tool.Risk            { return tool.RiskSafe }

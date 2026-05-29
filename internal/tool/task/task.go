@@ -40,7 +40,7 @@ func newTaskTool() *taskTool {
 
 func (t *taskTool) Name() string { return "task" }
 func (t *taskTool) Description() string {
-	return "Dispatch a sub-agent to run one focused sub-prompt and return its final answer. The sub-agent reuses your provider and tools but has independent conversation context. Use for exploration/research subtasks; cannot be called recursively from inside another task."
+	return "Dispatch a sub-agent to run one focused, self-contained research or exploration prompt and return its final answer. Use when a parallel investigation can stay independent from the main context, such as surveying a module or summarizing call sites. Do not use for small local reads the main agent can do directly. Include the exact scope, desired output, and constraints; recursive task calls are rejected."
 }
 func (t *taskTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *taskTool) Risk() tool.Risk            { return tool.RiskSafe }

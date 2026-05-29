@@ -33,7 +33,7 @@ func newUpdateTool(workspace string) *updateTool {
 
 func (t *updateTool) Name() string { return "plan_update_step" }
 func (t *updateTool) Description() string {
-	return "Update one step in a plan: mark it in_progress / done / skipped / failed / pending, append a log entry, and auto-transition the plan to complete when every step has a terminal status."
+	return "Update one step in an existing plan: mark it in_progress / done / skipped / failed / pending, append a log entry, and auto-transition the plan to complete when every step has a terminal status. Mark a step done only after the described work and verification evidence are actually complete; use failed with a note when validation or implementation fails."
 }
 func (t *updateTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *updateTool) Risk() tool.Risk            { return tool.RiskSafe }

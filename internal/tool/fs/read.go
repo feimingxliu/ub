@@ -55,7 +55,7 @@ func newReadToolWithOptions(root, stateRoot string, maxLines int) *readTool {
 
 func (t *readTool) Name() string { return "read" }
 func (t *readTool) Description() string {
-	return "Read one regular UTF-8 text file from the workspace and return its content with line numbers. Never use for directories; use ls or glob for directories."
+	return "Read one regular UTF-8 text file from the workspace and return its content with line numbers. Use after ls/glob/grep identifies a file you need to inspect before editing. Never use read for directories or unknown path types; use ls or glob first."
 }
 func (t *readTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *readTool) Risk() tool.Risk            { return tool.RiskSafe }

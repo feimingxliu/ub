@@ -39,7 +39,7 @@ func newBashTool(root string) *bashTool {
 
 func (t *bashTool) Name() string { return "bash" }
 func (t *bashTool) Description() string {
-	return "Run a shell command via /bin/sh -c. Returns exit code, duration and captured stdout/stderr (each capped at 32KB)."
+	return "Run a shell command via /bin/sh -c from the workspace (or explicit cwd). Use for builds, tests, git/status inspection, and repo commands that need a real process. Prefer cwd over `cd ... && ...`; set a timeout for long commands. Treat non-zero exit_code, timeout, aborted, stdout, and stderr as evidence, and never report a check as passed unless this tool actually ran and exit_code=0."
 }
 func (t *bashTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *bashTool) Risk() tool.Risk            { return tool.RiskExec }

@@ -33,7 +33,7 @@ func newGrepTool(root string) *grepTool {
 
 func (t *grepTool) Name() string { return "grep" }
 func (t *grepTool) Description() string {
-	return "Search for a regular expression across workspace files. Returns 'path:line:match' lines."
+	return "Search for a regular expression across workspace files. Use to locate symbols, config keys, error text, or likely edit sites before reading files. Narrow with path/include when possible, then read the relevant files before editing. Returns 'path:line:match' lines."
 }
 func (t *grepTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *grepTool) Risk() tool.Risk            { return tool.RiskSafe }
