@@ -157,14 +157,9 @@ func toToolParams(defs []provider.ToolDefinition) ([]sdk.ChatCompletionToolUnion
 		if strings.TrimSpace(def.Name) == "" {
 			return nil, errors.New("openai tool name is required")
 		}
-		var schema map[string]any
-		if len(def.Schema) > 0 {
-			if err := json.Unmarshal(def.Schema, &schema); err != nil {
-				return nil, fmt.Errorf("openai tool %q schema: %w", def.Name, err)
-			}
-		}
-		if schema == nil {
-			schema = map[string]any{"type": "object"}
+		schema, err := openAIToolSchema(def.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("openai tool %q schema: %w", def.Name, err)
 		}
 		tools = append(tools, sdk.ChatCompletionFunctionTool(
 			shared.FunctionDefinitionParam{
@@ -175,6 +170,88 @@ func toToolParams(defs []provider.ToolDefinition) ([]sdk.ChatCompletionToolUnion
 		))
 	}
 	return tools, nil
+}
+
+func openAIToolSchema(raw json.RawMessage) (map[string]any, error) {
+	if len(raw) == 0 {
+		return map[string]any{"type": "object"}, nil
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return nil, err
+	}
+	if schema == nil {
+		return map[string]any{"type": "object"}, nil
+	}
+	return normalizeOpenAIToolSchema(schema)
+}
+
+func normalizeOpenAIToolSchema(schema map[string]any) (map[string]any, error) {
+	if schemaType(schema) == "object" {
+		return schema, nil
+	}
+	ref, _ := schema["$ref"].(string)
+	if ref == "" {
+		if _, hasType := schema["type"]; !hasType {
+			schema["type"] = "object"
+		}
+		return schema, nil
+	}
+	resolved, err := resolveLocalSchemaRef(schema, ref)
+	if err != nil {
+		return nil, err
+	}
+	out := cloneSchemaMap(resolved)
+	for key, value := range schema {
+		if key == "$ref" || key == "$defs" || key == "definitions" {
+			continue
+		}
+		if _, exists := out[key]; !exists {
+			out[key] = value
+		}
+	}
+	if schemaType(out) == "" {
+		out["type"] = "object"
+	}
+	return out, nil
+}
+
+func resolveLocalSchemaRef(root map[string]any, ref string) (map[string]any, error) {
+	const defsPrefix = "#/$defs/"
+	const definitionsPrefix = "#/definitions/"
+	var containerName, name string
+	switch {
+	case strings.HasPrefix(ref, defsPrefix):
+		containerName = "$defs"
+		name = strings.TrimPrefix(ref, defsPrefix)
+	case strings.HasPrefix(ref, definitionsPrefix):
+		containerName = "definitions"
+		name = strings.TrimPrefix(ref, definitionsPrefix)
+	default:
+		return nil, fmt.Errorf("unsupported local ref %q", ref)
+	}
+	container, ok := root[containerName].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("missing %s for ref %q", containerName, ref)
+	}
+	resolved, ok := container[name].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("missing schema definition %q", name)
+	}
+	return resolved, nil
+}
+
+func schemaType(schema map[string]any) string {
+	typ, _ := schema["type"].(string)
+	return typ
+}
+
+func cloneSchemaMap(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func toMessageParams(msg message.Message) ([]sdk.ChatCompletionMessageParamUnion, error) {

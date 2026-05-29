@@ -266,6 +266,65 @@ func TestChatSendsToolsAndToolMessages(t *testing.T) {
 	}
 }
 
+func TestChatFlattensRefToolSchema(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeOpenAISSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}`)
+		writeOpenAISSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	p, err := NewFromConfig("openai", config.ProviderConfig{
+		Type:    "openai",
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	stream, err := p.Chat(context.Background(), provider.Request{
+		Model: "gpt-test",
+		Tools: []provider.ToolDefinition{{
+			Name: "bash",
+			Schema: json.RawMessage(`{
+				"$ref": "#/$defs/bashArgs",
+				"$defs": {
+					"bashArgs": {
+						"type": "object",
+						"properties": {
+							"command": {"type": "string"}
+						},
+						"required": ["command"]
+					}
+				}
+			}`),
+		}},
+		Messages: []message.Message{message.Text(message.RoleUser, "hello")},
+	})
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	defer stream.Close()
+
+	tools := requestBody["tools"].([]any)
+	fn := tools[0].(map[string]any)["function"].(map[string]any)
+	parameters := fn["parameters"].(map[string]any)
+	if parameters["type"] != "object" {
+		t.Fatalf("parameters type = %#v, want object; parameters=%#v", parameters["type"], parameters)
+	}
+	if _, ok := parameters["$ref"]; ok {
+		t.Fatalf("parameters should not keep top-level $ref: %#v", parameters)
+	}
+	props := parameters["properties"].(map[string]any)
+	if _, ok := props["command"].(map[string]any); !ok {
+		t.Fatalf("parameters missing command property: %#v", parameters)
+	}
+}
+
 func TestChatStreamsToolCall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
