@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.3] - 2026-05-29
+
+
+### Fixed
+
+- Flatten referenced tool schemas ([3138163](https://github.com/feimingxliu/ub/commit/313816373960834670d5bdb39bf227fcd088a7f4))
+- Keep default model scoped to its provider ([792e55d](https://github.com/feimingxliu/ub/commit/792e55d930a0d3c339bb3cea201cd18fe2349537))
+- Persist provider with sessions ([c55af2f](https://github.com/feimingxliu/ub/commit/c55af2fd19d0d3a503d7840c3d43fba810dd2c25))
+- Sync restored session mode ([5cfdfde](https://github.com/feimingxliu/ub/commit/5cfdfde42a8e4d8a6433efe585ca62ac67493ca5))
+
 ## [0.3.2] - 2026-05-29
 
 
@@ -20,6 +30,11 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Avoid marking mixed tool groups failed ([1d48d74](https://github.com/feimingxliu/ub/commit/1d48d74e43006486e5048d39dbbd518ac2d7ac0d))
+
+
+### Maintenance
+
+- V0.3.2 ([2efedef](https://github.com/feimingxliu/ub/commit/2efedef9ec1500a9652add094422838e5b3a07cd))
 
 
 ### Tests
