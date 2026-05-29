@@ -294,6 +294,87 @@ func TestAgentInjectsCodingHarnessInstructionsWithoutPersistingThem(t *testing.T
 	}
 }
 
+func TestPromptHarnessFakeProviderBehaviorRegressions(t *testing.T) {
+	t.Run("directory prompt uses ls instead of read", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		reg := tool.New()
+		if err := fs.Register(reg, root); err != nil {
+			t.Fatalf("register fs: %v", err)
+		}
+		p := &scriptProvider{scripts: []fake.Script{
+			{fake.ToolCall("ls", map[string]any{"path": "."}), fake.Done()},
+			{fake.TextDelta("used ls for directory"), fake.Done()},
+		}}
+		a := newTestAgent(t, p, reg, nil, execution.ModeWork)
+		res, err := a.Run(context.Background(), Request{Prompt: "inspect the current directory", Turn: 1})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if res.Text != "used ls for directory" {
+			t.Fatalf("text = %q", res.Text)
+		}
+		if !containsToolDescription(p.requests[0].Tools, "read", "Never use read for directories") {
+			t.Fatalf("request missing directory tool-choice guidance: %#v", p.requests[0].Tools)
+		}
+	})
+
+	t.Run("complex edit reads before writing", func(t *testing.T) {
+		root := t.TempDir()
+		path := filepath.Join(root, "main.go")
+		if err := os.WriteFile(path, []byte("package main\nfunc main() { println(\"old\") }\n"), 0o644); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+		reg := tool.New()
+		if err := fs.Register(reg, root); err != nil {
+			t.Fatalf("register fs: %v", err)
+		}
+		p := &scriptProvider{scripts: []fake.Script{
+			{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()},
+			{fake.ToolCall("edit", map[string]any{"path": "main.go", "old": "old", "new": "new"}), fake.Done()},
+			{fake.TextDelta("read first, then edited"), fake.Done()},
+		}}
+		a := newTestAgent(t, p, reg, nil, execution.ModeWork)
+		if _, err := a.Run(context.Background(), Request{Prompt: "change old to new and verify the file", Turn: 1}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read file: %v", err)
+		}
+		if !strings.Contains(string(raw), "new") {
+			t.Fatalf("file was not edited after read-before-write flow: %q", raw)
+		}
+		if !containsText(p.requests[0].Messages, "Read the relevant files before proposing or applying edits") {
+			t.Fatalf("request missing read-before-edit guidance: %#v", p.requests[0].Messages)
+		}
+	})
+
+	t.Run("failed validation is not reported as passing", func(t *testing.T) {
+		reg := tool.New()
+		if err := reg.Register(&failingCheckTool{}); err != nil {
+			t.Fatalf("register failing check: %v", err)
+		}
+		p := &scriptProvider{scripts: []fake.Script{
+			{fake.ToolCall("test_check", map[string]any{}), fake.Done()},
+			{fake.TextDelta("tests failed: exit_code=1"), fake.Done()},
+		}}
+		a := newTestAgent(t, p, reg, nil, execution.ModeWork)
+		res, err := a.Run(context.Background(), Request{Prompt: "run validation and summarize the result", Turn: 1})
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if strings.Contains(strings.ToLower(res.Text), "passed") {
+			t.Fatalf("failed validation was reported as passing: %q", res.Text)
+		}
+		if !containsText(p.requests[0].Messages, "Do not claim tests, builds, or checks passed unless they actually ran and passed") {
+			t.Fatalf("request missing honest-validation guidance: %#v", p.requests[0].Messages)
+		}
+	})
+}
+
 func TestAgentInjectsPlanModeInstructionsWithoutPersistingThem(t *testing.T) {
 	reg := tool.New()
 	p := &scriptProvider{scripts: []fake.Script{{fake.TextDelta("ok"), fake.Done()}}}
@@ -1693,6 +1774,15 @@ func toolNamesContain(tools []provider.ToolDefinition, name string) bool {
 	return false
 }
 
+func containsToolDescription(tools []provider.ToolDefinition, name, text string) bool {
+	for _, tl := range tools {
+		if tl.Name == name && strings.Contains(tl.Description, text) {
+			return true
+		}
+	}
+	return false
+}
+
 func tailString(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -1758,6 +1848,29 @@ func (t *namedRiskTool) Schema() *jsonschema.Schema {
 func (t *namedRiskTool) Risk() tool.Risk { return t.risk }
 func (t *namedRiskTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
 	return tool.Result{Content: "ok"}, nil
+}
+
+type failingCheckTool struct {
+	schema *jsonschema.Schema
+}
+
+func (t *failingCheckTool) Name() string { return "test_check" }
+func (t *failingCheckTool) Description() string {
+	return "Run a deterministic failing validation check."
+}
+
+func (t *failingCheckTool) Schema() *jsonschema.Schema {
+	if t.schema == nil {
+		t.schema = jsonschema.Reflect(&struct{}{})
+	}
+	return t.schema
+}
+func (t *failingCheckTool) Risk() tool.Risk { return tool.RiskSafe }
+func (t *failingCheckTool) Execute(context.Context, json.RawMessage) (tool.Result, error) {
+	return tool.Result{
+		Content: "<shell_metadata>\nexit_code=1\n</shell_metadata>\n--- stdout ---\n\n--- stderr ---\nfailed\n",
+		IsError: true,
+	}, nil
 }
 
 type modeFlipTool struct {
