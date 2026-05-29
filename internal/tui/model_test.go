@@ -1642,6 +1642,78 @@ func TestSlashCompactUnavailable(t *testing.T) {
 	}
 }
 
+func TestSlashInitRunsAgentPrompt(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolName: "read", Status: "done", Summary: "AGENTS.md"},
+		{Type: EventDeltaText, Text: "Updated AGENTS.md"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/init")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("slash init returned nil command")
+	}
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	if len(runner.prompts) != 1 {
+		t.Fatalf("runner prompts = %#v, want one prompt", runner.prompts)
+	}
+	for _, want := range []string{"Create or update AGENTS.md", "Inspect the repository before editing", "If AGENTS.md already exists, improve it in place"} {
+		if !strings.Contains(runner.prompts[0], want) {
+			t.Fatalf("init prompt missing %q:\n%s", want, runner.prompts[0])
+		}
+	}
+	for _, unwanted := range []string{"Create or update CLAUDE.md", "Create or update .ub/instructions.md"} {
+		if strings.Contains(runner.prompts[0], unwanted) {
+			t.Fatalf("init prompt should not target %q:\n%s", unwanted, runner.prompts[0])
+		}
+	}
+	if got := model.MessageTexts(); len(got) < 2 || !strings.Contains(got[0], "running /init") || !strings.Contains(got[len(got)-1], "Updated AGENTS.md") {
+		t.Fatalf("messages = %#v, want init notice and assistant summary", got)
+	}
+	view := viewString(model)
+	if !strings.Contains(view, "Read AGENTS.md") {
+		t.Fatalf("view missing init tool activity:\n%s", view)
+	}
+}
+
+func TestSlashInitIncludesGuidance(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{{Type: EventDone}}}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/init focus on pnpm")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("slash init returned nil command")
+	}
+	model = assertModel(t, updated)
+	model = drainBatch(t, model, cmd)
+
+	if len(runner.prompts) != 1 || !strings.Contains(runner.prompts[0], "Additional user guidance") || !strings.Contains(runner.prompts[0], "focus on pnpm") {
+		t.Fatalf("runner prompts = %#v", runner.prompts)
+	}
+}
+
+func TestSlashInitUnavailable(t *testing.T) {
+	model := NewModel(Options{})
+	model = sendText(t, model, "/init")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash init returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "init is unavailable") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
 func TestSlashRetryRunsLastUserTurn(t *testing.T) {
 	runner := &scriptedRunner{events: []Event{{Type: EventDone}}}
 	model := NewModel(Options{Runner: runner})

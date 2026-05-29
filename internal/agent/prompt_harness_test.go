@@ -72,21 +72,13 @@ func TestWorkspaceInstructionsDiscovery(t *testing.T) {
 		t.Fatal("workspace instructions not discovered")
 	}
 	text := msg.Text()
-	for _, want := range []string{
-		"Source: AGENTS.md\nagent rules",
-		"Source: CLAUDE.md\nclaude rules",
-		"Source: .ub/instructions.md\nub rules",
-	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("instructions missing %q:\n%s", want, text)
+	if !strings.Contains(text, "Source: AGENTS.md\nagent rules") {
+		t.Fatalf("instructions missing AGENTS.md:\n%s", text)
+	}
+	for _, unwanted := range []string{"parent should not load", "claude rules", "ub rules"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("loaded unwanted instructions %q:\n%s", unwanted, text)
 		}
-	}
-	if strings.Contains(text, "parent should not load") {
-		t.Fatalf("loaded parent instructions:\n%s", text)
-	}
-	if strings.Index(text, "Source: AGENTS.md") > strings.Index(text, "Source: CLAUDE.md") ||
-		strings.Index(text, "Source: CLAUDE.md") > strings.Index(text, "Source: .ub/instructions.md") {
-		t.Fatalf("instruction source order changed:\n%s", text)
 	}
 }
 

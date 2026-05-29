@@ -28,6 +28,7 @@ var specs = []Spec{
 	{Name: "approval-model", Usage: "/approval-model [model]", Description: "show or switch the auto approval model"},
 	{Name: "mode", Usage: "/mode <work|plan|auto>", Description: "switch execution mode"},
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
+	{Name: "init", Usage: "/init [guidance]", Description: "run an agent pass to create or update AGENTS.md"},
 	{Name: "doctor", Usage: "/doctor", Description: "run health checks in the TUI"},
 	{Name: "retry", Usage: "/retry", Description: "rerun the last user turn"},
 	{Name: "copy", Usage: "/copy <N>", Description: "copy the Nth message to the clipboard"},

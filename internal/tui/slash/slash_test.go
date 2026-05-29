@@ -32,6 +32,16 @@ func TestParseCompact(t *testing.T) {
 	}
 }
 
+func TestParseInit(t *testing.T) {
+	cmd, err := Parse("/init")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "init" || len(cmd.Args) != 0 {
+		t.Fatalf("command = %#v, want init", cmd)
+	}
+}
+
 func TestParseNew(t *testing.T) {
 	cmd, err := Parse("/new")
 	if err != nil {
@@ -68,6 +78,16 @@ func TestMatchReturnsUsage(t *testing.T) {
 		t.Fatalf("matches = %#v, want model and mode", matches)
 	}
 	if matches[0].Usage != "/model [model]" || matches[1].Usage != "/mode <work|plan|auto>" {
+		t.Fatalf("matches = %#v", matches)
+	}
+}
+
+func TestMatchInitReturnsAgentsDescription(t *testing.T) {
+	matches := Match("/i")
+	if len(matches) != 1 {
+		t.Fatalf("matches = %#v, want init", matches)
+	}
+	if matches[0].Usage != "/init [guidance]" || matches[0].Description != "run an agent pass to create or update AGENTS.md" {
 		t.Fatalf("matches = %#v", matches)
 	}
 }

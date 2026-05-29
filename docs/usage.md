@@ -94,6 +94,7 @@
 | `/clear` | — | 清空当前对话视图（不删 session） |
 | `/new` | — | 在当前工作区新建一个空 session（旧的保留） |
 | `/sessions` | — | 列出当前工作区的历史 session，方向键选择 + Enter 切换 |
+| `/init` | `[guidance]` | 启动一轮 agent 调研当前工作区，并创建或改进 `AGENTS.md` |
 | `/provider` | `[provider] [model]` | 无参数列可用 provider；带参数切换 provider（可同时换 model） |
 | `/model` | `[model]` | 无参数列当前 provider 下可用 model；带参数切换 |
 | `/effort` | `[level]` | 切换 reasoning effort（`none` / `minimal` / `low` / `medium` / `high` / `xhigh`），仅对支持 reasoning 的模型生效 |
@@ -199,7 +200,7 @@ context:
 每次 agent 请求都会额外注入一组不写入 rollout history 的 system context:
 
 - coding-agent 行为原则:先读文件再改、优先专用工具、失败后先诊断、只汇报真实验证状态
-- workspace instructions:工作区根目录的 `AGENTS.md` / `CLAUDE.md` / `.ub/instructions.md`
+- workspace instructions:工作区根目录的 `AGENTS.md`
 - git snapshot:启动时的 branch / default branch / `git status --short` / 最近提交,并明确标注为非实时快照
 - workspace memory:`.ub/memory.md` 与全局 memory,见 §12
 

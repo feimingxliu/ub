@@ -16,11 +16,7 @@ import (
 
 const gitSnapshotTimeout = 500 * time.Millisecond
 
-var workspaceInstructionFiles = []string{
-	"AGENTS.md",
-	"CLAUDE.md",
-	filepath.Join(".ub", "instructions.md"),
-}
+var workspaceInstructionFiles = []string{"AGENTS.md"}
 
 type gitCommandRunner func(ctx context.Context, dir string, args ...string) (string, error)
 

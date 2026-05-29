@@ -26,6 +26,19 @@ import (
 
 const minRecommendedWidth = 80
 
+const initCommandPrompt = `You are running ub /init.
+
+Create or update AGENTS.md in the current workspace root so future AI coding agent sessions have concise, accurate repository guidance.
+
+Process:
+1. Inspect the repository before editing. Read AGENTS.md if it exists, plus high-signal files such as README, CONTRIBUTING, package manifests, Makefile/justfile, docs, and a shallow source/test layout.
+2. Capture only guidance future coding agents need: project overview, important directories, build/test/lint commands, coding style, validation expectations, documentation/release notes, and repository-specific safety or workflow gotchas.
+3. If AGENTS.md already exists, improve it in place. Preserve accurate human-authored guidance, remove stale or generic generated content when appropriate, and keep the result coherent rather than appending a managed block.
+4. If AGENTS.md does not exist, create it.
+5. Use AGENTS.md as the only target. Do not create or update CLAUDE.md, .ub/instructions.md, or other instruction files.
+6. Keep the file concise, actionable, and safe to commit. Do not include secrets, private local configuration, or unnecessary absolute paths.
+7. Finish by summarizing what you inspected, what changed in AGENTS.md, and any assumptions the user should review.`
+
 // Options configures the initial TUI shell.
 type Options struct {
 	Input          io.Reader
@@ -786,6 +799,22 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		m.files = nil
 	}
+	return m.startRunnerPrompt(text)
+}
+
+func (m Model) startInternalPrompt(prompt, notice string) (tea.Model, tea.Cmd) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return m, nil
+	}
+	m.scrollToBottom()
+	if strings.TrimSpace(notice) != "" {
+		m.messages.append(systemRole, strings.TrimSpace(notice))
+	}
+	return m.startRunnerPrompt(prompt)
+}
+
+func (m Model) startRunnerPrompt(prompt string) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
 	}
@@ -800,7 +829,7 @@ func (m Model) startPrompt(text string, clearInput bool) (tea.Model, tea.Cmd) {
 	m.runID++
 	runID := m.runID
 	m.messages.startActivityGroup(thinkingActivityGroupKey(runID), "Thinking...")
-	return m, tea.Batch(runPrompt(ctx, m.runner, text, events), waitForEventWithTimeout(events, runID, m.timeout), spinnerTickCmd())
+	return m, tea.Batch(runPrompt(ctx, m.runner, prompt, events), waitForEventWithTimeout(events, runID, m.timeout), spinnerTickCmd())
 }
 
 func (m Model) startShell(input string, clearInput bool) (tea.Model, tea.Cmd) {
@@ -1018,6 +1047,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "compact":
 		return m.startCompact()
+	case "init":
+		return m.startInitCommand(cmd.Args)
 	case "doctor":
 		return m.runDoctor()
 	case "retry":
@@ -1127,6 +1158,18 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		m.messages.append(systemRole, "unknown slash command "+cmd.Name)
 		return m, nil
 	}
+}
+
+func (m Model) startInitCommand(args []string) (tea.Model, tea.Cmd) {
+	if m.runner == nil {
+		m.messages.append(systemRole, "init is unavailable in this runner")
+		return m, nil
+	}
+	prompt := initCommandPrompt
+	if extra := strings.TrimSpace(strings.Join(args, " ")); extra != "" {
+		prompt += "\n\nAdditional user guidance for this initialization: " + extra
+	}
+	return m.startInternalPrompt(prompt, "running /init: exploring the workspace and creating or updating AGENTS.md")
 }
 
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {

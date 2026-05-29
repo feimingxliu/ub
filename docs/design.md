@@ -376,7 +376,7 @@ execution_mode: work               # work / plan / auto
 
 prompt:
   workspace_instructions:
-    enabled: true                   # 注入 AGENTS.md / CLAUDE.md / .ub/instructions.md
+    enabled: true                   # 注入 AGENTS.md
     max_chars: 12000
   git_snapshot:
     enabled: true                   # 注入启动时 git 快照；不是实时状态
