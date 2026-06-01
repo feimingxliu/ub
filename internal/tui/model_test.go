@@ -625,40 +625,41 @@ func TestModelRendersActivityEvents(t *testing.T) {
 
 	view := viewString(model)
 	for _, want := range []string{
-		"thinking: checking repository context",
-		"tools: 1 done",
-		"permissions: 1",
+		"checking repository context",
+		"Read path=main.go",
+		"permission",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+	// Verify the full permission text is available even if the view truncates it.
+	texts := model.MessageTexts()
+	permFound := false
+	for _, txt := range texts {
+		if strings.Contains(txt, "permission approval_agent allow bash") {
+			permFound = true
+		}
+	}
+	if !permFound {
+		t.Fatalf("MessageTexts missing full permission text: %#v", texts)
 	}
 	for i := range model.messages.items {
 		if model.messages.items[i].collapsible() {
 			model.messages.items[i].collapsed = false
 		}
 	}
+	model.messages.invalidateRender()
 	view = viewString(model)
 	for _, want := range []string{
 		"checking repository context",
 		"Read path=main.go",
 		"permission approval_agent allow bash: read-only command",
+		"package main",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expanded view missing %q:\n%s", want, view)
 		}
-	}
-	if strings.Contains(view, "package main") {
-		t.Fatalf("tool detail should stay collapsed when only the group is expanded:\n%s", view)
-	}
-	for i := range model.messages.items {
-		for j := range model.messages.items[i].entries {
-			model.messages.items[i].entries[j].collapsed = false
-		}
-	}
-	view = viewString(model)
-	if !strings.Contains(view, "package main") {
-		t.Fatalf("entry-expanded view missing tool detail:\n%s", view)
 	}
 	if strings.Contains(view, "assistant:") || strings.Contains(view, "user:") {
 		t.Fatalf("view should not render explicit role labels:\n%s", view)
@@ -684,10 +685,44 @@ func TestActivityEventsSplitThinkingAndTools(t *testing.T) {
 
 	got := model.MessageTexts()
 	if len(got) != 2 {
-		t.Fatalf("messages = %#v, want split thinking/tool groups", got)
+		t.Fatalf("messages = %#v, want 2 individual activity items (thinking + tool)", got)
 	}
-	if !strings.HasPrefix(got[0], "thinking: checking repository") || !strings.HasPrefix(got[1], "tools: 1 done") {
-		t.Fatalf("messages = %#v, want thinking group before tool group", got)
+	if !strings.HasPrefix(got[0], "thinking: checking repository") || got[1] != "Read path=main.go" {
+		t.Fatalf("messages = %#v, want thinking and tool items", got)
+	}
+}
+
+func TestLoadScopesActivityUpdatesByTurn(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{
+		{Role: userRole, Turn: 1, Text: "first prompt"},
+		{Turn: 1, ActivityKind: "thinking", Summary: "first thought", Content: "first thought"},
+		{Turn: 1, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "queued", Summary: "path=one.go"},
+		{Turn: 1, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "done", Summary: "path=one.go", Content: "one"},
+		{Role: assistantRole, Turn: 1, Text: "first answer"},
+		{Role: userRole, Turn: 2, Text: "second prompt"},
+		{Turn: 2, ActivityKind: "thinking", Summary: "second thought", Content: "second thought"},
+		{Turn: 2, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "queued", Summary: "path=two.go"},
+		{Turn: 2, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "read", Status: "done", Summary: "path=two.go", Content: "two"},
+		{Role: assistantRole, Turn: 2, Text: "second answer"},
+	}})
+
+	got := model.MessageTexts()
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{
+		"thinking: first thought",
+		"Read path=one.go",
+		"thinking: second thought",
+		"Read path=two.go",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("messages = %#v, missing %q", got, want)
+		}
+	}
+	if strings.Count(joined, "thinking:") != 2 {
+		t.Fatalf("messages = %#v, want two separate thinking items", got)
+	}
+	if strings.Count(joined, "Read path=") != 2 {
+		t.Fatalf("messages = %#v, want duplicate tool IDs separated by turn", got)
 	}
 }
 
@@ -708,20 +743,27 @@ func TestToolGroupMixedFailureDoesNotFailWholeGroup(t *testing.T) {
 		model = assertModel(t, updated)
 	}
 
-	if len(model.messages.items) != 1 {
-		t.Fatalf("messages = %#v, want one tool group", model.MessageTexts())
+	if len(model.messages.items) != 2 {
+		t.Fatalf("messages = %#v, want two separate tool items", model.MessageTexts())
 	}
-	group := model.messages.items[0]
-	if group.status != activityStatusPartialFailed {
-		t.Fatalf("group status = %q, want %q", group.status, activityStatusPartialFailed)
+	readItem := model.messages.items[0]
+	bashItem := model.messages.items[1]
+	if readItem.status != "done" {
+		t.Fatalf("read tool status = %q, want done", readItem.status)
 	}
-	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "1 failed") || !strings.Contains(got[0], "1 done") {
-		t.Fatalf("messages = %#v, want mixed failure counts", got)
+	if bashItem.status != "failed" {
+		t.Fatalf("bash tool status = %q, want failed", bashItem.status)
 	}
-	group.collapsed = false
-	model.messages.items[0] = group
+	got := model.MessageTexts()
+	if len(got) != 2 || got[0] != "Read path=main.go" || got[1] != "Ran cmd=go test ./... failed" {
+		t.Fatalf("messages = %#v, want individual done and failed tool items", got)
+	}
+	readItem.collapsed = false
+	bashItem.collapsed = false
+	model.messages.items[0] = readItem
+	model.messages.items[1] = bashItem
 	view := viewString(model)
-	for _, want := range []string{"! tools: 1 failed, 1 done", "✓ Read path=main.go", "× Ran cmd=go test ./... failed"} {
+	for _, want := range []string{"✓ Read path=main.go", "× Ran cmd=go test ./... failed"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
@@ -751,8 +793,11 @@ func TestToolActivityUpdatesInPlace(t *testing.T) {
 	model = assertModel(t, updated)
 
 	got := model.MessageTexts()
-	if len(got) != 1 || got[0] != "tools: 1 done · last: Read path=main.go" {
+	if len(got) != 1 || got[0] != "Read path=main.go" {
 		t.Fatalf("messages = %#v, want single updated tool activity", got)
+	}
+	if model.messages.items[0].status != "done" {
+		t.Fatalf("tool status = %q, want done", model.messages.items[0].status)
 	}
 }
 
@@ -775,15 +820,12 @@ func TestToolPartialOutputUpdatesRunningToolDetail(t *testing.T) {
 	}
 
 	got := model.MessageTexts()
-	if len(got) != 1 || got[0] != "tools: 1 running · now: cmd=go test ./..." {
+	if len(got) != 1 || got[0] != "Writing command... cmd=go test ./..." {
 		t.Fatalf("messages = %#v, want one running tool activity", got)
 	}
-	if len(model.messages.items) != 1 || len(model.messages.items[0].entries) != 1 {
-		t.Fatalf("items = %#v, want one tool entry", model.messages.items)
-	}
-	entry := model.messages.items[0].entries[0]
-	if entry.detail != "one\ntwo\n" {
-		t.Fatalf("tool partial detail = %q, want accumulated chunks", entry.detail)
+	item := model.messages.items[0]
+	if item.detail != "one\ntwo\n" {
+		t.Fatalf("tool partial detail = %q, want accumulated chunks", item.detail)
 	}
 }
 
@@ -806,15 +848,15 @@ func TestToolPartialOutputSurvivesGenericFinalDetail(t *testing.T) {
 	}
 
 	got := model.MessageTexts()
-	if len(got) != 1 || got[0] != "tools: 1 done · last: Ran cmd=go test ./..." {
+	if len(got) != 1 || got[0] != "Ran cmd=go test ./..." {
 		t.Fatalf("messages = %#v, want one completed tool activity", got)
 	}
-	entry := model.messages.items[0].entries[0]
-	if entry.status != "done" {
-		t.Fatalf("tool status = %q, want done", entry.status)
+	item := model.messages.items[0]
+	if item.status != "done" {
+		t.Fatalf("tool status = %q, want done", item.status)
 	}
-	if entry.detail != "one\n" {
-		t.Fatalf("tool detail = %q, want preserved partial output", entry.detail)
+	if item.detail != "one\n" {
+		t.Fatalf("tool detail = %q, want preserved partial output", item.detail)
 	}
 }
 
@@ -865,21 +907,20 @@ func TestThinkingActivityPreservesParagraphBreaks(t *testing.T) {
 		model = assertModel(t, updated)
 	}
 
-	if len(model.messages.items) != 1 || len(model.messages.items[0].entries) != 1 {
-		t.Fatalf("messages = %#v, want one thinking entry inside group", model.messages.items)
+	if len(model.messages.items) != 1 {
+		t.Fatalf("messages = %#v, want one thinking item", model.messages.items)
 	}
-	detail := model.messages.items[0].entries[0].detail
+	detail := model.messages.items[0].detail
 	if !strings.Contains(detail, "first paragraph\n\nsecond paragraph") {
 		t.Fatalf("paragraph break lost in detail: %q", detail)
 	}
 	model.messages.items[0].collapsed = false
-	model.messages.items[0].entries[0].collapsed = false
 	view := viewString(model)
 	lines := strings.Split(view, "\n")
 	firstIdx, secondIdx := -1, -1
 	for i, line := range lines {
-		// Skip the title lines ("▾ … thinking: …" and "└   … thinking: …") so
-		// we measure the gap inside the rendered detail, not the header.
+		// Skip the title line ("▾ … thinking: …") so we measure the gap
+		// inside the rendered detail, not the header.
 		if strings.Contains(line, "thinking:") {
 			continue
 		}
@@ -914,16 +955,17 @@ func TestActivityGroupSummaryShowsLatestActiveTools(t *testing.T) {
 	}
 
 	got := model.MessageTexts()
-	if len(got) != 1 {
-		t.Fatalf("messages = %#v, want one activity group", got)
+	if len(got) != 3 {
+		t.Fatalf("messages = %#v, want three separate tool items", got)
 	}
-	for _, want := range []string{"1 running", "1 queued", "now: pattern=TODO, cmd=go test ./..."} {
-		if !strings.Contains(got[0], want) {
-			t.Fatalf("summary missing %q: %#v", want, got)
-		}
+	if got[0] != "Read path=main.go" {
+		t.Fatalf("first item = %q, want Read path=main.go", got[0])
 	}
-	if strings.Contains(got[0], "path=main.go") {
-		t.Fatalf("summary should prioritize active tools over completed tools: %#v", got)
+	if got[1] != "Writing command... cmd=go test ./..." {
+		t.Fatalf("second item = %q, want running bash tool", got[1])
+	}
+	if got[2] != "Searching content... pattern=TODO" {
+		t.Fatalf("third item = %q, want queued grep tool", got[2])
 	}
 }
 
@@ -1058,10 +1100,10 @@ func TestNoticeActivityRendersSeparateFromToolGroup(t *testing.T) {
 
 	got := model.MessageTexts()
 	if len(got) != 2 {
-		t.Fatalf("messages = %#v, want tool group and separate notice", got)
+		t.Fatalf("messages = %#v, want tool item and separate notice", got)
 	}
-	if !strings.Contains(got[0], "tools: 1 done") || !strings.Contains(got[1], "summarized 8 earlier messages") {
-		t.Fatalf("messages = %#v, want notice separate from tool summary", got)
+	if got[0] != "Read path=main.go" || !strings.Contains(got[1], "summarized 8 earlier messages") {
+		t.Fatalf("messages = %#v, want notice separate from tool item", got)
 	}
 }
 
@@ -1194,19 +1236,10 @@ func TestMouseExpandsToolGroupFileDiffDetails(t *testing.T) {
 	}
 	model = assertModel(t, updated)
 	if !strings.Contains(viewString(model), "Wrote create write.md") {
-		t.Fatalf("mouse click did not expand tool group summary:\n%s", viewString(model))
+		t.Fatalf("mouse click did not expand tool item:\n%s", viewString(model))
 	}
-	if strings.Contains(viewString(model), "+hello") {
-		t.Fatalf("tool diff should stay collapsed after group click:\n%s", viewString(model))
-	}
-
-	updated, cmd = model.Update(mouseClick(0, 1))
-	if cmd != nil {
-		t.Fatalf("mouse click returned unexpected command")
-	}
-	model = assertModel(t, updated)
 	if !strings.Contains(viewString(model), "+hello") {
-		t.Fatalf("second mouse click did not expand tool diff:\n%s", viewString(model))
+		t.Fatalf("expanded tool item should show diff detail:\n%s", viewString(model))
 	}
 }
 
@@ -1266,10 +1299,17 @@ func TestFormatToolDetailLineHumanizesFileChangeSummary(t *testing.T) {
 	}
 }
 
-func TestCollapsedActivityBlocksShareRowsAndMouseTargetsChip(t *testing.T) {
+func TestCollapsedActivityBlocksStackRowsAndMouseTargetsChip(t *testing.T) {
 	model := NewModel(Options{})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		Status:       "running",
+		Summary:      "checking repository",
+		Content:      "checking repository",
+	})
 	model.messages.appendOrUpdateActivity(Event{
 		Type:         EventActivity,
 		ActivityKind: "tool",
@@ -1291,18 +1331,18 @@ func TestCollapsedActivityBlocksShareRowsAndMouseTargetsChip(t *testing.T) {
 
 	view := model.messages.view(80, 20, 0, tuitheme.Plain())
 	lines := strings.Split(view, "\n")
-	if len(lines) != 1 {
-		t.Fatalf("collapsed activity blocks should share a row:\n%s", view)
+	if len(lines) != 3 {
+		t.Fatalf("collapsed activity blocks should stack one per row:\n%s", view)
 	}
-	if !strings.Contains(lines[0], "Read path=main.go") || !strings.Contains(lines[0], "Searched pattern=TODO") {
-		t.Fatalf("compact row missing tool chips:\n%s", view)
+	if !strings.Contains(lines[0], "checking repository") || !strings.Contains(lines[1], "Read path=main.go") || !strings.Contains(lines[2], "Searched pattern=TODO") {
+		t.Fatalf("compact rows missing activity chips:\n%s", view)
 	}
 
-	x := strings.Index(lines[0], "Searched")
+	x := strings.Index(lines[2], "Searched")
 	if x < 0 {
-		t.Fatalf("second chip not found:\n%s", view)
+		t.Fatalf("third chip not found:\n%s", view)
 	}
-	updated, cmd := model.Update(mouseClick(x, 0))
+	updated, cmd := model.Update(mouseClick(x, 2))
 	if cmd != nil {
 		t.Fatalf("mouse click returned unexpected command")
 	}
@@ -1861,6 +1901,150 @@ func TestSlashCopyCopiesNthMessage(t *testing.T) {
 	}
 }
 
+func TestSlashCopyNoArgsCopiesLastAssistant(t *testing.T) {
+	clipboard := &recordingClipboard{}
+	model := NewModel(Options{
+		Clipboard: clipboard,
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "first prompt"},
+			{Role: assistantRole, Text: "first answer"},
+			{Role: userRole, Text: "second prompt"},
+			{Role: assistantRole, Text: "second answer"},
+		},
+	})
+	model = sendText(t, model, "/copy")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("slash copy should issue an async clipboard command")
+	}
+	updated, _ = model.Update(cmd())
+	model = assertModel(t, updated)
+
+	if clipboard.calls != 1 || clipboard.text != "second answer" {
+		t.Fatalf("clipboard calls/text = %d/%q, want 1/second answer", clipboard.calls, clipboard.text)
+	}
+	if !strings.Contains(viewString(model), "ok: copied last response") {
+		t.Fatalf("view missing copy toast:\n%s", viewString(model))
+	}
+}
+
+func TestSlashCopyNoAssistantResponse(t *testing.T) {
+	clipboard := &recordingClipboard{}
+	model := NewModel(Options{
+		Clipboard: clipboard,
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "only a prompt"},
+		},
+	})
+	model = sendText(t, model, "/copy")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash copy should not issue a command when no assistant response")
+	}
+	model = assertModel(t, updated)
+	if clipboard.calls != 0 {
+		t.Fatalf("clipboard calls = %d, want 0", clipboard.calls)
+	}
+	if got := model.MessageTexts(); len(got) != 2 || !strings.Contains(got[1], "no assistant response to copy") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestCopyIndexOnlyNumbersTextMessages(t *testing.T) {
+	var list messageList
+	list.append(userRole, "user prompt")
+	list.appendOrUpdateActivity(Event{Type: EventActivity, ActivityKind: "tool", ToolName: "bash", Status: "running", Summary: "ran cmd"})
+	list.append(assistantRole, "assistant answer")
+	list.appendOrUpdateActivity(Event{Type: EventActivity, ActivityKind: "tool", ToolName: "read", Status: "done", Summary: "read file"})
+	list.append(userRole, "second prompt")
+	list.append(assistantRole, "second answer")
+
+	// Only text messages (user/assistant) get copy indices.
+	for _, item := range list.items {
+		if item.kind == textMessage {
+			if item.copyIndex <= 0 {
+				t.Errorf("text message %q has copyIndex=%d, want >0", item.text, item.copyIndex)
+			}
+		} else {
+			if item.copyIndex != 0 {
+				t.Errorf("non-text message %q has copyIndex=%d, want 0", item.title, item.copyIndex)
+			}
+		}
+	}
+
+	// /copy 1 → user prompt, /copy 2 → assistant answer, /copy 3 → second prompt, /copy 4 → second answer
+	cases := []struct {
+		n    int
+		want string
+	}{
+		{1, "user prompt"},
+		{2, "assistant answer"},
+		{3, "second prompt"},
+		{4, "second answer"},
+	}
+	for _, tc := range cases {
+		text, ok := list.copyText(tc.n)
+		if !ok || text != tc.want {
+			t.Errorf("copyText(%d) = %q, ok=%v; want %q, true", tc.n, text, ok, tc.want)
+		}
+	}
+	if _, ok := list.copyText(5); ok {
+		t.Error("copyText(5) should fail, only 4 text messages")
+	}
+}
+
+func TestCopyIndexReindexedAfterRemove(t *testing.T) {
+	var list messageList
+	list.append(userRole, "first")
+	list.append(assistantRole, "second")
+	list.append(userRole, "third")
+
+	// Verify initial indices.
+	if text, _ := list.copyText(2); text != "second" {
+		t.Fatalf("copyText(2) = %q, want second", text)
+	}
+
+	// Remove the assistant message.
+	list.items = append(list.items[:1], list.items[2:]...)
+	list.reindexCopy()
+
+	// Now there are 2 text messages: "first" (1), "third" (2).
+	if text, _ := list.copyText(1); text != "first" {
+		t.Errorf("copyText(1) = %q, want first", text)
+	}
+	if text, _ := list.copyText(2); text != "third" {
+		t.Errorf("copyText(2) = %q, want third", text)
+	}
+}
+
+func TestLastAssistantText(t *testing.T) {
+	var list messageList
+	if _, ok := list.lastAssistantText(); ok {
+		t.Fatal("lastAssistantText on empty list should return false")
+	}
+
+	list.append(userRole, "prompt")
+	if _, ok := list.lastAssistantText(); ok {
+		t.Fatal("lastAssistantText with only user message should return false")
+	}
+
+	list.append(assistantRole, "first answer")
+	if text, ok := list.lastAssistantText(); !ok || text != "first answer" {
+		t.Fatalf("lastAssistantText = %q, ok=%v; want first answer, true", text, ok)
+	}
+
+	list.appendOrUpdateActivity(Event{Type: EventActivity, ActivityKind: "tool", ToolName: "bash", Status: "done", Summary: "ran cmd"})
+	list.append(userRole, "second prompt")
+	list.append(assistantRole, "second answer")
+
+	if text, ok := list.lastAssistantText(); !ok || text != "second answer" {
+		t.Fatalf("lastAssistantText = %q, ok=%v; want second answer, true", text, ok)
+	}
+}
+
 func TestSlashCopyReportsInvalidIndex(t *testing.T) {
 	clipboard := &recordingClipboard{}
 	model := NewModel(Options{Clipboard: clipboard, Messages: []InitialMessage{{Role: userRole, Text: "only"}}})
@@ -1875,6 +2059,30 @@ func TestSlashCopyReportsInvalidIndex(t *testing.T) {
 		t.Fatalf("clipboard calls = %d, want 0", clipboard.calls)
 	}
 	if got := model.MessageTexts(); len(got) != 2 || !strings.Contains(got[1], "message 2 not found") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashCopyRejectsExtraArgs(t *testing.T) {
+	clipboard := &recordingClipboard{}
+	model := NewModel(Options{
+		Clipboard: clipboard,
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "first prompt"},
+			{Role: assistantRole, Text: "first answer"},
+		},
+	})
+	model = sendText(t, model, "/copy 2 extra")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash copy returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if clipboard.calls != 0 {
+		t.Fatalf("clipboard calls = %d, want 0", clipboard.calls)
+	}
+	if got := model.MessageTexts(); len(got) != 3 || !strings.Contains(got[2], "usage: /copy [N]") {
 		t.Fatalf("messages = %#v", got)
 	}
 }
@@ -2353,8 +2561,8 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 		t.Fatal("permission event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if got := model.MessageTexts(); len(got) != 1 || got[0] != "tools: permissions: 1" {
-		t.Fatalf("messages = %#v, want permission summary", got)
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "permission approval_agent allow bash: read-only command" {
+		t.Fatalf("messages = %#v, want permission item text", got)
 	}
 	updated, cmd = model.Update(mouseClick(0, 0))
 	if cmd != nil {
@@ -2485,8 +2693,8 @@ func TestStreamEventsContinueDuringPermissionModeSwitch(t *testing.T) {
 		t.Fatal("done event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "done") || strings.Contains(got[0], "queued") {
-		t.Fatalf("messages = %#v, want done summary while permission is open", got)
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "Ran cmd=go test ./..." {
+		t.Fatalf("messages = %#v, want done tool item while permission is open", got)
 	}
 	if model.pending == nil {
 		t.Fatal("stream event should not close pending permission modal")
@@ -2656,6 +2864,41 @@ func TestPromptHistoryIncludesRestoredUserMessages(t *testing.T) {
 	model = assertModel(t, updated)
 	if got := model.InputValue(); got != "past prompt" {
 		t.Fatalf("input = %q, want restored prompt", got)
+	}
+}
+
+func TestAsyncInitialMessagesLoadAfterStartup(t *testing.T) {
+	loads := 0
+	model := NewModel(Options{
+		LoadMessages: func(context.Context) ([]InitialMessage, error) {
+			loads++
+			return []InitialMessage{
+				{Role: userRole, Text: "restored prompt"},
+				{Role: assistantRole, Text: "restored answer"},
+			}, nil
+		},
+	})
+	if !model.loadingMessages {
+		t.Fatal("model should start with async message loading enabled")
+	}
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "loading session history..." {
+		t.Fatalf("messages = %#v, want loading placeholder", got)
+	}
+
+	cmd := loadMessagesCmd(context.Background(), model.loadMessages)
+	updated, next := model.Update(cmd())
+	if next != nil {
+		t.Fatalf("message load returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if loads != 1 {
+		t.Fatalf("loads = %d, want 1", loads)
+	}
+	if model.loadingMessages {
+		t.Fatal("model should stop loading after messages load")
+	}
+	if got, want := model.MessageTexts(), []string{"restored prompt", "restored answer"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
 	}
 }
 
@@ -3019,8 +3262,34 @@ func TestViewWrapsLongMessagesToWidth(t *testing.T) {
 	if strings.Contains(view, "› abcdefghijklmnopqrstuvwxyz") {
 		t.Fatalf("long line was not wrapped:\n%s", view)
 	}
-	if !strings.Contains(view, "› abcdefghijklmnopqr") || !strings.Contains(view, "  stuvwxyz") {
+	if !strings.Contains(view, "[1]› abcdefghijklmno") || !strings.Contains(view, "     pqrstuvwxyz") {
 		t.Fatalf("wrapped message missing expected fragments:\n%s", view)
+	}
+}
+
+func TestTailViewMatchesFullRenderedBottom(t *testing.T) {
+	var list messageList
+	for i := 0; i < 20; i++ {
+		list.append(userRole, fmt.Sprintf("prompt %02d", i))
+		list.appendOrUpdateActivity(Event{
+			Type:         EventActivity,
+			ActivityKind: "tool",
+			ToolUseID:    fmt.Sprintf("call_%02d", i),
+			ToolName:     "read",
+			Status:       "done",
+			Summary:      fmt.Sprintf("path=file_%02d.go", i),
+			Content:      fmt.Sprintf("detail %02d", i),
+		})
+		list.append(assistantRole, fmt.Sprintf("answer %02d\n\n- item", i))
+	}
+
+	const width = 80
+	const height = 12
+	full := list.render(width, tuitheme.Plain()).lines
+	want := strings.Join(full[len(full)-height:], "\n")
+	got := list.view(width, height, 0, tuitheme.Plain())
+	if got != want {
+		t.Fatalf("tail view mismatch\nwant:\n%s\n\ngot:\n%s", want, got)
 	}
 }
 

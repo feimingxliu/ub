@@ -57,6 +57,7 @@ type message struct {
 	detail    string
 	collapsed bool
 	entries   []message
+	copyIndex int // 1-based index for /copy; 0 means not copyable
 }
 
 func (m message) collapsible() bool {
@@ -69,9 +70,13 @@ func (m message) collapsible() bool {
 }
 
 type messageList struct {
-	items      []message
-	focus      int
-	entryFocus int
+	items          []message
+	focus          int
+	entryFocus     int
+	renderCache    map[string]renderedMessages
+	renderVersion  uint64
+	batchDepth     int
+	copyIndexDirty bool
 }
 
 type renderedMessages struct {
@@ -95,7 +100,32 @@ type messageTarget struct {
 }
 
 func newMessageList() messageList {
-	return messageList{focus: -1, entryFocus: -1}
+	return messageList{focus: -1, entryFocus: -1, renderCache: map[string]renderedMessages{}}
+}
+
+func (l *messageList) beginBatch() {
+	l.batchDepth++
+}
+
+func (l *messageList) endBatch() {
+	if l.batchDepth > 0 {
+		l.batchDepth--
+	}
+	if l.batchDepth == 0 && l.copyIndexDirty {
+		l.reindexCopy()
+	}
+	l.invalidateRender()
+}
+
+func (l *messageList) invalidateRender() {
+	l.renderVersion++
+	if l.renderCache == nil {
+		l.renderCache = map[string]renderedMessages{}
+		return
+	}
+	for key := range l.renderCache {
+		delete(l.renderCache, key)
+	}
 }
 
 func (l *messageList) append(role, text string) {
@@ -106,6 +136,7 @@ func (l *messageList) append(role, text string) {
 		title:     text,
 		collapsed: defaultCollapsed(kindForRole(role)),
 	})
+	l.reindexCopy()
 	l.clampFocus()
 }
 
@@ -168,6 +199,14 @@ func (l *messageList) appendOrUpdateActivity(event Event) {
 	l.appendOrUpdateBlock(block)
 }
 
+func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
+	block := activityMessage(event)
+	if turn > 0 && strings.TrimSpace(block.key) != "" {
+		block.key = fmt.Sprintf("history:turn-%d:%s", turn, block.key)
+	}
+	l.appendOrUpdateBlock(block)
+}
+
 func (l *messageList) appendOrUpdateActivityInGroup(groupKey, groupName string, event Event) {
 	if strings.TrimSpace(groupKey) == "" {
 		l.appendOrUpdateActivity(event)
@@ -199,6 +238,7 @@ func (l *messageList) appendOrUpdateActivityInGroup(groupKey, groupName string, 
 	group.status = activityGroupStatus(group.entries)
 	group.title = activityGroupTitleForName(group.name, group.entries)
 	group.text = group.title
+	l.reindexCopy()
 	l.clampFocus()
 }
 
@@ -214,6 +254,7 @@ func (l *messageList) finishActivityGroup(key, status string) {
 		l.items[idx].title = activityGroupTitle(l.items[idx].entries)
 		l.items[idx].text = l.items[idx].title
 	}
+	l.invalidateRender()
 }
 
 func (l *messageList) removePlaceholderActivityGroup(key string) bool {
@@ -232,6 +273,7 @@ func (l *messageList) removePlaceholderActivityGroup(key string) bool {
 		}
 	}
 	l.items = append(l.items[:idx], l.items[idx+1:]...)
+	l.reindexCopy()
 	l.clampFocus()
 	return true
 }
@@ -258,6 +300,7 @@ func (l *messageList) appendToolStatus(name, state string) {
 		status:    toolStatusFromLegacyState(state),
 		collapsed: true,
 	})
+	l.reindexCopy()
 	l.clampFocus()
 }
 
@@ -272,12 +315,14 @@ func (l *messageList) appendPermissionEvent(event Event) {
 		detail:    strings.TrimSpace(event.Reason),
 		collapsed: true,
 	})
+	l.reindexCopy()
 	l.clampFocus()
 }
 
 func (l *messageList) appendOrUpdateBlock(block message) {
 	if strings.TrimSpace(block.key) == "" {
 		l.items = append(l.items, block)
+		l.reindexCopy()
 		l.clampFocus()
 		return
 	}
@@ -288,11 +333,13 @@ func (l *messageList) appendOrUpdateBlock(block message) {
 			block = mergeActivityMessage(*item, block)
 			*item = block
 			item.collapsed = collapsed
+			l.reindexCopy()
 			l.clampFocus()
 			return
 		}
 	}
 	l.items = append(l.items, block)
+	l.reindexCopy()
 	l.clampFocus()
 }
 
@@ -305,6 +352,7 @@ func (l *messageList) removeKey(role, key string) {
 			continue
 		}
 		l.items = append(l.items[:i], l.items[i+1:]...)
+		l.reindexCopy()
 		l.clampFocus()
 		return
 	}
@@ -314,12 +362,17 @@ func (l *messageList) clear() {
 	l.items = nil
 	l.focus = -1
 	l.entryFocus = -1
+	l.copyIndexDirty = false
+	l.invalidateRender()
 }
 
 func (l *messageList) load(messages []InitialMessage) {
+	l.beginBatch()
+	defer l.endBatch()
 	l.items = nil
 	l.focus = -1
 	l.entryFocus = -1
+	l.copyIndexDirty = false
 	for _, msg := range messages {
 		if strings.TrimSpace(msg.ActivityKind) != "" {
 			event := Event{
@@ -337,15 +390,7 @@ func (l *messageList) load(messages []InitialMessage) {
 				Allowed:      msg.Allowed,
 				IsError:      msg.IsError,
 			}
-			if groupName := activityGroupNameForEvent(event); groupName != "" {
-				// Key by turn so tools/thinking from different user prompts
-				// land in their own group instead of collapsing into one.
-				groupKey := fmt.Sprintf("history:%s:turn-%d", groupName, msg.Turn)
-				l.appendOrUpdateActivityInGroup(groupKey, groupName, event)
-				l.finishActivityGroup(groupKey, "")
-			} else {
-				l.appendOrUpdateActivity(event)
-			}
+			l.appendOrUpdateLoadedActivity(event, msg.Turn)
 			continue
 		}
 		role := normalizeRole(msg.Role)
@@ -358,7 +403,17 @@ func (l *messageList) load(messages []InitialMessage) {
 
 func (l *messageList) startAssistant() {
 	l.items = append(l.items, message{role: assistantRole, kind: textMessage})
+	l.reindexCopy()
 	l.clampFocus()
+}
+
+// breakAssistant ensures the next assistant delta starts a new message,
+// so tool/thinking items can be interleaved between text segments.
+func (l *messageList) breakAssistant() {
+	// If the last item is an assistant message, appending the next delta
+	// will naturally start a new one. If it's not, appendAssistantDelta
+	// already calls startAssistant. So this is a no-op that just ensures
+	// we don't merge into the previous assistant message.
 }
 
 func (l *messageList) appendAssistantDelta(text string) {
@@ -367,6 +422,7 @@ func (l *messageList) appendAssistantDelta(text string) {
 	}
 	l.items[len(l.items)-1].text += text
 	l.items[len(l.items)-1].title = l.items[len(l.items)-1].text
+	l.invalidateRender()
 }
 
 func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.Styles) bool {
@@ -398,6 +454,7 @@ func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.
 			l.focus = span.itemIndex
 			l.entryFocus = span.entryIndex
 			entry.collapsed = !entry.collapsed
+			l.invalidateRender()
 			return true
 		}
 		if !l.items[span.itemIndex].collapsible() {
@@ -406,6 +463,7 @@ func (l *messageList) toggleAt(width, height, scroll, x, y int, styles tuitheme.
 		l.focus = span.itemIndex
 		l.entryFocus = -1
 		l.items[span.itemIndex].collapsed = !l.items[span.itemIndex].collapsed
+		l.invalidateRender()
 		return true
 	}
 	return false
@@ -422,6 +480,7 @@ func (l *messageList) toggleLatestCollapsible() bool {
 						l.focus = i
 						l.entryFocus = j
 						entry.collapsed = !entry.collapsed
+						l.invalidateRender()
 						return true
 					}
 				}
@@ -430,6 +489,7 @@ func (l *messageList) toggleLatestCollapsible() bool {
 				l.focus = i
 				l.entryFocus = -1
 				item.collapsed = !item.collapsed
+				l.invalidateRender()
 				return true
 			}
 			continue
@@ -438,6 +498,7 @@ func (l *messageList) toggleLatestCollapsible() bool {
 			l.focus = i
 			l.entryFocus = -1
 			item.collapsed = !item.collapsed
+			l.invalidateRender()
 			return true
 		}
 	}
@@ -490,12 +551,14 @@ func (l *messageList) toggleFocusedCollapsible() bool {
 	if target.entryIndex >= 0 {
 		entry := &l.items[target.itemIndex].entries[target.entryIndex]
 		entry.collapsed = !entry.collapsed
+		l.invalidateRender()
 		return true
 	}
 	l.items[target.itemIndex].collapsed = !l.items[target.itemIndex].collapsed
 	if l.items[target.itemIndex].collapsed {
 		l.entryFocus = -1
 	}
+	l.invalidateRender()
 	return true
 }
 
@@ -565,6 +628,13 @@ func (l messageList) focusedLine(width int, styles tuitheme.Styles) (int, int, b
 }
 
 func (l messageList) view(width, height, scroll int, styles tuitheme.Styles) string {
+	if scroll <= 0 && height > 0 {
+		lines := l.tailLines(width, height, styles)
+		if len(lines) == 0 {
+			return styles.Render(styles.Muted, truncateText("No messages yet · type a prompt or /help", contentWidth(width)))
+		}
+		return strings.Join(lines, "\n")
+	}
 	lines := l.render(width, styles).lines
 	if len(lines) == 0 {
 		return styles.Render(styles.Muted, truncateText("No messages yet · type a prompt or /help", contentWidth(width)))
@@ -580,9 +650,67 @@ func (l messageList) lines(width int) []string {
 	return l.render(width, tuitheme.Plain()).lines
 }
 
+func (l messageList) tailLines(width, height int, styles tuitheme.Styles) []string {
+	if len(l.items) == 0 || height <= 0 {
+		return nil
+	}
+	var tail []string
+	for end := len(l.items); end > 0 && len(tail) < height; {
+		start := end - 1
+		if l.items[start].compactActivity() {
+			for start > 0 && l.items[start-1].compactActivity() {
+				start--
+			}
+		}
+		segment := l.renderSegment(start, end, width, styles)
+		if len(segment) == 0 {
+			end = start
+			continue
+		}
+		if len(tail) > 0 {
+			segment = append(segment, "")
+		}
+		tail = append(segment, tail...)
+		if len(tail) > height {
+			tail = tail[len(tail)-height:]
+		}
+		end = start
+	}
+	return tail
+}
+
+func (l messageList) renderSegment(start, end, width int, styles tuitheme.Styles) []string {
+	if start < 0 || start >= end || end > len(l.items) {
+		return nil
+	}
+	if l.items[start].compactActivity() {
+		lines, _, _ := l.renderCompactActivityRun(start, 0, width, styles)
+		if len(lines) > end-start {
+			lines = lines[:end-start]
+		}
+		return lines
+	}
+	item := l.items[start]
+	if item.kind == activityGroupMessage {
+		entryFocus := -1
+		if start == l.focus {
+			entryFocus = l.entryFocus
+		}
+		lines, _ := renderActivityGroupBlockWithSpans(item, start == l.focus && l.entryFocus < 0, entryFocus, width, styles, start, 0)
+		return lines
+	}
+	return l.renderItem(item, start == l.focus && l.entryFocus < 0, width, styles)
+}
+
 func (l messageList) render(width int, styles tuitheme.Styles) renderedMessages {
 	if len(l.items) == 0 {
 		return renderedMessages{}
+	}
+	cacheKey := l.renderCacheKey(width, styles)
+	if l.renderCache != nil {
+		if rendered, ok := l.renderCache[cacheKey]; ok {
+			return rendered
+		}
 	}
 
 	var out []string
@@ -618,7 +746,19 @@ func (l messageList) render(width int, styles tuitheme.Styles) renderedMessages 
 		spans = append(spans, messageSpan{itemIndex: i, start: start, end: len(out), endCol: contentWidth(width)})
 		i++
 	}
-	return renderedMessages{lines: out, spans: spans}
+	rendered := renderedMessages{lines: out, spans: spans}
+	if l.renderCache != nil {
+		l.renderCache[cacheKey] = rendered
+	}
+	return rendered
+}
+
+func (l messageList) renderCacheKey(width int, styles tuitheme.Styles) string {
+	styleName := styles.Markdown.StyleName
+	if styles.Plain {
+		styleName = "plain"
+	}
+	return fmt.Sprintf("%d:%t:%s:%d:%d:%d", width, styles.Plain, styleName, l.focus, l.entryFocus, l.renderVersion)
 }
 
 func (m message) compactActivity() bool {
@@ -635,17 +775,13 @@ func (l messageList) renderCompactActivityRun(startIndex, startLine, width int, 
 	if maxWidth <= 0 {
 		maxWidth = 10
 	}
-	const gap = "  "
-	gapWidth := runewidth.StringWidth(gap)
 
 	var lines []string
 	var spans []messageSpan
-	line := ""
-	lineWidth := 0
 	for i := startIndex; i < len(l.items); i++ {
 		item := l.items[i]
 		if !item.compactActivity() {
-			return appendCompactLine(lines, line), spans, i
+			return lines, spans, i
 		}
 		plain := activityChipText(item, max(10, min(maxWidth, 34)))
 		chipWidth := runewidth.StringWidth(plain)
@@ -653,35 +789,17 @@ func (l messageList) renderCompactActivityRun(startIndex, startLine, width int, 
 			plain = truncateText(plain, maxWidth)
 			chipWidth = runewidth.StringWidth(plain)
 		}
-		if line != "" && lineWidth+gapWidth+chipWidth > maxWidth {
-			lines = append(lines, line)
-			line = ""
-			lineWidth = 0
-		}
-		startCol := lineWidth
-		if line != "" {
-			line += gap
-			lineWidth += gapWidth
-			startCol = lineWidth
-		}
-		line += renderActivityChip(item, i == l.focus && l.entryFocus < 0, styles, plain)
-		lineWidth += chipWidth
+		lineIndex := len(lines)
+		lines = append(lines, renderActivityChip(item, i == l.focus && l.entryFocus < 0, styles, plain))
 		spans = append(spans, messageSpan{
 			itemIndex: i,
-			start:     startLine + len(lines),
-			end:       startLine + len(lines) + 1,
-			startCol:  startCol,
-			endCol:    startCol + chipWidth,
+			start:     startLine + lineIndex,
+			end:       startLine + lineIndex + 1,
+			startCol:  0,
+			endCol:    chipWidth,
 		})
 	}
-	return appendCompactLine(lines, line), spans, len(l.items)
-}
-
-func appendCompactLine(lines []string, line string) []string {
-	if line != "" {
-		return append(lines, line)
-	}
-	return lines
+	return lines, spans, len(l.items)
 }
 
 func (l messageList) renderItem(item message, focused bool, width int, styles tuitheme.Styles) []string {
@@ -706,7 +824,11 @@ func (l messageList) renderItem(item message, focused bool, width int, styles tu
 }
 
 func renderTextBlock(item message, width int, styles tuitheme.Styles) []string {
-	prefix, indent, prefixStyle := messagePrefix(item.role, styles)
+	prefix, _, prefixStyle := messagePrefix(item.role, styles)
+	if item.copyIndex > 0 {
+		prefix = fmt.Sprintf("[%d]%s", item.copyIndex, prefix)
+	}
+	indent := strings.Repeat(" ", runewidth.StringWidth(prefix))
 	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
 	lines := markdownLines(item.text, textWidth, styles)
 	if len(lines) == 0 {
@@ -1101,15 +1223,27 @@ func (l messageList) copyText(n int) (string, bool) {
 	if n <= 0 {
 		return "", false
 	}
-	index := 0
 	for _, item := range l.items {
-		text := messageCopyText(item)
-		if text == "" {
+		if item.copyIndex != n {
 			continue
 		}
-		index++
-		if index == n {
+		text := messageCopyText(item)
+		if text != "" {
 			return text, true
+		}
+		return "", false
+	}
+	return "", false
+}
+
+func (l messageList) lastAssistantText() (string, bool) {
+	for i := len(l.items) - 1; i >= 0; i-- {
+		if l.items[i].kind == textMessage && l.items[i].role == assistantRole {
+			text := messageCopyText(l.items[i])
+			if text != "" {
+				return text, true
+			}
+			return "", false
 		}
 	}
 	return "", false
@@ -1516,6 +1650,24 @@ func activityGroupStatus(entries []message) string {
 		return "failed"
 	}
 	return "done"
+}
+
+func (l *messageList) reindexCopy() {
+	if l.batchDepth > 0 {
+		l.copyIndexDirty = true
+		return
+	}
+	idx := 0
+	for i := range l.items {
+		if l.items[i].kind == textMessage {
+			idx++
+			l.items[i].copyIndex = idx
+		} else {
+			l.items[i].copyIndex = 0
+		}
+	}
+	l.copyIndexDirty = false
+	l.invalidateRender()
 }
 
 func (l *messageList) clampFocus() {

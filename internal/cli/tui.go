@@ -75,6 +75,15 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
+	var initialMessages []tui.InitialMessage
+	var loadMessages func(context.Context) ([]tui.InitialMessage, error)
+	if !selectSessionOnStart && strings.TrimSpace(resume) != "" {
+		loadMessages = func(context.Context) ([]tui.InitialMessage, error) {
+			return runner.Messages(), nil
+		}
+	} else {
+		initialMessages = runner.Messages()
+	}
 	err = tui.Run(cmd.Context(), tui.Options{
 		Input:          cmd.InOrStdin(),
 		Output:         cmd.OutOrStdout(),
@@ -89,7 +98,8 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		Efforts:        runner.Efforts(),
 		ApprovalModel:  runner.ApprovalModel(),
 		ApprovalModels: runner.ApprovalModels(),
-		Messages:       runner.Messages(),
+		Messages:       initialMessages,
+		LoadMessages:   loadMessages,
 		Turn:           runner.Turn(),
 		ExecutionMode:  string(runner.mode),
 		Cwd:            cwd,

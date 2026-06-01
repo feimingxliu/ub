@@ -62,6 +62,7 @@ type Options struct {
 	EventTimeout   time.Duration
 	SelectSession  bool
 	Clipboard      Clipboard
+	LoadMessages   func(context.Context) ([]InitialMessage, error)
 	initialWidth   int
 	initialHeight  int
 }
@@ -129,6 +130,8 @@ type Model struct {
 	activitySummary string
 	toast           toastState
 	clipboard       Clipboard
+	loadMessages    func(context.Context) ([]InitialMessage, error)
+	loadingMessages bool
 }
 
 // NewModel creates the root TUI model.
@@ -186,25 +189,27 @@ func NewModel(opts Options) Model {
 	}
 
 	m := Model{
-		input:          input,
-		messages:       newMessageList(),
-		styles:         styles,
-		runner:         opts.Runner,
-		clipboard:      opts.Clipboard,
-		permReqs:       opts.Permissions,
-		limitReqs:      opts.Limits,
-		ctx:            ctx,
-		providers:      normalizeOptions(providers, providerName),
-		models:         normalizeModels(models, modelName),
-		efforts:        normalizeOptions(efforts, effort),
-		approvalModel:  approvalModel,
-		approvalModels: normalizeModels(approvalModels, approvalModel),
-		history:        promptHistoryFromMessages(opts.Messages),
-		histIdx:        -1,
-		queueIdx:       -1,
-		timeout:        opts.EventTimeout,
-		width:          width,
-		height:         height,
+		input:           input,
+		messages:        newMessageList(),
+		styles:          styles,
+		runner:          opts.Runner,
+		clipboard:       opts.Clipboard,
+		permReqs:        opts.Permissions,
+		limitReqs:       opts.Limits,
+		ctx:             ctx,
+		providers:       normalizeOptions(providers, providerName),
+		models:          normalizeModels(models, modelName),
+		efforts:         normalizeOptions(efforts, effort),
+		approvalModel:   approvalModel,
+		approvalModels:  normalizeModels(approvalModels, approvalModel),
+		history:         promptHistoryFromMessages(opts.Messages),
+		histIdx:         -1,
+		queueIdx:        -1,
+		timeout:         opts.EventTimeout,
+		loadMessages:    opts.LoadMessages,
+		loadingMessages: opts.LoadMessages != nil,
+		width:           width,
+		height:          height,
 		status: statusBar{
 			provider:      defaultString(providerName, "unknown"),
 			model:         modelName,
@@ -219,6 +224,9 @@ func NewModel(opts Options) Model {
 		m.clipboard = systemClipboard{}
 	}
 	m.messages.load(opts.Messages)
+	if m.loadingMessages && len(opts.Messages) == 0 {
+		m.messages.append(systemRole, "loading session history...")
+	}
 	if opts.initialWidth > 0 && opts.initialWidth < minRecommendedWidth {
 		m.messages.append(systemRole, fmt.Sprintf("terminal width is %d columns; ub works best at %d columns or wider", opts.initialWidth, minRecommendedWidth))
 	}
@@ -233,7 +241,11 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner))
+	cmds := []tea.Cmd{windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner)}
+	if m.loadMessages != nil {
+		cmds = append(cmds, loadMessagesCmd(m.ctx, m.loadMessages))
+	}
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -256,6 +268,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleCopyResult(msg)
 	case modelRefreshResultMsg:
 		return m.handleModelRefreshResult(msg)
+	case messagesLoadedMsg:
+		return m.handleMessagesLoaded(msg)
 	}
 	m.clearToastForInteraction(msg)
 
@@ -538,6 +552,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
 		case "enter":
+			if m.loadingMessages {
+				return m, nil
+			}
 			if strings.TrimSpace(m.input.Value()) == "" && m.messages.hasFocusedCollapsible() {
 				if m.messages.toggleFocusedCollapsible() {
 					m.scrollFocusedMessageIntoView()
@@ -881,8 +898,8 @@ type doctorResultMsg struct {
 }
 
 type copyResultMsg struct {
-	n   int
-	err error
+	label string
+	err   error
 }
 
 func (m Model) runDoctor() (tea.Model, tea.Cmd) {
@@ -916,27 +933,43 @@ func (m Model) handleDoctorResult(msg doctorResultMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) copyMessage(args []string) (tea.Model, tea.Cmd) {
-	if len(args) != 1 {
-		m.messages.append(errorRole, "usage: /copy <N>")
+	// /copy with no args: copy the last assistant response (Codex-style).
+	// /copy <N>: copy the Nth user/assistant message (1-based, [N] shown in transcript).
+	var text string
+	var label string
+	if len(args) > 1 {
+		m.messages.append(errorRole, "usage: /copy [N]  (no arg = last response, N shown as [N] in transcript)")
 		return m, nil
 	}
-	n, err := strconv.Atoi(args[0])
-	if err != nil || n <= 0 {
-		m.messages.append(errorRole, "usage: /copy <N>")
-		return m, nil
-	}
-	text, ok := m.messages.copyText(n)
-	if !ok {
-		m.messages.append(errorRole, fmt.Sprintf("message %d not found", n))
-		return m, nil
+	if len(args) == 0 {
+		var ok bool
+		text, ok = m.messages.lastAssistantText()
+		if !ok {
+			m.messages.append(errorRole, "no assistant response to copy")
+			return m, nil
+		}
+		label = "last response"
+	} else {
+		n, err := strconv.Atoi(args[0])
+		if err != nil || n <= 0 {
+			m.messages.append(errorRole, "usage: /copy [N]  (no arg = last response, N shown as [N] in transcript)")
+			return m, nil
+		}
+		var ok bool
+		text, ok = m.messages.copyText(n)
+		if !ok {
+			m.messages.append(errorRole, fmt.Sprintf("message %d not found", n))
+			return m, nil
+		}
+		label = fmt.Sprintf("message %d", n)
 	}
 	clipboard := m.clipboard
 	ctx := m.ctx
 	return m, func() tea.Msg {
 		if err := clipboard.WriteText(ctx, text); err != nil {
-			return copyResultMsg{n: n, err: err}
+			return copyResultMsg{label: label, err: err}
 		}
-		return copyResultMsg{n: n}
+		return copyResultMsg{label: label}
 	}
 }
 
@@ -946,7 +979,7 @@ func (m Model) handleCopyResult(msg copyResultMsg) (tea.Model, tea.Cmd) {
 		m.scrollToBottom()
 		return m, nil
 	}
-	return m, m.showToast(toastSuccess, fmt.Sprintf("copied message %d", msg.n))
+	return m, m.showToast(toastSuccess, fmt.Sprintf("copied %s", msg.label))
 }
 
 type modelRefreshResultMsg struct {
@@ -956,6 +989,11 @@ type modelRefreshResultMsg struct {
 	approvalModels   []string
 	approvalErr      error
 	approvalModelsOK bool
+}
+
+type messagesLoadedMsg struct {
+	messages []InitialMessage
+	err      error
 }
 
 func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
@@ -975,6 +1013,16 @@ func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
 			msg.approvalModelsOK = true
 		}
 		return msg
+	}
+}
+
+func loadMessagesCmd(ctx context.Context, load func(context.Context) ([]InitialMessage, error)) tea.Cmd {
+	return func() tea.Msg {
+		if load == nil {
+			return messagesLoadedMsg{}
+		}
+		messages, err := load(ctx)
+		return messagesLoadedMsg{messages: messages, err: err}
 	}
 }
 
@@ -1007,6 +1055,21 @@ func (m Model) handleModelRefreshResult(msg modelRefreshResultMsg) (tea.Model, t
 			m.picker = newModelPicker(m.approvalModels, current)
 		}
 	}
+	return m, nil
+}
+
+func (m Model) handleMessagesLoaded(msg messagesLoadedMsg) (tea.Model, tea.Cmd) {
+	m.loadingMessages = false
+	m.loadMessages = nil
+	if msg.err != nil {
+		m.messages.clear()
+		m.messages.append(errorRole, "load session history failed: "+msg.err.Error())
+		m.scrollToBottom()
+		return m, nil
+	}
+	m.messages.load(msg.messages)
+	m.history = promptHistoryFromMessages(msg.messages)
+	m.scrollToBottom()
 	return m, nil
 }
 
@@ -1197,14 +1260,11 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventActivity:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		if activityGroupNameForEvent(event) != thinkingGroupName {
-			m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
-		}
-		if groupName := activityGroupNameForEvent(event); groupName != "" {
-			m.messages.appendOrUpdateActivityInGroup(activityGroupKeyForName(m.runID, groupName), groupName, event)
-		} else {
-			m.messages.appendOrUpdateActivity(event)
-		}
+		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
+		// Insert tool/thinking events inline so they appear in
+		// chronological order relative to assistant text segments,
+		// matching the Codex-style interleaved transcript.
+		m.messages.appendOrUpdateActivity(event)
 		m.status.state = statusForActivity(event)
 		if summary := strings.TrimSpace(event.Summary); summary != "" && strings.TrimSpace(event.ActivityKind) != "thinking" {
 			m.activitySummary = summary
@@ -1213,11 +1273,7 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 	case EventToolPartialOutput:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
-		m.messages.appendOrUpdateActivityInGroup(
-			activityGroupKeyForName(m.runID, toolGroupName),
-			toolGroupName,
-			toolPartialActivity(event),
-		)
+		m.messages.appendOrUpdateActivity(toolPartialActivity(event))
 		m.status.state = statusTool
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventShellOutput:
@@ -1249,15 +1305,11 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 	case EventDone:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
-		m.messages.finishActivityGroup(thinkingActivityGroupKey(m.runID), "done")
-		m.messages.finishActivityGroup(toolActivityGroupKey(m.runID), "done")
 		m.status.state = statusFinalizing
 		m.cancel = nil
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventError:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
-		m.messages.finishActivityGroup(thinkingActivityGroupKey(m.runID), "failed")
-		m.messages.finishActivityGroup(toolActivityGroupKey(m.runID), "failed")
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -2394,7 +2446,7 @@ func (m *Model) scrollFocusedMessageIntoView() {
 }
 
 func (m Model) clampedScroll() int {
-	if m.scroll < 0 {
+	if m.scroll <= 0 {
 		return 0
 	}
 	maxScroll := m.maxMessageScroll()
