@@ -286,6 +286,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key, ok := msg.(tea.KeyPressMsg); ok {
 			switch key.String() {
+			case "ctrl+home":
+				m.scrollToTop()
+				return m, nil
+			case "ctrl+end":
+				m.scrollToBottom()
+				return m, nil
 			case "y", "Y", "enter":
 				return m.resolveLimit(defaultLimitExtension)
 			case "n", "N", "esc", "ctrl+c":
@@ -318,6 +324,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, waitForPermission(m.permReqs)
 			case "shift+tab":
 				return m.cycleMode()
+			case "ctrl+home":
+				m.scrollToTop()
+				return m, nil
+			case "ctrl+end":
+				m.scrollToBottom()
+				return m, nil
 			case "pgup":
 				m.scrollMessages(m.pageScrollLines())
 				return m, nil
@@ -488,6 +500,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "pgdown":
 			m.scrollMessages(-m.pageScrollLines())
+			return m, nil
+		case "ctrl+home":
+			m.scrollToTop()
+			return m, nil
+		case "ctrl+end":
+			m.scrollToBottom()
 			return m, nil
 		case "ctrl+o":
 			if m.messages.toggleLatestCollapsible() {
@@ -1851,6 +1869,7 @@ func helpKeyboardLines() []string {
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
 		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",
+		"Ctrl+Home/Ctrl+End - jump to the start/end of the transcript",
 		"Mouse wheel - scroll the transcript; click an activity row to expand/collapse it",
 		"Shift+drag - select text for copy (terminal native, bypasses TUI mouse capture)",
 		"Ctrl+O - expand/collapse the latest activity detail",
@@ -2417,6 +2436,10 @@ func (m *Model) scrollMessages(delta int) {
 
 func (m *Model) scrollToBottom() {
 	m.scroll = 0
+}
+
+func (m *Model) scrollToTop() {
+	m.scroll = m.maxMessageScroll()
 }
 
 func (m *Model) scrollFocusedMessageIntoView() {

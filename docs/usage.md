@@ -41,6 +41,7 @@
 | `Enter` | 发送当前输入；输入为空且有 collapsible 块聚焦时，展开/收起聚焦项 |
 | `Tab` | 触发补全：`/` 后补全 slash 命令、`@` 后补全工作区文件 |
 | `PgUp` / `PgDn` | 消息区翻页 |
+| `Ctrl+Home` / `Ctrl+End` | 跳到消息区最前 / 最后 |
 
 ### 2.2 活动块（thinking / tool）展开导航
 

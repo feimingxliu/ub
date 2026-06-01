@@ -1582,6 +1582,7 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"Shift+Tab - cycle execution mode",
 		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",
+		"Ctrl+Home/Ctrl+End - jump to the start/end",
 		"Ctrl+O - expand/collapse",
 		"Ctrl+N/Ctrl+P - move activity focus",
 		"Up/Down - move through suggestions",
@@ -3047,6 +3048,36 @@ func TestMessageAreaScrollsWithinWindow(t *testing.T) {
 	view = viewString(model)
 	if !strings.Contains(view, "message-06") {
 		t.Fatalf("mouse wheel down did not return to bottom:\n%s", view)
+	}
+}
+
+func TestMessageAreaJumpsToStartAndEnd(t *testing.T) {
+	var messages []InitialMessage
+	for _, text := range []string{"message-01", "message-02", "message-03", "message-04", "message-05", "message-06"} {
+		messages = append(messages, InitialMessage{Role: assistantRole, Text: text})
+	}
+	model := NewModel(Options{Messages: messages})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	model = assertModel(t, updated)
+
+	updated, cmd := model.Update(keyPress(tea.KeyHome, tea.ModCtrl))
+	if cmd != nil {
+		t.Fatalf("ctrl+home returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "message-01") || strings.Contains(view, "message-06") {
+		t.Fatalf("ctrl+home did not jump to transcript start:\n%s", view)
+	}
+
+	updated, cmd = model.Update(keyPress(tea.KeyEnd, tea.ModCtrl))
+	if cmd != nil {
+		t.Fatalf("ctrl+end returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view = viewString(model)
+	if !strings.Contains(view, "message-06") || strings.Contains(view, "message-01") {
+		t.Fatalf("ctrl+end did not jump to transcript end:\n%s", view)
 	}
 }
 
