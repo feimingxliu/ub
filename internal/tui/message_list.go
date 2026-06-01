@@ -567,6 +567,16 @@ func (l messageList) hasFocusedCollapsible() bool {
 	return ok
 }
 
+func (l *messageList) clearFocus() bool {
+	if l.focus < 0 && l.entryFocus < 0 {
+		return false
+	}
+	l.focus = -1
+	l.entryFocus = -1
+	l.invalidateRender()
+	return true
+}
+
 func (l messageList) focusTarget() (messageTarget, bool) {
 	if l.focus < 0 || l.focus >= len(l.items) {
 		return messageTarget{}, false
@@ -783,7 +793,7 @@ func (l messageList) renderCompactActivityRun(startIndex, startLine, width int, 
 		if !item.compactActivity() {
 			return lines, spans, i
 		}
-		plain := activityChipText(item, max(10, min(maxWidth, 34)))
+		plain := activityChipText(item, max(10, maxWidth))
 		chipWidth := runewidth.StringWidth(plain)
 		if chipWidth > maxWidth {
 			plain = truncateText(plain, maxWidth)
@@ -856,6 +866,9 @@ func renderActivityBlock(item message, focused bool, width int, styles tuitheme.
 	style := activity.Collapsed
 	if !item.collapsed {
 		style = activity.Expanded
+	}
+	if item.status == "failed" || item.status == "error" {
+		style = activity.Failed
 	}
 	if focused {
 		style = activity.Focus
@@ -1095,6 +1108,12 @@ func renderActivityChip(item message, focused bool, styles tuitheme.Styles, text
 	style := styles.Tool.Collapsed
 	if item.kind == thinkingMessage {
 		style = styles.Thinking.Collapsed
+	}
+	if item.status == "failed" || item.status == "error" {
+		style = styles.Tool.Failed
+		if item.kind == thinkingMessage {
+			style = styles.Thinking.Failed
+		}
 	}
 	if focused {
 		style = styles.Focus
@@ -1792,7 +1811,7 @@ func activityMessage(event Event) message {
 			kind:      toolMessage,
 			title:     text,
 			name:      defaultString(event.ToolName, "tool"),
-			status:    defaultString(event.Status, "done"),
+			status:    defaultString(toolEventStatus(event), "done"),
 			detail:    event.Content,
 			collapsed: true,
 		}

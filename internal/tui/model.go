@@ -476,6 +476,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.files = nil
 				return m, nil
 			}
+			if !m.running && m.messages.clearFocus() {
+				return m, nil
+			}
 			if m.running {
 				m.interruptCurrent()
 			}
@@ -1411,7 +1414,7 @@ func activityGroupNameForEvent(event Event) string {
 func toolActivityText(event Event) string {
 	name := strings.TrimSpace(event.ToolName)
 	title := toolTitle(name, event.Summary)
-	switch event.Status {
+	switch toolEventStatus(event) {
 	case "queued", "running":
 		action := toolAction(name)
 		if summary := strings.TrimSpace(event.Summary); summary != "" {
@@ -1419,14 +1422,18 @@ func toolActivityText(event Event) string {
 		}
 		return action
 	case "failed":
-		text := title + " failed"
-		if detail := strings.TrimSpace(event.Content); detail != "" {
-			text += ": " + detail
-		}
-		return text
+		return title + " failed"
 	default:
 		return title
 	}
+}
+
+func toolEventStatus(event Event) string {
+	status := strings.TrimSpace(event.Status)
+	if status == "" && event.IsError {
+		return "failed"
+	}
+	return status
 }
 
 func toolAction(name string) string {
@@ -1840,7 +1847,7 @@ func helpKeyboardLines() []string {
 	return []string{
 		"Enter - send prompt; while running, queue a normal prompt; with a selected candidate, accept it",
 		"Ctrl+C - quit the TUI, cancelling the current run first",
-		"Esc - cancel an active picker or file search; while running, interrupt the current turn",
+		"Esc - clear activity focus or cancel an active picker/file search; while running, interrupt the current turn",
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
 		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",

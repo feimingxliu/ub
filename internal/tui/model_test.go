@@ -770,6 +770,54 @@ func TestToolGroupMixedFailureDoesNotFailWholeGroup(t *testing.T) {
 	}
 }
 
+func TestFailedToolCollapsedTitleHidesDetail(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 7
+	model.events = make(chan Event)
+	content := "<shell_metadata>\nexit_code=1\nduration_ms=12\n</shell_metadata>\n--- stdout ---\nok\n--- stderr ---\nfailed\n"
+
+	updated, cmd := model.Update(streamEventMsg{runID: 7, ok: true, event: Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_bash",
+		ToolName:     "bash",
+		IsError:      true,
+		Summary:      "cmd=go test ./...",
+		Content:      content,
+	}})
+	if cmd == nil {
+		t.Fatal("activity event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+
+	if len(model.messages.items) != 1 {
+		t.Fatalf("messages = %#v, want one tool item", model.MessageTexts())
+	}
+	item := model.messages.items[0]
+	if item.status != "failed" {
+		t.Fatalf("tool status = %q, want failed", item.status)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "Ran cmd=go test ./... failed" {
+		t.Fatalf("messages = %#v, want failed title without detail", got)
+	}
+	collapsed := viewString(model)
+	for _, unexpected := range []string{"exit_code=1", "duration_ms=12", "--- stdout ---", "--- stderr ---"} {
+		if strings.Contains(collapsed, unexpected) {
+			t.Fatalf("collapsed failed tool leaked %q:\n%s", unexpected, collapsed)
+		}
+	}
+
+	model.messages.items[0].collapsed = false
+	model.messages.invalidateRender()
+	expanded := viewString(model)
+	for _, want := range []string{"× Ran cmd=go test ./... failed", "exit_code=1", "duration_ms=12", "--- stdout ---", "--- stderr ---", "failed"} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expanded failed tool missing %q:\n%s", want, expanded)
+		}
+	}
+}
+
 func TestToolActivityUpdatesInPlace(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true
@@ -1356,6 +1404,35 @@ func TestCollapsedActivityBlocksStackRowsAndMouseTargetsChip(t *testing.T) {
 	}
 }
 
+func TestCollapsedActivityBlocksUseFullRowWidth(t *testing.T) {
+	var list messageList
+	list.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		Status:       "running",
+		Summary:      "checking repository context before reading package manifests and tests",
+		Content:      "checking repository context before reading package manifests and tests",
+	})
+	list.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_rg",
+		ToolName:     "grep",
+		Status:       "running",
+		Summary:      "pattern=appendOrUpdateActivity path=internal/tui/message_list.go",
+	})
+
+	view := list.view(80, 10, 0, tuitheme.Plain())
+	for _, want := range []string{
+		"package manifests and tests",
+		"path=internal/tui/messa",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("collapsed activity should use full row width, missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 	response := make(chan permission.Decision, 1)
 	model := NewModel(Options{})
@@ -1501,7 +1578,7 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"keyboard:",
 		"Enter - send prompt",
 		"Ctrl+C - quit",
-		"Esc - cancel an active picker",
+		"Esc - clear activity focus",
 		"Shift+Tab - cycle execution mode",
 		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",
@@ -1669,6 +1746,48 @@ func TestKeyboardFocusTogglesMultipleActivityTargets(t *testing.T) {
 	}
 	if !strings.Contains(viewString(model), "read detail") || !strings.Contains(viewString(model), "+new") {
 		t.Fatalf("space should toggle the second focused activity entry:\n%s", viewString(model))
+	}
+}
+
+func TestEscClearsActivityFocus(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_read",
+		ToolName:     "read",
+		Status:       "done",
+		Summary:      "path=main.go",
+		Content:      "read detail",
+	})
+
+	updated, cmd := model.Update(keyPress('n', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("ctrl+n returned unexpected command")
+	}
+	if !model.messages.hasFocusedCollapsible() {
+		t.Fatal("ctrl+n should focus the activity")
+	}
+
+	updated, cmd = model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("esc returned unexpected command")
+	}
+	if model.messages.hasFocusedCollapsible() {
+		t.Fatal("esc should clear activity focus")
+	}
+
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("enter returned unexpected command")
+	}
+	if strings.Contains(viewString(model), "read detail") {
+		t.Fatalf("enter should not toggle an activity after focus is cleared:\n%s", viewString(model))
 	}
 }
 
