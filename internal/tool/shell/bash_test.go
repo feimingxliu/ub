@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,9 +15,7 @@ import (
 
 func skipOnWindows(t *testing.T) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("bash tool not supported on windows in V1")
-	}
+	// Windows is supported; kept as a no-op for any future platform restrictions.
 }
 
 func execBash(t *testing.T, b *bashTool, args bashArgs) tool.Result {

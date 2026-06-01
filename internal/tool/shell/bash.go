@@ -20,7 +20,7 @@ import (
 )
 
 type bashArgs struct {
-	Command   string      `json:"command"              jsonschema:"required,description=Shell command, executed via /bin/sh -c."`
+	Command   string      `json:"command"              jsonschema:"required,description=Shell command, executed via the system shell (/bin/sh -c on Unix, cmd /C on Windows)."`
 	Cwd       string      `json:"cwd,omitempty"        jsonschema:"description=Working directory, relative to workspace root. Defaults to '.'."`
 	TimeoutMs tool.IntArg `json:"timeout_ms,omitempty" jsonschema:"description=Timeout in milliseconds. Defaults to 120000. Must be non-negative."`
 }
@@ -39,7 +39,7 @@ func newBashTool(root string) *bashTool {
 
 func (t *bashTool) Name() string { return "bash" }
 func (t *bashTool) Description() string {
-	return "Run a shell command via /bin/sh -c from the workspace (or explicit cwd). Use for builds, tests, git/status inspection, and repo commands that need a real process. Prefer cwd over `cd ... && ...`; set a timeout for long commands. Treat non-zero exit_code, timeout, aborted, stdout, and stderr as evidence, and never report a check as passed unless this tool actually ran and exit_code=0."
+	return "Run a shell command via the system shell (/bin/sh -c on Unix, cmd /C on Windows) from the workspace (or explicit cwd). Use for builds, tests, git/status inspection, and repo commands that need a real process. Prefer cwd over `cd ... && ...`; set a timeout for long commands. Treat non-zero exit_code, timeout, aborted, stdout, and stderr as evidence, and never report a check as passed unless this tool actually ran and exit_code=0."
 }
 func (t *bashTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *bashTool) Risk() tool.Risk            { return tool.RiskExec }
@@ -57,9 +57,6 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 }
 
 func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
-	if runtime.GOOS == "windows" {
-		return tool.Result{}, fmt.Errorf("bash: not supported on windows in V1")
-	}
 	var a bashArgs
 	if err := tool.UnmarshalArgs(raw, &a); err != nil {
 		return tool.Result{}, fmt.Errorf("bash: invalid args: %w", err)
@@ -94,7 +91,7 @@ func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- t
 	stdout := newCapWriter(streamCap)
 	stderr := newCapWriter(streamCap)
 
-	cmd := exec.Command("/bin/sh", "-c", a.Command)
+	cmd := shellCommand(a.Command)
 	cmd.Dir = absCwd
 	cmd.Stdin = devNull
 	if events != nil {
@@ -120,11 +117,15 @@ func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- t
 	killGroup := func(reason string) {
 		killOnce.Do(func() {
 			killReason = reason
-			_ = procgroup.Kill(pid, syscall.SIGTERM)
-			go func() {
-				time.Sleep(2 * time.Second)
-				_ = procgroup.Kill(pid, syscall.SIGKILL)
-			}()
+			if runtime.GOOS == "windows" {
+				_ = cmd.Process.Kill()
+			} else {
+				_ = procgroup.Kill(pid, syscall.SIGTERM)
+				go func() {
+					time.Sleep(2 * time.Second)
+					_ = procgroup.Kill(pid, syscall.SIGKILL)
+				}()
+			}
 		})
 	}
 
@@ -241,4 +242,13 @@ func writeStream(b *strings.Builder, w *capWriter) {
 	if w.Total() > len(w.Bytes()) {
 		fmt.Fprintf(b, "\n... (truncated, total %d bytes)", w.Total())
 	}
+}
+
+// shellCommand returns the platform-appropriate command to execute a shell
+// one-liner: /bin/sh -c on Unix, cmd /C on Windows.
+func shellCommand(command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/C", command)
+	}
+	return exec.Command("/bin/sh", "-c", command)
 }

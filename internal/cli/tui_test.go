@@ -510,7 +510,7 @@ func TestMessagesForTUIFromRolloutTagsTurnNumber(t *testing.T) {
 
 func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("bash tool is not supported on windows in V1")
+		t.Skip("tui shell test uses Unix-specific echo syntax")
 	}
 	temp := t.TempDir()
 	t.Chdir(temp)
