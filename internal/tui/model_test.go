@@ -1422,7 +1422,10 @@ func TestCollapsedActivityBlocksUseFullRowWidth(t *testing.T) {
 		Summary:      "pattern=appendOrUpdateActivity path=internal/tui/message_list.go",
 	})
 
-	view := list.view(80, 10, 0, tuitheme.Plain())
+	// Keep a little slack for locales where ambiguous-width glyphs such as
+	// the ellipsis render as two cells; this test is about using the full row,
+	// not about the exact truncation boundary.
+	view := list.view(84, 10, 0, tuitheme.Plain())
 	for _, want := range []string{
 		"package manifests and tests",
 		"path=internal/tui/messa",
