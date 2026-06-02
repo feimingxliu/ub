@@ -18,6 +18,7 @@ const (
 	maxToolActivityDetailRunes = 12000
 	shellMetadataOpenTag       = "<shell_metadata>\n"
 	shellMetadataCloseTag      = "</shell_metadata>"
+	toolResultTruncatedMarker  = "... [tool result truncated:"
 )
 
 func (a *Agent) emitThinkingActivity(summary, detail string) (Event, bool) {
@@ -152,6 +153,43 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 			parts = append(parts, label+"="+value)
 		}
 	}
+	addCount := func(label, key string) {
+		value, ok := body[key]
+		if !ok || value == nil {
+			return
+		}
+		if items, ok := value.([]any); ok {
+			parts = append(parts, fmt.Sprintf("%s=%d", label, len(items)))
+		}
+	}
+	addUniqueObjectStringCount := func(label, key, field string) {
+		value, ok := body[key]
+		if !ok || value == nil {
+			return
+		}
+		items, ok := value.([]any)
+		if !ok {
+			return
+		}
+		seen := map[string]struct{}{}
+		for _, item := range items {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			value, ok := rawStringField(obj, field)
+			if !ok {
+				continue
+			}
+			value = strings.TrimSpace(value)
+			if value != "" {
+				seen[value] = struct{}{}
+			}
+		}
+		if len(seen) > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", label, len(seen)))
+		}
+	}
 	addCommand := func() {
 		if value, ok := commandStringField(body, "command"); ok {
 			parts = append(parts, "cmd="+truncateActivitySummary(redactText("command", firstLine(value))))
@@ -162,6 +200,44 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 	switch strings.TrimSpace(name) {
 	case "bash", "job_run":
 		addCommand()
+	case "task":
+		if value, ok := rawStringField(body, "prompt"); ok {
+			parts = append(parts, "prompt="+truncateActivitySummary(redactText("prompt", firstLine(value))))
+		}
+		add("max_turns", "max_turns")
+	case "remember":
+		add("scope", "scope")
+		add("text", "text")
+	case "plan_write":
+		add("title", "title")
+		addCount("steps", "steps")
+	case "plan_update_step":
+		add("plan_id", "plan_id")
+		add("step", "step_index")
+		add("status", "status")
+	case "multiedit":
+		addCount("edits", "edits")
+		addUniqueObjectStringCount("files", "edits", "path")
+	case "tool_result":
+		add("tool_use_id", "tool_use_id")
+		add("offset", "offset")
+		add("limit", "limit")
+	case "diagnostics", "document_symbols":
+		add("file", "file")
+	case "references":
+		add("symbol", "symbol")
+		add("file", "file")
+		add("line", "line")
+		add("col", "col")
+	case "hover", "completion", "code_action":
+		add("file", "file")
+		add("line", "line")
+		add("col", "col")
+	case "rename":
+		add("file", "file")
+		add("line", "line")
+		add("col", "col")
+		add("new_name", "new_name")
 	case "read", "ls":
 		add("path", "path")
 	case "write":
@@ -185,12 +261,17 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 	case "job_output", "job_kill":
 		add("job_id", "job_id")
 	default:
-		for _, key := range []string{"path", "pattern", "include", "command", "cwd", "job_id", "limit", "offset", "tail", "timeout_ms"} {
+		for _, key := range []string{"path", "file", "pattern", "include", "command", "cwd", "job_id", "tool_use_id", "prompt", "title", "symbol", "query", "scope", "text", "line", "col", "limit", "offset", "tail", "timeout_ms", "max_turns"} {
 			add(key, key)
 		}
 	}
 
 	if len(parts) == 0 {
+		if len(body) > 0 {
+			if raw, err := json.Marshal(body); err == nil && len(raw) > 0 && string(raw) != "null" {
+				return "input=" + truncateActivitySummary(redactText("input", string(raw)))
+			}
+		}
 		return "input accepted"
 	}
 	return truncateActivitySummary(strings.Join(parts, ", "))
@@ -445,10 +526,33 @@ func truncateActivityDetailToRunes(text string, maxRunes int) string {
 	if len(runes) <= maxRunes {
 		return text
 	}
-	marker := "\n... (truncated)"
-	budget := maxRunes - len([]rune(marker))
+	notice := fmt.Sprintf("[activity detail truncated: showing preview of %d runes; original %d runes]", maxRunes, len(runes))
+	footer := ""
+	if foundFooter, ok := toolResultTruncationFooter(text); ok {
+		footer = strings.TrimRight(foundFooter, " \t\r\n")
+		notice = "[activity detail truncated: showing preview; tool result footer preserved]"
+	}
+	suffix := ""
+	if footer != "" {
+		suffix = "\n" + footer
+	}
+	prefix := notice + "\n"
+	budget := maxRunes - len([]rune(prefix)) - len([]rune(suffix))
 	if budget < 0 {
 		budget = 0
 	}
-	return strings.TrimRight(string(runes[:budget]), " \t\r\n") + marker
+	preview := strings.TrimRight(string(runes[:budget]), " \t\r\n")
+	if preview == "" {
+		return notice + suffix
+	}
+	return prefix + preview + suffix
+}
+
+func toolResultTruncationFooter(text string) (string, bool) {
+	index := strings.LastIndex(text, toolResultTruncatedMarker)
+	if index < 0 {
+		return "", false
+	}
+	footer := strings.TrimSpace(text[index:])
+	return footer, footer != ""
 }

@@ -200,11 +200,108 @@ func (l *messageList) appendOrUpdateActivity(event Event) {
 }
 
 func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
+	event = normalizeLoadedActivityEvent(event)
 	block := activityMessage(event)
 	if turn > 0 && strings.TrimSpace(block.key) != "" {
 		block.key = fmt.Sprintf("history:turn-%d:%s", turn, block.key)
 	}
 	l.appendOrUpdateBlock(block)
+}
+
+func normalizeLoadedActivityEvent(event Event) Event {
+	if strings.TrimSpace(event.ActivityKind) != "tool" {
+		event.Content = normalizeLoadedActivityDetail(event.Content)
+		return event
+	}
+	event.Summary = normalizeLoadedToolSummary(event.ToolName, event.Status, event.Summary)
+	event.Content = normalizeLoadedActivityDetail(event.Content)
+	return event
+}
+
+func normalizeLoadedToolSummary(toolName, status, summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return ""
+	}
+	candidates := []string{
+		toolTitle(toolName, ""),
+		toolAction(toolName),
+		legacyToolTitle(toolName),
+		legacyToolAction(toolName),
+	}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if summary == candidate {
+			return ""
+		}
+		if strings.TrimSpace(status) == "failed" && summary == candidate+" failed" {
+			return ""
+		}
+		if strings.HasPrefix(summary, candidate+" ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(summary, candidate))
+			if strings.TrimSpace(status) == "failed" {
+				rest = strings.TrimSpace(strings.TrimSuffix(rest, " failed"))
+			}
+			return rest
+		}
+	}
+	return summary
+}
+
+func legacyToolTitle(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "task":
+		return "Ran task"
+	default:
+		return ""
+	}
+}
+
+func legacyToolAction(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "task":
+		return "Running task..."
+	default:
+		return ""
+	}
+}
+
+func normalizeLoadedActivityDetail(detail string) string {
+	detail = strings.TrimRight(detail, " \t\r\n")
+	if strings.TrimSpace(detail) == "" {
+		return ""
+	}
+	if strings.Contains(detail, "activity detail truncated") {
+		return promoteActivityTruncationNotice(detail)
+	}
+	if strings.HasSuffix(strings.TrimSpace(detail), "... (truncated)") {
+		preview := strings.TrimRight(strings.TrimSuffix(detail, "... (truncated)"), " \t\r\n")
+		if preview == "" {
+			return "[activity detail truncated: restored from legacy session detail]"
+		}
+		return "[activity detail truncated: restored from legacy session detail]\n" + preview
+	}
+	return detail
+}
+
+func promoteActivityTruncationNotice(detail string) string {
+	lines := strings.Split(detail, "\n")
+	for i, line := range lines {
+		if !strings.Contains(line, "activity detail truncated") {
+			continue
+		}
+		notice := strings.TrimPrefix(strings.TrimSpace(line), "... ")
+		if i == 0 {
+			return detail
+		}
+		rest := append([]string{}, lines[:i]...)
+		rest = append(rest, lines[i+1:]...)
+		return notice + "\n" + strings.TrimLeft(strings.Join(rest, "\n"), "\n")
+	}
+	return detail
 }
 
 func (l *messageList) appendOrUpdateActivityInGroup(groupKey, groupName string, event Event) {
@@ -638,78 +735,115 @@ func (l messageList) focusedLine(width int, styles tuitheme.Styles) (int, int, b
 }
 
 func (l messageList) view(width, height, scroll int, styles tuitheme.Styles) string {
-	if scroll <= 0 && height > 0 {
-		lines := l.tailLines(width, height, styles)
-		if len(lines) == 0 {
-			return styles.Render(styles.Muted, truncateText("No messages yet · type a prompt or /help", contentWidth(width)))
-		}
-		return strings.Join(lines, "\n")
-	}
-	lines := l.render(width, styles).lines
-	if len(lines) == 0 {
+	rendered := l.render(width, styles)
+	if len(rendered.lines) == 0 {
 		return styles.Render(styles.Muted, truncateText("No messages yet · type a prompt or /help", contentWidth(width)))
 	}
-	if height <= 0 || height >= len(lines) {
-		return strings.Join(lines, "\n")
+	if height <= 0 || height >= len(rendered.lines) {
+		return strings.Join(rendered.lines, "\n")
 	}
-	start := visibleStart(len(lines), height, scroll)
-	return strings.Join(lines[start:start+height], "\n")
+	start := visibleStart(len(rendered.lines), height, scroll)
+	visible := append([]string(nil), rendered.lines[start:start+height]...)
+	visible = l.applyViewportClipMarkers(visible, rendered, start, width, styles)
+	return strings.Join(visible, "\n")
+}
+
+func (l messageList) applyViewportClipMarkers(lines []string, rendered renderedMessages, start, width int, styles tuitheme.Styles) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+	maxWidth := contentWidth(width)
+	if maxWidth <= 0 {
+		maxWidth = 10
+	}
+	endLine := start + len(lines) - 1
+	if marker := l.viewportClipMarker(rendered, start, endLine); marker != "" {
+		lines[len(lines)-1] = styles.Render(styles.Modal.Warning, truncateText(marker, maxWidth))
+	}
+	return lines
+}
+
+func (l messageList) viewportClipMarker(rendered renderedMessages, startLine, endLine int) string {
+	earlier := l.viewportCutsExpandedToolDetail(rendered, startLine, true)
+	later := l.viewportCutsExpandedToolDetail(rendered, endLine, false)
+	if !earlier && !later {
+		earlier, later = l.focusedExpandedToolDetailCuts(rendered, startLine, endLine)
+	}
+	switch {
+	case earlier && later:
+		return "[tool detail clipped: more above and below - PgUp/PgDn or scroll]"
+	case earlier:
+		return "[tool detail clipped: more above - PgUp or scroll]"
+	case later:
+		return "[tool detail clipped: more below - PgDn or scroll]"
+	default:
+		return ""
+	}
+}
+
+func (l messageList) focusedExpandedToolDetailCuts(rendered renderedMessages, startLine, endLine int) (bool, bool) {
+	target, ok := l.focusTarget()
+	if !ok {
+		return false, false
+	}
+	for _, span := range rendered.spans {
+		if span.itemIndex != target.itemIndex {
+			continue
+		}
+		if target.entryIndex >= 0 {
+			if !span.entry || span.entryIndex != target.entryIndex {
+				continue
+			}
+		} else if span.entry {
+			continue
+		}
+		if !l.spanIsExpandedToolDetail(span) {
+			return false, false
+		}
+		if endLine < span.start || startLine >= span.end {
+			return false, false
+		}
+		return startLine > span.start, endLine+1 < span.end
+	}
+	return false, false
+}
+
+func (l messageList) spanIsExpandedToolDetail(span messageSpan) bool {
+	if span.itemIndex < 0 || span.itemIndex >= len(l.items) {
+		return false
+	}
+	item := l.items[span.itemIndex]
+	if item.collapsed {
+		return false
+	}
+	if !span.entry {
+		return item.kind == toolMessage
+	}
+	if item.kind != activityGroupMessage || span.entryIndex < 0 || span.entryIndex >= len(item.entries) {
+		return false
+	}
+	entry := item.entries[span.entryIndex]
+	return entry.kind == toolMessage && !entry.collapsed
+}
+
+func (l messageList) viewportCutsExpandedToolDetail(rendered renderedMessages, line int, top bool) bool {
+	for _, span := range rendered.spans {
+		if line < span.start || line >= span.end {
+			continue
+		}
+		if !l.spanIsExpandedToolDetail(span) {
+			return false
+		}
+		if top {
+			return line > span.start
+		}
+		return line+1 < span.end
+	}
+	return false
 }
 
 func (l messageList) lines(width int) []string {
 	return l.render(width, tuitheme.Plain()).lines
-}
-
-func (l messageList) tailLines(width, height int, styles tuitheme.Styles) []string {
-	if len(l.items) == 0 || height <= 0 {
-		return nil
-	}
-	var tail []string
-	for end := len(l.items); end > 0 && len(tail) < height; {
-		start := end - 1
-		if l.items[start].compactActivity() {
-			for start > 0 && l.items[start-1].compactActivity() {
-				start--
-			}
-		}
-		segment := l.renderSegment(start, end, width, styles)
-		if len(segment) == 0 {
-			end = start
-			continue
-		}
-		if len(tail) > 0 {
-			segment = append(segment, "")
-		}
-		tail = append(segment, tail...)
-		if len(tail) > height {
-			tail = tail[len(tail)-height:]
-		}
-		end = start
-	}
-	return tail
-}
-
-func (l messageList) renderSegment(start, end, width int, styles tuitheme.Styles) []string {
-	if start < 0 || start >= end || end > len(l.items) {
-		return nil
-	}
-	if l.items[start].compactActivity() {
-		lines, _, _ := l.renderCompactActivityRun(start, 0, width, styles)
-		if len(lines) > end-start {
-			lines = lines[:end-start]
-		}
-		return lines
-	}
-	item := l.items[start]
-	if item.kind == activityGroupMessage {
-		entryFocus := -1
-		if start == l.focus {
-			entryFocus = l.entryFocus
-		}
-		lines, _ := renderActivityGroupBlockWithSpans(item, start == l.focus && l.entryFocus < 0, entryFocus, width, styles, start, 0)
-		return lines
-	}
-	return l.renderItem(item, start == l.focus && l.entryFocus < 0, width, styles)
 }
 
 func (l messageList) render(width int, styles tuitheme.Styles) renderedMessages {
@@ -882,7 +1016,7 @@ func renderActivityBlock(item message, focused bool, width int, styles tuitheme.
 		return out
 	}
 	if item.kind == toolMessage {
-		return appendToolDetailLines(out, detail, "└ ", width, styles)
+		return appendToolDetailLines(out, item.name, detail, "└ ", width, styles)
 	}
 	detailLines := wrapText(detail, max(10, contentWidth(width)-2))
 	for _, line := range detailLines {
@@ -933,18 +1067,19 @@ func renderActivityGroupBlockWithSpans(item message, focused bool, focusedEntry,
 			style = styles.Focus
 		}
 		out = append(out, styles.Render(style, "└ "+entryLine))
-		if twoStageDetails && activityEntryHasDetail(entry) {
+		hasEntryTarget := twoStageDetails && activityEntryHasDetail(entry)
+		if detail := expandedDetail(entry); detail != "" && (!twoStageDetails || !entry.collapsed) {
+			out = appendActivityEntryDetailLines(out, entry, detail, "  ", width, styles)
+		}
+		if hasEntryTarget {
 			spans = append(spans, messageSpan{
 				itemIndex:  itemIndex,
 				entryIndex: entryIndex,
 				entry:      true,
 				start:      lineIndex,
-				end:        lineIndex + 1,
+				end:        startLine + len(out),
 				endCol:     contentWidth(width),
 			})
-		}
-		if detail := expandedDetail(entry); detail != "" && (!twoStageDetails || !entry.collapsed) {
-			out = appendActivityEntryDetailLines(out, entry, detail, "  ", width, styles)
 		}
 	}
 	return out, spans
@@ -969,7 +1104,7 @@ func activityEntryHasDetail(entry message) bool {
 
 func appendActivityEntryDetailLines(out []string, entry message, detail, prefix string, width int, styles tuitheme.Styles) []string {
 	if entry.kind == toolMessage {
-		return appendToolDetailLines(out, detail, prefix, width, styles)
+		return appendToolDetailLines(out, entry.name, detail, prefix, width, styles)
 	}
 	style := styles.Tool.Detail
 	if entry.kind == thinkingMessage {
@@ -982,11 +1117,20 @@ func appendActivityEntryDetailLines(out []string, entry message, detail, prefix 
 	return out
 }
 
-func appendToolDetailLines(out []string, detail, prefix string, width int, styles tuitheme.Styles) []string {
+func appendToolDetailLines(out []string, toolName, detail, prefix string, width int, styles tuitheme.Styles) []string {
 	if strings.TrimSpace(detail) == "" {
 		return out
 	}
 	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
+	if !toolDetailUsesDiffStyle(toolName) {
+		style := styles.Tool.Detail
+		for _, line := range strings.Split(detail, "\n") {
+			for _, wrapped := range wrapLine(line, textWidth) {
+				out = append(out, styles.Render(style, prefix+wrapped))
+			}
+		}
+		return out
+	}
 	for _, line := range strings.Split(detail, "\n") {
 		displayLine := formatToolDetailLine(line)
 		style := toolDetailLineStyle(line, styles)
@@ -995,6 +1139,15 @@ func appendToolDetailLines(out []string, detail, prefix string, width int, style
 		}
 	}
 	return out
+}
+
+func toolDetailUsesDiffStyle(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case "write", "edit", "multiedit":
+		return true
+	default:
+		return false
+	}
 }
 
 func toolDetailLineStyle(line string, styles tuitheme.Styles) lipgloss.Style {
@@ -1334,6 +1487,9 @@ func shouldKeepExistingToolDetail(existing, incoming message) bool {
 	if incomingDetail == "" {
 		return true
 	}
+	if toolDetailHasTruncationNotice(incomingDetail) {
+		return false
+	}
 	if !meaningfulToolDetail(incomingDetail, incoming) {
 		return true
 	}
@@ -1361,6 +1517,12 @@ func shellMetadataOnlyDetail(detail string) bool {
 	withoutMetadata = strings.TrimSpace(withoutMetadata)
 	withoutMetadata = strings.TrimPrefix(withoutMetadata, "--- stderr ---")
 	return strings.TrimSpace(withoutMetadata) == ""
+}
+
+func toolDetailHasTruncationNotice(detail string) bool {
+	return strings.Contains(detail, "activity detail truncated") ||
+		strings.Contains(detail, "... [tool result truncated:") ||
+		strings.Contains(detail, "full_output_path=")
 }
 
 func genericRunningToolTitle(item message) bool {
@@ -1612,9 +1774,24 @@ func compactToolHighlight(entry message) string {
 	title = strings.TrimPrefix(title, "Finding files... ")
 	title = strings.TrimPrefix(title, "Preparing write... ")
 	title = strings.TrimPrefix(title, "Preparing edit... ")
+	title = strings.TrimPrefix(title, "Preparing multi-edit... ")
 	title = strings.TrimPrefix(title, "Starting job... ")
 	title = strings.TrimPrefix(title, "Reading job output... ")
 	title = strings.TrimPrefix(title, "Stopping job... ")
+	title = strings.TrimPrefix(title, "Running Task... ")
+	title = strings.TrimPrefix(title, "Writing memory... ")
+	title = strings.TrimPrefix(title, "Writing plan... ")
+	title = strings.TrimPrefix(title, "Updating plan step... ")
+	title = strings.TrimPrefix(title, "Reading tool result... ")
+	title = strings.TrimPrefix(title, "Checking diagnostics... ")
+	title = strings.TrimPrefix(title, "Finding references... ")
+	title = strings.TrimPrefix(title, "Reading hover... ")
+	title = strings.TrimPrefix(title, "Getting completions... ")
+	title = strings.TrimPrefix(title, "Listing document symbols... ")
+	title = strings.TrimPrefix(title, "Preparing rename... ")
+	title = strings.TrimPrefix(title, "Listing code actions... ")
+	title = strings.TrimPrefix(title, "Ran Task ")
+	title = strings.TrimPrefix(title, "Ran task ")
 	if title == "" {
 		title = defaultString(entry.name, "tool")
 	}

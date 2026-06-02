@@ -1316,6 +1316,167 @@ func TestToolGroupDoesNotExpandTrivialCompletedDetail(t *testing.T) {
 	}
 }
 
+func TestTaskToolActivityUsesReadableTitle(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 9
+	model.events = make(chan Event)
+	updated, _ := model.Update(streamEventMsg{
+		runID: 9,
+		ok:    true,
+		event: Event{
+			Type:         EventActivity,
+			ActivityKind: "tool",
+			ToolUseID:    "call_task",
+			ToolName:     "task",
+			Status:       "running",
+			Summary:      "prompt=Research providers max_turns=20",
+		},
+	})
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "Running Task... prompt=Research providers max_turns=20") {
+		t.Fatalf("task activity missing readable title:\n%s", view)
+	}
+	if strings.Contains(view, "Working... input accepted") {
+		t.Fatalf("task activity still uses generic title:\n%s", view)
+	}
+}
+
+func TestLoadedLegacyTaskActivityUsesCurrentReadableTitle(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{{
+		Turn:         1,
+		ActivityKind: "tool",
+		ToolUseID:    "call_task",
+		ToolName:     "task",
+		Status:       "done",
+		Summary:      "Ran task prompt=Research providers max_turns=20",
+		Content:      "final answer",
+	}}})
+
+	view := viewString(model)
+	if !strings.Contains(view, "Ran Task prompt=Research providers max_turns=20") {
+		t.Fatalf("loaded task activity missing normalized title:\n%s", view)
+	}
+	if strings.Contains(view, "Ran task") {
+		t.Fatalf("loaded task activity kept legacy title:\n%s", view)
+	}
+}
+
+func TestLoadedLegacyToolDetailShowsTruncationNotice(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{{
+		Turn:         1,
+		ActivityKind: "tool",
+		ToolUseID:    "call_task",
+		ToolName:     "task",
+		Status:       "done",
+		Summary:      "Ran task prompt=Research providers",
+		Content:      "partial task result\n... (truncated)",
+	}}})
+	model.messages.items[0].collapsed = false
+	model.messages.invalidateRender()
+
+	view := viewString(model)
+	if !strings.Contains(view, "activity detail truncated") {
+		t.Fatalf("loaded truncated detail missing notice:\n%s", view)
+	}
+	if strings.Contains(view, "partial task result\n") && strings.Index(view, "partial task result") < strings.Index(view, "activity detail truncated") {
+		t.Fatalf("truncation notice should be visible before legacy preview:\n%s", view)
+	}
+}
+
+func TestLoadedToolResultTruncationDetailOverridesLegacyActivity(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{
+		{
+			Turn:         1,
+			ActivityKind: "tool",
+			ToolUseID:    "call_task",
+			ToolName:     "task",
+			Status:       "done",
+			Summary:      "Ran task prompt=Research providers",
+			Content:      "legacy partial result\n... (truncated)",
+		},
+		{
+			Turn:         1,
+			ActivityKind: "tool",
+			ToolUseID:    "call_task",
+			ToolName:     "task",
+			Status:       "done",
+			Summary:      "prompt=Research providers",
+			Content:      "new preview\n... [activity detail truncated: middle omitted; tool result footer preserved]\n... [tool result truncated: original_bytes=999999]\nfull_output_path=/tmp/ub-full-output.txt",
+		},
+	}})
+	model.messages.items[0].collapsed = false
+	model.messages.invalidateRender()
+
+	view := viewString(model)
+	if !strings.Contains(view, "full_output_path=/tmp/ub-full-output.txt") {
+		t.Fatalf("loaded tool result truncation footer was not preserved:\n%s", view)
+	}
+	if strings.Contains(view, "legacy partial result") {
+		t.Fatalf("legacy activity detail incorrectly overrode rebuilt tool_result detail:\n%s", view)
+	}
+	if strings.Index(view, "activity detail truncated") > strings.Index(view, "new preview") {
+		t.Fatalf("truncation notice should be promoted before preview:\n%s", view)
+	}
+}
+
+func TestBuiltInToolActivitiesUseExplicitLabels(t *testing.T) {
+	cases := []struct {
+		name      string
+		action    string
+		completed string
+	}{
+		{"read", "Reading file...", "Read"},
+		{"ls", "Listing directory...", "Listed"},
+		{"grep", "Searching content...", "Searched"},
+		{"glob", "Finding files...", "Found"},
+		{"write", "Preparing write...", "Wrote"},
+		{"edit", "Preparing edit...", "Edited"},
+		{"multiedit", "Preparing multi-edit...", "Edited multiple files"},
+		{"bash", "Writing command...", "Ran"},
+		{"task", "Running Task...", "Ran Task"},
+		{"remember", "Writing memory...", "Remembered"},
+		{"plan_write", "Writing plan...", "Wrote plan"},
+		{"plan_update_step", "Updating plan step...", "Updated plan step"},
+		{"tool_result", "Reading tool result...", "Read tool result"},
+		{"diagnostics", "Checking diagnostics...", "Checked diagnostics"},
+		{"references", "Finding references...", "Found references"},
+		{"hover", "Reading hover...", "Read hover"},
+		{"completion", "Getting completions...", "Got completions"},
+		{"document_symbols", "Listing document symbols...", "Listed document symbols"},
+		{"rename", "Preparing rename...", "Prepared rename"},
+		{"code_action", "Listing code actions...", "Listed code actions"},
+		{"job_run", "Starting job...", "Started job"},
+		{"job_output", "Reading job output...", "Read job output"},
+		{"job_kill", "Stopping job...", "Stopped job"},
+		{"mcp__server__lookup", "Calling MCP server/lookup...", "Called MCP server/lookup"},
+	}
+	for _, tc := range cases {
+		if got := toolAction(tc.name); got != tc.action {
+			t.Fatalf("toolAction(%q) = %q, want %q", tc.name, got, tc.action)
+		}
+		if got := toolTitle(tc.name, ""); got != tc.completed {
+			t.Fatalf("toolTitle(%q) = %q, want %q", tc.name, got, tc.completed)
+		}
+	}
+}
+
+func TestTaskToolDetailDoesNotUseDiffFormatting(t *testing.T) {
+	var out []string
+	out = appendToolDetailLines(out, "task", "- bullet\nchanged file: no\n+ plus", "  ", 80, tuitheme.Default())
+	plain := xansi.Strip(strings.Join(out, "\n"))
+	if strings.Contains(plain, "changed file: file: no") {
+		t.Fatalf("task detail was humanized as file diff:\n%s", plain)
+	}
+	if !strings.Contains(plain, "- bullet") || !strings.Contains(plain, "changed file: no") || !strings.Contains(plain, "+ plus") {
+		t.Fatalf("task detail did not preserve plain lines:\n%s", plain)
+	}
+	if !toolDetailUsesDiffStyle("write") || toolDetailUsesDiffStyle("task") {
+		t.Fatalf("diff style classification broken")
+	}
+}
+
 func TestToolDetailLineKindClassifiesDiffLines(t *testing.T) {
 	cases := map[string]toolDetailLineKindValue{
 		"create write.md": toolDetailSummaryLine,
@@ -3491,6 +3652,133 @@ func TestTailViewMatchesFullRenderedBottom(t *testing.T) {
 	got := list.view(width, height, 0, tuitheme.Plain())
 	if got != want {
 		t.Fatalf("tail view mismatch\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+func TestExpandedLongToolDetailShowsViewportClipMarker(t *testing.T) {
+	var list messageList
+	list.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_task",
+		ToolName:     "task",
+		Status:       "done",
+		Summary:      "prompt=Research the provider design in the crush project (.references/crush/).",
+		Content:      strings.Repeat("provider detail line\n", 80),
+	})
+	list.items[0].collapsed = false
+	list.invalidateRender()
+
+	view := list.view(100, 12, 0, tuitheme.Plain())
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(lines[len(lines)-1], "more above") {
+		t.Fatalf("expanded long tool detail should show viewport clipping marker:\n%s", view)
+	}
+	if strings.Contains(view, "activity detail truncated") {
+		t.Fatalf("viewport clipping should not pretend the tool result was data-truncated:\n%s", view)
+	}
+}
+
+func TestExpandedGroupedToolDetailShowsViewportClipMarker(t *testing.T) {
+	var list messageList
+	list.appendOrUpdateActivityInGroup("activity:tool:1", toolGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_task",
+		ToolName:     "task",
+		Status:       "done",
+		Summary:      "prompt=Research the provider design in the crush project (.references/crush/).",
+		Content:      strings.Repeat("provider detail line\n", 80),
+	})
+	list.items[0].collapsed = false
+	list.items[0].entries[0].collapsed = false
+	list.invalidateRender()
+
+	view := list.view(100, 12, 0, tuitheme.Plain())
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(lines[len(lines)-1], "more above") {
+		t.Fatalf("expanded grouped tool detail should show viewport clipping marker:\n%s", view)
+	}
+}
+
+func TestExpandedThinkingDetailDoesNotShowToolClipMarker(t *testing.T) {
+	var list messageList
+	list.appendOrUpdateActivity(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		Status:       "done",
+		Summary:      "checking context",
+		Content:      strings.Repeat("thinking detail line\n", 80),
+	})
+	list.items[0].collapsed = false
+	list.invalidateRender()
+
+	view := list.view(100, 12, 0, tuitheme.Plain())
+	if strings.Contains(view, "tool detail clipped") {
+		t.Fatalf("thinking detail should not show tool clipping marker:\n%s", view)
+	}
+}
+
+func TestMouseExpandingGroupedToolDetailShowsBottomClipMarker(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	model = assertModel(t, updated)
+	model.messages.appendOrUpdateActivityInGroup("activity:tool:1", toolGroupName, Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_task",
+		ToolName:     "task",
+		Status:       "done",
+		Summary:      "prompt=Research the provider design in the crush project (.references/crush/).",
+		Content:      strings.Repeat("provider detail line\n", 80),
+	})
+	model.messages.items[0].collapsed = false
+	model.messages.invalidateRender()
+
+	updated, cmd := model.Update(mouseClick(0, 1))
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(lines[9], "more below") {
+		t.Fatalf("mouse-expanded grouped tool detail should show bottom clipping marker:\n%s", view)
+	}
+}
+
+func TestMouseExpandingLoadedTaskToolDetailShowsBottomClipMarker(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{
+		{
+			Turn:         1,
+			ActivityKind: "tool",
+			ToolUseID:    "call_task",
+			ToolName:     "task",
+			Status:       "queued",
+			Summary:      "prompt=Research the provider design in the crush project (.references/crush/).",
+		},
+		{
+			Turn:         1,
+			ActivityKind: "tool",
+			ToolUseID:    "call_task",
+			ToolName:     "task",
+			Status:       "done",
+			Summary:      "prompt=Research the provider design in the crush project (.references/crush/).",
+			Content:      strings.Repeat("provider detail line\n", 80),
+		},
+	}})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	model = assertModel(t, updated)
+
+	updated, cmd := model.Update(mouseClick(0, 0))
+	if cmd != nil {
+		t.Fatalf("mouse click returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(lines[9], "more below") {
+		t.Fatalf("mouse-expanded loaded task detail should show bottom clipping marker:\n%s", view)
 	}
 }
 

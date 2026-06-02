@@ -1250,6 +1250,28 @@ func TestToolActivitySummaryRedactsSecretsAndTruncates(t *testing.T) {
 	}
 }
 
+func TestToolActivitySummaryTaskAndUnknownTools(t *testing.T) {
+	summary := SummarizeToolInput("task", json.RawMessage(`{"prompt":"Research providers\nwith details","max_turns":20}`))
+	if !strings.Contains(summary, "prompt=Research providers") || !strings.Contains(summary, "max_turns=20") {
+		t.Fatalf("task summary = %q, want prompt and max_turns", summary)
+	}
+	if strings.Contains(summary, "\n") {
+		t.Fatalf("task summary should be single-line: %q", summary)
+	}
+
+	unknown := SummarizeToolInput("mcp_custom", json.RawMessage(`{"query":"providers","limit":5}`))
+	if !strings.Contains(unknown, "query=providers") || !strings.Contains(unknown, "limit=5") {
+		t.Fatalf("unknown tool summary = %q, want useful fields", unknown)
+	}
+}
+
+func TestToolActivitySummaryMultiEdit(t *testing.T) {
+	summary := SummarizeToolInput("multiedit", json.RawMessage(`{"edits":[{"path":"a.go","old":"x","new":"y"},{"path":"a.go","old":"y","new":"z"},{"path":"b.go","old":"x","new":"y"}]}`))
+	if !strings.Contains(summary, "edits=3") || !strings.Contains(summary, "files=2") {
+		t.Fatalf("multiedit summary = %q, want edits and files counts", summary)
+	}
+}
+
 func TestToolResultDetailUsesUnifiedDiff(t *testing.T) {
 	detail := toolResultDetail(tool.Result{
 		Files: []tool.FileChange{{
@@ -1297,6 +1319,26 @@ func TestToolActivityResultUsesContentWhenFilesHaveNoDiff(t *testing.T) {
 	}
 	if detail != content {
 		t.Fatalf("detail = %q, want plan content", detail)
+	}
+}
+
+func TestToolActivityDetailTruncationIsVisible(t *testing.T) {
+	_, detail := ToolActivityResult("read", "path=large.log", tool.Result{Content: strings.Repeat("line\n", maxToolActivityDetailRunes)})
+	if !strings.HasPrefix(detail, "[activity detail truncated:") {
+		t.Fatalf("detail missing truncation notice:\n%s", detail)
+	}
+}
+
+func TestToolActivityDetailTruncationPreservesToolResultFooter(t *testing.T) {
+	footer := "... [tool result truncated: original_bytes=999999]\nfull_output_path=/tmp/ub-full-output.txt\nUse the read tool with this absolute path plus offset/limit to inspect more."
+	_, detail := ToolActivityResult("task", "prompt=large research", tool.Result{Content: strings.Repeat("line\n", maxToolActivityDetailRunes) + footer})
+	if !strings.HasPrefix(detail, "[activity detail truncated:") {
+		t.Fatalf("detail should start with truncation notice:\n%s", detail)
+	}
+	for _, want := range []string{"activity detail truncated", "tool result footer preserved", "... [tool result truncated:", "full_output_path=/tmp/ub-full-output.txt"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail missing %q:\n%s", want, detail)
+		}
 	}
 }
 

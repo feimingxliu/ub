@@ -456,6 +456,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.showCheatsheet()
 			}
 			if m.toggleMessageAt(mouse.X, mouse.Y) {
+				m.scrollFocusedMessageIntoView()
 				return m, nil
 			}
 		}
@@ -1476,8 +1477,34 @@ func toolAction(name string) string {
 		return "Preparing write..."
 	case "edit":
 		return "Preparing edit..."
+	case "multiedit":
+		return "Preparing multi-edit..."
 	case "bash":
 		return "Writing command..."
+	case "task":
+		return "Running Task..."
+	case "remember":
+		return "Writing memory..."
+	case "plan_write":
+		return "Writing plan..."
+	case "plan_update_step":
+		return "Updating plan step..."
+	case "tool_result":
+		return "Reading tool result..."
+	case "diagnostics":
+		return "Checking diagnostics..."
+	case "references":
+		return "Finding references..."
+	case "hover":
+		return "Reading hover..."
+	case "completion":
+		return "Getting completions..."
+	case "document_symbols":
+		return "Listing document symbols..."
+	case "rename":
+		return "Preparing rename..."
+	case "code_action":
+		return "Listing code actions..."
 	case "job_run":
 		return "Starting job..."
 	case "job_output":
@@ -1485,6 +1512,12 @@ func toolAction(name string) string {
 	case "job_kill":
 		return "Stopping job..."
 	default:
+		if display, ok := mcpToolDisplayName(name); ok {
+			return "Calling " + display + "..."
+		}
+		if name := strings.TrimSpace(name); name != "" {
+			return "Running " + name + "..."
+		}
 		return "Working..."
 	}
 }
@@ -1505,8 +1538,34 @@ func toolTitle(name, summary string) string {
 		verb = "Wrote"
 	case "edit":
 		verb = "Edited"
+	case "multiedit":
+		verb = "Edited multiple files"
 	case "bash":
 		verb = "Ran"
+	case "task":
+		verb = "Ran Task"
+	case "remember":
+		verb = "Remembered"
+	case "plan_write":
+		verb = "Wrote plan"
+	case "plan_update_step":
+		verb = "Updated plan step"
+	case "tool_result":
+		verb = "Read tool result"
+	case "diagnostics":
+		verb = "Checked diagnostics"
+	case "references":
+		verb = "Found references"
+	case "hover":
+		verb = "Read hover"
+	case "completion":
+		verb = "Got completions"
+	case "document_symbols":
+		verb = "Listed document symbols"
+	case "rename":
+		verb = "Prepared rename"
+	case "code_action":
+		verb = "Listed code actions"
 	case "job_run":
 		verb = "Started job"
 	case "job_output":
@@ -1514,14 +1573,30 @@ func toolTitle(name, summary string) string {
 	case "job_kill":
 		verb = "Stopped job"
 	default:
+		if display, ok := mcpToolDisplayName(name); ok {
+			verb = "Called " + display
+			break
+		}
 		if strings.TrimSpace(name) != "" {
-			verb = name
+			verb = "Ran " + name
 		}
 	}
 	if summary == "" {
 		return verb
 	}
 	return verb + " " + summary
+}
+
+func mcpToolDisplayName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if !strings.HasPrefix(name, "mcp__") {
+		return "", false
+	}
+	parts := strings.SplitN(name, "__", 3)
+	if len(parts) != 3 || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return "MCP tool", true
+	}
+	return "MCP " + parts[1] + "/" + parts[2], true
 }
 
 func statusForActivity(event Event) string {

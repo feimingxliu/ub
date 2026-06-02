@@ -47,10 +47,12 @@
 
 | 键 | 作用 |
 |---|---|
-| `Ctrl+O` | 展开最近一个 collapsible 块（两段式：先展开最近的工具组，再展开组内最近的工具项的彩色 diff） |
+| `Ctrl+O` | 展开最近一个 collapsible 块（两段式：先展开最近的工具组，再展开组内最近的工具项；写类工具显示彩色 diff，其他工具显示普通文本详情） |
 | `Ctrl+N` | 焦点移到下一个 collapsible 块 |
 | `Ctrl+P` | 焦点移到上一个 collapsible 块 |
 | `Enter`（输入为空） | 展开 / 收起当前焦点块 |
+
+展开后的工具详情如果被 activity 层二次限幅，会出现 `activity detail truncated` 提示；当完整 tool result 已落盘时，详情会保留 `full_output_path=...` footer，便于用 `read` 或 `tool_result(tool_use_id)` 继续查看。如果只是当前 TUI 视窗装不下展开详情，消息区底部会显示 `[tool detail clipped: ...]`，可用 `PgUp` / `PgDn` 或滚轮继续查看。
 
 ### 2.3 鼠标
 
@@ -386,7 +388,7 @@ max_turns: 80
 - **深度上限 = 1**:子 agent 里再调 `task` 会被工具直接拒绝(避免递归 token 爆炸)
 - **`max_turns` 只限制子 agent**:省略时继承当前 agent 默认,即默认不按步数截断;传入正整数时只对该子任务生效
 - **不持久化 rollout**:子 agent 不写 store(避免 session 列表被刷屏);完整结果只通过 tool result 返回
-- **不显示在 TUI 活动流里**:子 agent 的 tool call 不会逐步显示;你只看到主 agent 的"调用了 task → 拿到了一段 markdown"
+- **不显示在 TUI 活动流里**:子 agent 的 tool call 不会逐步显示;你只看到主 agent 的 `task` 工具调用摘要和最终 markdown 结果
 
 后续 §4-01 agent loop 解耦完成后,会扩成"子 agent 独立模型 / 工具集 / TUI 多 pane"等完整能力。
 
