@@ -55,13 +55,6 @@ func shellNoopCommand() string {
 	return "true"
 }
 
-func shellLongStdoutCommand(bytes int) string {
-	if runtime.GOOS == "windows" {
-		return fmt.Sprintf(`for /L %%i in (1,1,%d) do @<nul set /p "=x"`, bytes)
-	}
-	return fmt.Sprintf("awk 'BEGIN{for(i=0;i<%d;i++)printf \"x\"}'", bytes)
-}
-
 func shellReadStdinCommand() string {
 	if runtime.GOOS == "windows" {
 		return "more"
@@ -223,9 +216,13 @@ func schemaProperties(t *testing.T, schema map[string]any, raw []byte) map[strin
 }
 
 func TestBash_StdoutTruncation(t *testing.T) {
-	b := newBashTool(t.TempDir())
+	root := t.TempDir()
+	b := newBashTool(root)
 	const target = 40000
-	res := execBash(t, b, bashArgs{Command: shellLongStdoutCommand(target)})
+	if err := os.WriteFile(filepath.Join(root, "long.txt"), []byte(strings.Repeat("x", target)), 0o644); err != nil {
+		t.Fatalf("write long stdout fixture: %v", err)
+	}
+	res := execBash(t, b, bashArgs{Command: shellReadFileCommand("long.txt")})
 	if res.IsError {
 		t.Fatalf("expected success, got Content:\n%s", res.Content[:min(200, len(res.Content))])
 	}
