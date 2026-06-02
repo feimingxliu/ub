@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.4] - 2026-06-02
+
+
+### Added
+
+- Add Windows support to bash tool ([c92ef7c](https://github.com/feimingxliu/ub/commit/c92ef7c9eb7296459b8a3757eb2e7f17ad9553e7))
+
+
+### Fixed
+
+- Improve TUI resume history handling ([22538bd](https://github.com/feimingxliu/ub/commit/22538bdd33bac495d1abfe08a800e22d122a89bc))
+- Polish TUI activity interactions ([dd0f778](https://github.com/feimingxliu/ub/commit/dd0f778eb375e6d640b6a7a809ea8a504e223208))
+- Add TUI transcript jump shortcuts ([445ba08](https://github.com/feimingxliu/ub/commit/445ba08a2d38e0bfdf2b4e9bd38a98ac5b57c366))
+- Stabilize tui session utilities ([6e2ac55](https://github.com/feimingxliu/ub/commit/6e2ac551c0472994e274f1df3f4ecc14f45a20dc))
+- Remove default tool loop cap ([07d6322](https://github.com/feimingxliu/ub/commit/07d632254552eea0340a7536d9996c40d1576913))
+- Improve TUI tool detail display ([66bf1a8](https://github.com/feimingxliu/ub/commit/66bf1a8827c227363ee90bdddb3bb466b06caf0c))
+
+
+### Other
+
+- Update roadmap ([0550f3a](https://github.com/feimingxliu/ub/commit/0550f3a3e25c20ec33622354cee53d1a0b713944))
+
+
+### Tests
+
+- Stabilize TUI activity width assertion ([9398e3b](https://github.com/feimingxliu/ub/commit/9398e3b2e3a52cde4f02576886e993f11312b31c))
+
 ## [0.3.3] - 2026-05-29
 
 
@@ -11,6 +38,11 @@ All notable changes to this project are documented here.
 - Keep default model scoped to its provider ([792e55d](https://github.com/feimingxliu/ub/commit/792e55d930a0d3c339bb3cea201cd18fe2349537))
 - Persist provider with sessions ([c55af2f](https://github.com/feimingxliu/ub/commit/c55af2fd19d0d3a503d7840c3d43fba810dd2c25))
 - Sync restored session mode ([5cfdfde](https://github.com/feimingxliu/ub/commit/5cfdfde42a8e4d8a6433efe585ca62ac67493ca5))
+
+
+### Maintenance
+
+- V0.3.3 ([76a59fc](https://github.com/feimingxliu/ub/commit/76a59fc1ca4da1d0f7e41c6846480842725ee0c3))
 
 ## [0.3.2] - 2026-05-29
 
