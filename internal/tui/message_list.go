@@ -199,6 +199,14 @@ func (l *messageList) appendOrUpdateActivity(event Event) {
 	l.appendOrUpdateBlock(block)
 }
 
+func (l *messageList) appendOrUpdateLiveActivity(event Event, turn int) {
+	block := activityMessage(event)
+	if turn > 0 && strings.TrimSpace(block.key) != "" {
+		block.key = fmt.Sprintf("live:turn-%d:%s", turn, block.key)
+	}
+	l.appendOrUpdateBlock(block)
+}
+
 func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
 	event = normalizeLoadedActivityEvent(event)
 	block := activityMessage(event)

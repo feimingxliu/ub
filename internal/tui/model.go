@@ -1294,7 +1294,7 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		// Insert tool/thinking events inline so they appear in
 		// chronological order relative to assistant text segments,
 		// matching the Codex-style interleaved transcript.
-		m.messages.appendOrUpdateActivity(event)
+		m.messages.appendOrUpdateLiveActivity(event, m.status.turn)
 		m.status.state = statusForActivity(event)
 		if summary := strings.TrimSpace(event.Summary); summary != "" && strings.TrimSpace(event.ActivityKind) != "thinking" {
 			m.activitySummary = summary
@@ -1303,7 +1303,7 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 	case EventToolPartialOutput:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))
 		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
-		m.messages.appendOrUpdateActivity(toolPartialActivity(event))
+		m.messages.appendOrUpdateLiveActivity(toolPartialActivity(event), m.status.turn)
 		m.status.state = statusTool
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventShellOutput:

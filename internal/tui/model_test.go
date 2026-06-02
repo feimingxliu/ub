@@ -726,6 +726,30 @@ func TestLoadScopesActivityUpdatesByTurn(t *testing.T) {
 	}
 }
 
+func TestLiveActivityUpdatesAreScopedByTurn(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{
+		{Type: EventActivity, ActivityKind: "thinking", Summary: "checking context", Content: "checking context"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner})
+
+	for _, prompt := range []string{"first prompt", "second prompt"} {
+		model = sendText(t, model, prompt)
+		updated, cmd := model.Update(keyPress(tea.KeyEnter))
+		if cmd == nil {
+			t.Fatal("enter returned nil command")
+		}
+		model = assertModel(t, updated)
+		model = drainBatch(t, model, cmd)
+	}
+
+	got := model.MessageTexts()
+	joined := strings.Join(got, "\n")
+	if count := strings.Count(joined, "thinking: checking context"); count != 2 {
+		t.Fatalf("messages = %#v, want two separate live thinking blocks", got)
+	}
+}
+
 func TestToolGroupMixedFailureDoesNotFailWholeGroup(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true
