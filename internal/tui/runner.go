@@ -137,6 +137,12 @@ type SessionRunner interface {
 	CurrentSessionID() string
 }
 
+// SessionSearchRunner optionally lets slash commands search across session
+// rollout content.
+type SessionSearchRunner interface {
+	SearchSessions(ctx context.Context, query string, limit int) (string, error)
+}
+
 // EventType identifies a TUI stream event.
 type EventType string
 

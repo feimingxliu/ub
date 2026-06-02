@@ -34,7 +34,7 @@ var specs = []Spec{
 	{Name: "copy", Usage: "/copy [N]", Description: "copy last response to clipboard, or message N (shown as [N] in transcript)"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},
 	{Name: "new", Usage: "/new", Description: "start a new empty session"},
-	{Name: "sessions", Usage: "/sessions", Description: "show session command guidance"},
+	{Name: "sessions", Usage: "/sessions [search <query>]", Description: "show session picker, or search rollout text across sessions"},
 	{Name: "help", Usage: "/help", Description: "show slash command help"},
 	{Name: "quit", Usage: "/quit", Description: "exit the TUI"},
 	{Name: "exit", Usage: "/exit", Description: "exit the TUI"},

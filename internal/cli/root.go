@@ -502,10 +502,11 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 }
 
 type toolRuntime struct {
-	Registry  *tool.Registry
-	Workspace string
-	Warnings  []error
-	close     func() error
+	Registry       *tool.Registry
+	Workspace      string
+	Warnings       []error
+	MCPConnections *mcptool.Connections
+	close          func() error
 }
 
 func (r *toolRuntime) Close() error {
@@ -610,8 +611,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		},
 	}
 	if cfg != nil {
-		closeMCP, warnings := mcptool.RegisterConfigured(ctx, reg, cfg.MCPServers)
-		closers = append(closers, closeMCP)
+		conns, warnings := mcptool.RegisterConfigured(ctx, reg, cfg.MCPServers)
+		closers = append(closers, conns.Close)
+		runtime.MCPConnections = conns
 		runtime.Warnings = append(runtime.Warnings, warnings...)
 	}
 	return runtime, nil

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -25,11 +24,11 @@ func TestNew_NopRunnerForEmptyConfig(t *testing.T) {
 }
 
 func TestShellRunner_PreToolCall_Success(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `echo hello && exit 0`}},
+		{Command: shellCommand("echo hello && exit 0")},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "edit"})
 	if dec.Block {
@@ -44,12 +43,12 @@ func TestShellRunner_PreToolCall_Success(t *testing.T) {
 }
 
 func TestShellRunner_PreToolCall_BlockOnFailure(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
 		{
-			Command:   []string{"/bin/sh", "-c", `echo "refused: secret tools blocked" 1>&2; exit 7`},
+			Command:   shellCommand("echo refused: secret tools blocked 1>&2 && exit 7"),
 			OnFailure: OnFailureBlock,
 		},
 	}}
@@ -66,11 +65,11 @@ func TestShellRunner_PreToolCall_BlockOnFailure(t *testing.T) {
 }
 
 func TestShellRunner_PreToolCall_WarnOnFailure(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `exit 3`}}, // OnFailure default = warn
+		{Command: shellCommand("exit 3")}, // OnFailure default = warn
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "bash"})
 	if dec.Block {
@@ -82,11 +81,11 @@ func TestShellRunner_PreToolCall_WarnOnFailure(t *testing.T) {
 }
 
 func TestShellRunner_PostToolCall_BlockIsIgnored(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PostToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `exit 5`}, OnFailure: OnFailureBlock},
+		{Command: shellCommand("exit 5"), OnFailure: OnFailureBlock},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPostToolCall, ToolName: "bash"})
 	if dec.Block {
@@ -95,13 +94,13 @@ func TestShellRunner_PostToolCall_BlockIsIgnored(t *testing.T) {
 }
 
 func TestShellRunner_ToolFilter_Mismatch(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	tmp := t.TempDir()
 	sentinel := filepath.Join(tmp, "ran")
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `touch "` + sentinel + `"`}, Tools: []string{"edit"}},
+		{Command: shellCommand("touch " + sentinel), Tools: []string{"edit"}},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "bash"})
 	if len(dec.Outcomes) != 0 {
@@ -113,11 +112,11 @@ func TestShellRunner_ToolFilter_Mismatch(t *testing.T) {
 }
 
 func TestShellRunner_ToolFilter_Match(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `exit 0`}, Tools: []string{"edit", "write"}},
+		{Command: shellCommand("exit 0"), Tools: []string{"edit", "write"}},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "edit"})
 	if len(dec.Outcomes) != 1 {
@@ -126,11 +125,11 @@ func TestShellRunner_ToolFilter_Match(t *testing.T) {
 }
 
 func TestShellRunner_Timeout(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `sleep 5`}, Timeout: 50 * time.Millisecond},
+		{Command: shellCommand("sleep 5"), Timeout: 50 * time.Millisecond},
 	}}
 	start := time.Now()
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "bash"})
@@ -147,18 +146,15 @@ func TestShellRunner_Timeout(t *testing.T) {
 }
 
 func TestShellRunner_EnvWhitelist(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	t.Setenv("MY_SECRET", "leak-me")
 	t.Setenv("ALLOWED_VAR", "ok")
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
 		{
-			Command: []string{
-				"/bin/sh", "-c",
-				`echo "secret=${MY_SECRET:-unset}"; echo "allowed=${ALLOWED_VAR:-unset}"; echo "hook=${UB_HOOK_EVENT:-unset}"`,
-			},
-			Env: []string{"ALLOWED_VAR"},
+			Command: shellCommand("echo secret=${MY_SECRET:-unset} && echo allowed=${ALLOWED_VAR:-unset} && echo hook=${UB_HOOK_EVENT:-unset}"),
+			Env:     []string{"ALLOWED_VAR"},
 		},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{
@@ -180,11 +176,11 @@ func TestShellRunner_EnvWhitelist(t *testing.T) {
 }
 
 func TestShellRunner_StdinJSON(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PostToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `cat`}},
+		{Command: shellCommand("cat")},
 	}}
 	res := tool.Result{Content: "hi", IsError: false}
 	dec := New(cfg).Run(context.Background(), Event{
@@ -217,12 +213,12 @@ func TestShellRunner_StdinJSON(t *testing.T) {
 }
 
 func TestShellRunner_OutputCap(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	// Print ~10KB to stdout; cap is 4KB.
 	cfg := config.HooksConfig{PreToolCall: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `python3 -c "print('a' * 10240, end='')" 2>/dev/null || yes a | head -c 10240`}},
+		{Command: shellCommand("python3 -c \"print('a' * 10240, end='')\" 2>/dev/null || yes a | head -c 10240")},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "edit"})
 	if len(dec.Outcomes) != 1 {
@@ -234,11 +230,11 @@ func TestShellRunner_OutputCap(t *testing.T) {
 }
 
 func TestShellRunner_UserTurnIgnoresToolFilter(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("requires /bin/sh")
+	if !hasShell() {
+		t.Skip("no shell available")
 	}
 	cfg := config.HooksConfig{PreUserTurn: []config.HookSpec{
-		{Command: []string{"/bin/sh", "-c", `exit 0`}, Tools: []string{"edit"}},
+		{Command: shellCommand("exit 0"), Tools: []string{"edit"}},
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreUserTurn})
 	if len(dec.Outcomes) != 1 {
@@ -252,6 +248,6 @@ func TestShellRunner_EmptyCommandError(t *testing.T) {
 	}}
 	dec := New(cfg).Run(context.Background(), Event{Kind: KindPreToolCall, ToolName: "x"})
 	if len(dec.Outcomes) != 1 || dec.Outcomes[0].Err == nil {
-		t.Fatalf("expected err outcome: %#v", dec.Outcomes)
+		t.Fatalf("expected err outcome: %#v", dec)
 	}
 }

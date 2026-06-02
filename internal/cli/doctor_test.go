@@ -2,12 +2,17 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/feimingxliu/ub/internal/config"
+	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
 )
 
 func TestDoctorChecksCompatProviderAndCommands(t *testing.T) {
@@ -280,5 +285,36 @@ func TestDoctorSuggest(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("suggest output missing %q:\n%s", want, out.String())
 		}
+	}
+}
+
+func TestDoctorPrefersLiveStatusOverProbe(t *testing.T) {
+	live := []mcptool.ServerStatus{
+		{Name: "live-server", Type: "http", Status: "connected"},
+		{Name: "dead-server", Type: "stdio", Status: "backoff", Err: fmt.Errorf("connection refused")},
+	}
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"fake": {Type: "fake"},
+		},
+		MCPServers: map[string]config.MCPServerConfig{
+			"live-server": {Type: "http", URL: "http://unused.example.com"},
+			"dead-server": {Type: "stdio", Command: "unused"},
+		},
+	}
+	report := collectDoctorReport(context.Background(), cfg, false, live)
+	if len(report.MCP) != 2 {
+		t.Fatalf("MCP entries = %d, want 2", len(report.MCP))
+	}
+	// The live-server should be reported as "connected" from live status,
+	// not probed (which would fail since the URL is unreachable).
+	if report.MCP[0].Name != "live-server" || report.MCP[0].Status != "connected" {
+		t.Errorf("live-server = %+v, want connected", report.MCP[0])
+	}
+	if report.MCP[1].Name != "dead-server" || report.MCP[1].Status != "backoff" {
+		t.Errorf("dead-server = %+v, want backoff", report.MCP[1])
+	}
+	if report.MCP[1].Error == "" {
+		t.Error("dead-server should have error message")
 	}
 }

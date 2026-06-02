@@ -54,7 +54,11 @@ func runDoctor(cmd *cobra.Command, plain, suggest, jsonOutput bool) error {
 }
 
 func renderDoctorText(ctx context.Context, cfg *config.Config, plain, suggest bool) (string, error) {
-	report := collectDoctorReport(ctx, cfg, suggest)
+	return renderDoctorTextWithLive(ctx, cfg, plain, suggest, nil)
+}
+
+func renderDoctorTextWithLive(ctx context.Context, cfg *config.Config, plain, suggest bool, liveStatus []mcptool.ServerStatus) (string, error) {
+	report := collectDoctorReport(ctx, cfg, suggest, liveStatus)
 	var out strings.Builder
 	style := doctorStyle{plain: plain}
 
@@ -140,7 +144,7 @@ type doctorCommand struct {
 	Path   string `json:"path,omitempty"`
 }
 
-func collectDoctorReport(ctx context.Context, cfg *config.Config, suggest bool) doctorReport {
+func collectDoctorReport(ctx context.Context, cfg *config.Config, suggest bool, liveStatus ...[]mcptool.ServerStatus) doctorReport {
 	report := doctorReport{
 		Providers: make([]providerCheck, 0, len(cfg.Providers)),
 		MCP:       make([]doctorMCPStatus, 0, len(cfg.MCPServers)),
@@ -149,7 +153,16 @@ func collectDoctorReport(ctx context.Context, cfg *config.Config, suggest bool) 
 	for _, name := range sortedProviderNames(cfg.Providers) {
 		report.Providers = append(report.Providers, checkProvider(ctx, name, cfg.Providers[name]))
 	}
-	for _, result := range mcptool.CheckConfigured(ctx, cfg.MCPServers) {
+	// Prefer live connection status (from the running agent) over fresh probes.
+	// Live status reflects actual reconnect/backoff state; probes open a new
+	// connection each time and cannot report backoff.
+	var mcpStatuses []mcptool.ServerStatus
+	if len(liveStatus) > 0 && len(liveStatus[0]) > 0 {
+		mcpStatuses = liveStatus[0]
+	} else {
+		mcpStatuses = mcptool.CheckConfigured(ctx, cfg.MCPServers)
+	}
+	for _, result := range mcpStatuses {
 		status := doctorMCPStatus{
 			Name:      result.Name,
 			Type:      result.Type,
@@ -196,6 +209,8 @@ func (s doctorStyle) status(text string) string {
 		return "\x1b[32m" + text + "\x1b[0m"
 	case lower == "offline":
 		return "\x1b[36m" + text + "\x1b[0m"
+	case lower == "backoff", lower == "disconnected":
+		return "\x1b[31m" + text + "\x1b[0m"
 	case strings.HasPrefix(lower, "no_"), lower == "missing", lower == "not_configured":
 		return "\x1b[33m" + text + "\x1b[0m"
 	case lower == "error", lower == "unknown_provider_type":

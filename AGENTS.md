@@ -44,7 +44,6 @@ guidance lives in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - Use Conventional Commits unless the user asks for a roadmap iteration prefix.
 - Keep commits narrow. If a request covers several roadmap tasks, stage and
   commit each task separately.
-- Include the validation performed in the commit body when useful.
 
 ## Releases
 

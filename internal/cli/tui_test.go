@@ -16,6 +16,7 @@ import (
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/rollout"
+	"github.com/feimingxliu/ub/internal/store"
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui"
 )
@@ -331,6 +332,57 @@ func TestTUIRunnerNewSessionCreatesBlankSession(t *testing.T) {
 	}
 }
 
+func TestTUIRunnerSearchSessionsWithoutActiveState(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(temp)
+
+	path, err := store.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	now := time.UnixMilli(1_700_000_000_000).UTC()
+	if err := st.CreateSession(context.Background(), store.Session{
+		ID:        "searchable",
+		Workspace: mustCanonicalTestWorkspace(t, temp),
+		Title:     "Searchable Session",
+		Model:     "fake/model",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		t.Fatalf("rollout.New: %v", err)
+	}
+	event, err := rollout.UserMessage("searchable", 1, message.Text(message.RoleUser, "find this needle"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	if err := ro.Append(context.Background(), event); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	runner := &tuiAgentRunner{}
+	got, err := runner.SearchSessions(context.Background(), "needle", 50)
+	if err != nil {
+		t.Fatalf("SearchSessions: %v", err)
+	}
+	for _, want := range []string{"searchable", "turn 1", "find this needle"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("SearchSessions output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestTUIRunnerModeSwitchPersistsAndRestores(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `providers:
@@ -509,20 +561,21 @@ func TestMessagesForTUIFromRolloutTagsTurnNumber(t *testing.T) {
 }
 
 func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("tui shell test uses Unix-specific echo syntax")
-	}
 	temp := t.TempDir()
 	t.Chdir(temp)
-	runtime, err := newToolRuntime(context.Background(), &config.Config{})
+	toolRt, err := newToolRuntime(context.Background(), &config.Config{})
 	if err != nil {
 		t.Fatalf("newToolRuntime: %v", err)
 	}
-	defer runtime.Close()
-	runner := &tuiAgentRunner{tools: runtime}
+	defer toolRt.Close()
+	runner := &tuiAgentRunner{tools: toolRt}
 	events := make(chan tui.Event, 8)
 
-	if err := runner.RunShell(context.Background(), "printf hello", events); err != nil {
+	shellCmd := "echo hello"
+	if runtime.GOOS == "windows" {
+		shellCmd = "cmd /C echo hello"
+	}
+	if err := runner.RunShell(context.Background(), shellCmd, events); err != nil {
 		t.Fatalf("RunShell: %v", err)
 	}
 	var got []tui.Event
@@ -537,7 +590,7 @@ func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
 			t.Fatalf("RunShell emitted tool-like activity event: %#v", event)
 		}
 	}
-	if got[0].Content != "hello" {
+	if strings.TrimSpace(got[0].Content) != "hello" {
 		t.Fatalf("shell output = %q, want direct stdout", got[0].Content)
 	}
 	if strings.Contains(got[0].Content, "exit_code") || strings.Contains(got[0].Content, "duration_ms") {

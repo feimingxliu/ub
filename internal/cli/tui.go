@@ -25,6 +25,7 @@ import (
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/feimingxliu/ub/internal/tool"
+	mcptool "github.com/feimingxliu/ub/internal/tool/mcp"
 	"github.com/feimingxliu/ub/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -496,8 +497,63 @@ func (r *tuiAgentRunner) ListSessions(ctx context.Context) ([]tui.SessionInfo, e
 	return out, nil
 }
 
+func (r *tuiAgentRunner) SearchSessions(ctx context.Context, query string, limit int) (string, error) {
+	st, closeStore, err := r.sessionSearchStore()
+	if err != nil {
+		return "", err
+	}
+	if closeStore != nil {
+		defer closeStore()
+	}
+	sessions, err := st.ListAllSessions(ctx)
+	if err != nil {
+		return "", fmt.Errorf("list sessions: %w", err)
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		return "", fmt.Errorf("open rollout: %w", err)
+	}
+	matches, err := searchSessions(ctx, ro, sessions, query, limit)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", nil
+	}
+	var out strings.Builder
+	for _, m := range matches {
+		fmt.Fprintf(&out, "%s  turn %d  %s  %s\n", m.Session.ID, m.Turn, m.Type, m.Time.Format(time.RFC3339))
+		snippet := m.Snippet
+		if len(snippet) > 120 {
+			snippet = snippet[:120] + "…"
+		}
+		snippet = strings.ReplaceAll(snippet, "\n", " ")
+		fmt.Fprintf(&out, "  %s\n", snippet)
+	}
+	return out.String(), nil
+}
+
+func (r *tuiAgentRunner) sessionSearchStore() (*store.Store, func() error, error) {
+	if r != nil && r.state != nil && r.state.store != nil && !r.closedStore {
+		return r.state.store, nil, nil
+	}
+	path, err := store.DefaultPath()
+	if err != nil {
+		return nil, nil, fmt.Errorf("locate session store: %w", err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, st.Close, nil
+}
+
 func (r *tuiAgentRunner) Doctor(ctx context.Context) (string, error) {
-	return renderDoctorText(ctx, r.cfg, true, false)
+	var liveStatus []mcptool.ServerStatus
+	if r.tools != nil && r.tools.MCPConnections != nil {
+		liveStatus = r.tools.MCPConnections.Status()
+	}
+	return renderDoctorTextWithLive(ctx, r.cfg, true, false, liveStatus)
 }
 
 func (r *tuiAgentRunner) NewSession(ctx context.Context) (tui.SessionState, error) {

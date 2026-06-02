@@ -3,10 +3,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/tool"
@@ -19,12 +21,12 @@ func TestRegisterConfiguredRegistersPrefixedToolsAndKeepsGoingAfterFailure(t *te
 	defer two.Close()
 
 	reg := tool.New()
-	closeFn, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
+	conns, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
 		"one": {Type: "http", URL: one.URL},
 		"two": {Type: "http", URL: two.URL},
 		"bad": {Type: "http", URL: "http://127.0.0.1:1/not-listening"},
 	})
-	defer closeFn()
+	defer conns.Close()
 
 	if len(warnings) != 1 {
 		t.Fatalf("warnings = %d, want 1: %#v", len(warnings), warnings)
@@ -105,10 +107,10 @@ func TestToolReconnectsAndRetriesAfterCallFailure(t *testing.T) {
 	defer server.Close()
 
 	reg := tool.New()
-	closeFn, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
+	conns, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
 		"remote": {Type: "http", URL: server.URL},
 	})
-	defer closeFn()
+	defer conns.Close()
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %#v, want none", warnings)
 	}
@@ -187,10 +189,10 @@ func TestToolDoesNotReconnectOnServerError(t *testing.T) {
 	defer server.Close()
 
 	reg := tool.New()
-	closeFn, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
+	conns, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
 		"remote": {Type: "http", URL: server.URL},
 	})
-	defer closeFn()
+	defer conns.Close()
 	if len(warnings) != 0 {
 		t.Fatalf("warnings = %#v, want none", warnings)
 	}
@@ -206,6 +208,99 @@ func TestToolDoesNotReconnectOnServerError(t *testing.T) {
 	}
 	if got := initializes.Load(); got != 1 {
 		t.Fatalf("initialize count = %d, want 1 (no reconnect on server error)", got)
+	}
+}
+
+func TestConnectionsStatusReportsConnected(t *testing.T) {
+	srv := newMCPHTTPServer(t, "echo")
+	defer srv.Close()
+
+	reg := tool.New()
+	conns, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
+		"test": {Type: "http", URL: srv.URL},
+	})
+	defer conns.Close()
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %#v, want none", warnings)
+	}
+
+	statuses := conns.Status()
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1", len(statuses))
+	}
+	s := statuses[0]
+	if s.Name != "test" {
+		t.Errorf("name = %q, want test", s.Name)
+	}
+	if s.Type != "http" {
+		t.Errorf("type = %q, want http", s.Type)
+	}
+	if s.Status != "connected" {
+		t.Errorf("status = %q, want connected", s.Status)
+	}
+}
+
+func TestConnectionsStatusIncludesStartupFailures(t *testing.T) {
+	srv := newMCPHTTPServer(t, "echo")
+	defer srv.Close()
+
+	reg := tool.New()
+	conns, warnings := RegisterConfigured(context.Background(), reg, map[string]config.MCPServerConfig{
+		"bad":  {Type: "http", URL: "http://127.0.0.1:1/not-listening"},
+		"good": {Type: "http", URL: srv.URL},
+	})
+	defer conns.Close()
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %#v, want one startup warning", warnings)
+	}
+
+	statuses := conns.Status()
+	if len(statuses) != 2 {
+		t.Fatalf("statuses = %d, want 2: %#v", len(statuses), statuses)
+	}
+	if statuses[0].Name != "bad" || statuses[0].Status != "error" || statuses[0].Err == nil {
+		t.Fatalf("bad status = %#v, want startup error", statuses[0])
+	}
+	if statuses[1].Name != "good" || statuses[1].Status != "connected" || statuses[1].ToolCount != 1 {
+		t.Fatalf("good status = %#v, want connected with tool count", statuses[1])
+	}
+}
+
+func TestConnectionsStatusReportsDisconnectedAndBackoff(t *testing.T) {
+	conn := newServerConnection("dead", config.MCPServerConfig{Type: "http", URL: "http://127.0.0.1:1/not-listening"}, connectMCPServer)
+
+	// Initial state: no client, no error: disconnected.
+	s := conn.Status()
+	if s.Status != "disconnected" {
+		t.Fatalf("initial status = %q, want disconnected", s.Status)
+	}
+
+	// Simulate a failed connect that set backoff.
+	conn.markDisconnected(fmt.Errorf("connection refused"))
+	s = conn.Status()
+	if s.Status != "backoff" {
+		t.Fatalf("after disconnect status = %q, want backoff", s.Status)
+	}
+	if s.Err == nil {
+		t.Fatal("expected non-nil Err after disconnect")
+	}
+
+	// Expire the backoff timer.
+	conn.mu.Lock()
+	conn.nextAttempt = time.Now().Add(-time.Second)
+	conn.mu.Unlock()
+	s = conn.Status()
+	if s.Status != "disconnected" {
+		t.Fatalf("after backoff expiry status = %q, want disconnected", s.Status)
+	}
+}
+
+func TestConnectionsStatusEmptyWhenNoServers(t *testing.T) {
+	reg := tool.New()
+	conns, _ := RegisterConfigured(context.Background(), reg, nil)
+	defer conns.Close()
+	if got := conns.Status(); got != nil {
+		t.Fatalf("expected nil statuses, got %v", got)
 	}
 }
 

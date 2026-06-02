@@ -1149,6 +1149,14 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		m.messages.append(systemRole, fmt.Sprintf("provider=%s model=%s effort=%s approval_model=%s mode=%s cwd=%s", m.status.provider, m.status.model, m.status.effort, approvalModel, m.status.executionMode, m.status.cwd))
 		return m, nil
 	case "sessions":
+		if len(cmd.Args) >= 1 && cmd.Args[0] == "search" {
+			queryParts := cmd.Args[1:]
+			if len(queryParts) == 0 {
+				m.messages.append(systemRole, "usage: /sessions search <query>")
+				return m, nil
+			}
+			return m.searchSessions(queryParts)
+		}
 		if len(cmd.Args) > 0 {
 			return m.switchSession(cmd.Args[0])
 		}
@@ -1766,6 +1774,31 @@ func (m Model) newSession() (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(state.ID) != "" {
 		m.messages.append(systemRole, "new session "+state.ID)
 	}
+	return m, nil
+}
+
+func (m Model) searchSessions(queryParts []string) (tea.Model, tea.Cmd) {
+	query := strings.Join(queryParts, " ")
+	if strings.TrimSpace(query) == "" {
+		m.messages.append(systemRole, "usage: /sessions search <query>")
+		return m, nil
+	}
+	runner, ok := m.runner.(SessionSearchRunner)
+	if !ok {
+		m.messages.append(systemRole, "session search is unavailable in this runner")
+		return m, nil
+	}
+	m.messages.append(systemRole, "searching sessions…")
+	result, err := runner.SearchSessions(m.ctx, query, 50)
+	if err != nil {
+		m.messages.append(systemRole, "search error: "+err.Error())
+		return m, nil
+	}
+	if strings.TrimSpace(result) == "" {
+		m.messages.append(systemRole, "no matches for "+query)
+		return m, nil
+	}
+	m.messages.append(systemRole, result)
 	return m, nil
 }
 

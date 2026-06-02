@@ -42,6 +42,29 @@ type ServerStatus struct {
 	Err       error
 }
 
+// Status reports the current state of this connection: "connected",
+// "disconnected", or "backoff" (reconnect pending).
+func (c *serverConnection) Status() ServerStatus {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st := ServerStatus{Name: c.name, Type: serverType(c.cfg)}
+	if c.client != nil {
+		st.Status = "connected"
+		return st
+	}
+	if c.lastErr != nil {
+		st.Err = c.lastErr
+		if !c.nextAttempt.IsZero() && time.Now().Before(c.nextAttempt) {
+			st.Status = "backoff"
+		} else {
+			st.Status = "disconnected"
+		}
+		return st
+	}
+	st.Status = "disconnected"
+	return st
+}
+
 // CheckConfigured probes configured MCP servers without registering tools.
 func CheckConfigured(ctx context.Context, servers map[string]config.MCPServerConfig) []ServerStatus {
 	if len(servers) == 0 {
@@ -73,14 +96,69 @@ func CheckConfigured(ctx context.Context, servers map[string]config.MCPServerCon
 	return statuses
 }
 
+// Connections holds the live MCP server connections created by
+// RegisterConfigured. It supports querying the runtime state of each
+// connection so that ub doctor can report whether a server is connected,
+// disconnected, or in reconnect backoff without opening a fresh connection.
+type Connections struct {
+	mu      sync.Mutex
+	entries []connectionStatus
+}
+
+type connectionStatus struct {
+	conn   *serverConnection
+	static ServerStatus
+}
+
+// Status returns the current status of every live connection.
+func (cs *Connections) Status() []ServerStatus {
+	cs.mu.Lock()
+	entries := append([]connectionStatus(nil), cs.entries...)
+	cs.mu.Unlock()
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]ServerStatus, len(entries))
+	for i, entry := range entries {
+		if entry.conn == nil {
+			out[i] = entry.static
+			continue
+		}
+		status := entry.conn.Status()
+		status.ToolCount = entry.static.ToolCount
+		out[i] = status
+	}
+	return out
+}
+
+// Close shuts down all connections.
+func (cs *Connections) Close() error {
+	cs.mu.Lock()
+	entries := cs.entries
+	cs.entries = nil
+	cs.mu.Unlock()
+	var err error
+	for _, entry := range entries {
+		if entry.conn == nil {
+			continue
+		}
+		if closeErr := entry.conn.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
+	return err
+}
+
 // RegisterConfigured starts configured MCP servers and registers their tools.
 // Individual server failures are returned as warnings and do not stop other
-// servers from being registered.
-func RegisterConfigured(ctx context.Context, reg *tool.Registry, servers map[string]config.MCPServerConfig) (func() error, []error) {
+// servers from being registered. The returned Connections value supports
+// live status queries (Connections.Status); call Connections.Close when
+// shutting down.
+func RegisterConfigured(ctx context.Context, reg *tool.Registry, servers map[string]config.MCPServerConfig) (*Connections, []error) {
 	if len(servers) == 0 {
-		return func() error { return nil }, nil
+		return &Connections{}, nil
 	}
-	var connections []*serverConnection
+	cs := &Connections{}
 	var warnings []error
 	for _, name := range sortedServerNames(servers) {
 		cfg := servers[name]
@@ -88,9 +166,16 @@ func RegisterConfigured(ctx context.Context, reg *tool.Registry, servers map[str
 		specs, err := conn.Connect(ctx)
 		if err != nil {
 			warnings = append(warnings, Warning{Server: name, Err: err})
+			cs.entries = append(cs.entries, connectionStatus{static: ServerStatus{
+				Name:   name,
+				Type:   serverType(cfg),
+				Status: "error",
+				Err:    err,
+			}})
 			continue
 		}
 		registered := false
+		toolCount := 0
 		for _, spec := range specs {
 			t := NewTool(name, conn, spec)
 			if err := reg.Register(t); err != nil {
@@ -98,22 +183,28 @@ func RegisterConfigured(ctx context.Context, reg *tool.Registry, servers map[str
 				continue
 			}
 			registered = true
+			toolCount++
 		}
 		if registered {
-			connections = append(connections, conn)
+			cs.entries = append(cs.entries, connectionStatus{
+				conn: conn,
+				static: ServerStatus{
+					Name:      name,
+					Type:      serverType(cfg),
+					Status:    "connected",
+					ToolCount: toolCount,
+				},
+			})
 		} else {
 			_ = conn.Close()
+			cs.entries = append(cs.entries, connectionStatus{static: ServerStatus{
+				Name:   name,
+				Type:   serverType(cfg),
+				Status: "no_tools",
+			}})
 		}
 	}
-	return func() error {
-		var err error
-		for _, conn := range connections {
-			if closeErr := conn.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}
-		return err
-	}, warnings
+	return cs, warnings
 }
 
 type connector func(context.Context, config.MCPServerConfig) (*coremcp.Client, []coremcp.ToolSpec, error)
@@ -159,6 +250,14 @@ func sortedServerNames(servers map[string]config.MCPServerConfig) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+func serverType(cfg config.MCPServerConfig) string {
+	typ := strings.TrimSpace(cfg.Type)
+	if typ == "" {
+		return "stdio"
+	}
+	return typ
 }
 
 const (

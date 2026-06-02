@@ -1994,6 +1994,54 @@ func TestSlashDoctorUnavailable(t *testing.T) {
 	}
 }
 
+func TestSlashSessionsSearchDelegatesToRunner(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/sessions search test query")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("sessions search should not return async command, got %v", cmd)
+	}
+	texts := model.MessageTexts()
+	if len(texts) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d: %#v", len(texts), texts)
+	}
+	if !strings.Contains(texts[0], "searching sessions") {
+		t.Fatalf("first message should mention searching, got %q", texts[0])
+	}
+	if !strings.Contains(texts[1], "search results for") || !strings.Contains(texts[1], "test query") {
+		t.Fatalf("second message should contain search results, got %q", texts[1])
+	}
+}
+
+func TestSlashSessionsSearchUnavailable(t *testing.T) {
+	model := NewModel(Options{Runner: &promptOnlyRunner{}})
+	model = sendText(t, model, "/sessions search test")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("sessions search returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "unavailable") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashSessionsSearchEmptyQuery(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/sessions search")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("sessions search empty should not return command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "usage") {
+		t.Fatalf("messages = %#v, want usage hint", got)
+	}
+}
+
 func TestSlashCopyCopiesNthMessage(t *testing.T) {
 	clipboard := &recordingClipboard{}
 	model := NewModel(Options{
@@ -3830,6 +3878,10 @@ func (r *scriptedRunner) SwitchSession(_ context.Context, id string) (SessionSta
 
 func (r *scriptedRunner) CurrentSessionID() string {
 	return r.currentSessionID
+}
+
+func (r *scriptedRunner) SearchSessions(_ context.Context, query string, limit int) (string, error) {
+	return fmt.Sprintf("search results for %q (limit %d)", query, limit), nil
 }
 
 type promptOnlyRunner struct {
