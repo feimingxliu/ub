@@ -57,7 +57,7 @@ func shellNoopCommand() string {
 
 func shellLongStdoutCommand(bytes int) string {
 	if runtime.GOOS == "windows" {
-		return fmt.Sprintf(`powershell -NoProfile -Command "$s='x'*%d; [Console]::Out.Write($s)"`, bytes)
+		return fmt.Sprintf(`for /L %%i in (1,1,%d) do @<nul set /p "=x"`, bytes)
 	}
 	return fmt.Sprintf("awk 'BEGIN{for(i=0;i<%d;i++)printf \"x\"}'", bytes)
 }

@@ -16,7 +16,7 @@ func TestBash_ImplementsStreamingTool(t *testing.T) {
 
 func shellStreamingChunksCommand() string {
 	if runtime.GOOS == "windows" {
-		return `powershell -NoProfile -Command "[Console]::Out.Write('a'); Start-Sleep -Milliseconds 50; [Console]::Out.Write('b'); Start-Sleep -Milliseconds 50; [Console]::Out.Write('c')"`
+		return `echo a & ping 127.0.0.1 -n 2 >NUL & echo b & ping 127.0.0.1 -n 2 >NUL & echo c`
 	}
 	return `printf a; sleep 0.05; printf b; sleep 0.05; printf c`
 }
@@ -49,10 +49,12 @@ func TestBash_ExecuteStream_EmitsChunks(t *testing.T) {
 		t.Fatalf("expected ≥2 stdout chunks, got %d: %v", len(chunks), chunks)
 	}
 	combined := strings.Join(chunks, "")
-	if combined != "abc" {
+	normalized := strings.NewReplacer("\r", "", "\n", "", " ", "").Replace(combined)
+	if normalized != "abc" {
 		t.Fatalf("chunks concat = %q, want abc", combined)
 	}
-	if !strings.Contains(res.Content, "abc") {
+	finalOutput := strings.NewReplacer("\r", "", "\n", "", " ", "").Replace(res.Content)
+	if !strings.Contains(finalOutput, "abc") {
 		t.Fatalf("final Result.Content missing concatenated body:\n%s", res.Content)
 	}
 }
