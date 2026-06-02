@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.5] - 2026-06-02
+
+
+### Documentation
+
+- Add plan todo roadmap split ([3ef8a59](https://github.com/feimingxliu/ub/commit/3ef8a59e0df31d0e78b3d6916adde60383d93647))
+
+
+### Fixed
+
+- Harden retry and reasoning replay ([fcbc6e7](https://github.com/feimingxliu/ub/commit/fcbc6e76802c8866a1dacbfeac237c8a58ffd5d8))
+- Scope live activity updates by turn ([b336ba7](https://github.com/feimingxliu/ub/commit/b336ba78f697d305242de98d82e329bb2e51fffa))
+
 ## [0.3.4] - 2026-06-02
 
 
@@ -28,6 +41,7 @@ All notable changes to this project are documented here.
 - V0.3.4 ([3edb3a7](https://github.com/feimingxliu/ub/commit/3edb3a7c875b8c8dd628f8ed2b37b94902cddf92))
 - V0.3.4 ([cd56146](https://github.com/feimingxliu/ub/commit/cd5614691206c07108c9593659a1f591ca589f5a))
 - V0.3.4 ([5378afa](https://github.com/feimingxliu/ub/commit/5378afa30292af65c56783d0365a6341b5aab46b))
+- V0.3.4 ([6cc8f1b](https://github.com/feimingxliu/ub/commit/6cc8f1b6634b826a39214666634c27aef8832799))
 
 
 ### Other
