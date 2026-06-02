@@ -18,6 +18,12 @@ All notable changes to this project are documented here.
 - Stabilize tui session utilities ([6e2ac55](https://github.com/feimingxliu/ub/commit/6e2ac551c0472994e274f1df3f4ecc14f45a20dc))
 - Remove default tool loop cap ([07d6322](https://github.com/feimingxliu/ub/commit/07d632254552eea0340a7536d9996c40d1576913))
 - Improve TUI tool detail display ([66bf1a8](https://github.com/feimingxliu/ub/commit/66bf1a8827c227363ee90bdddb3bb466b06caf0c))
+- Stabilize Windows tests ([4e9b8a5](https://github.com/feimingxliu/ub/commit/4e9b8a529b0bcaada0c50a5f35094963a1705f45))
+
+
+### Maintenance
+
+- V0.3.4 ([3edb3a7](https://github.com/feimingxliu/ub/commit/3edb3a7c875b8c8dd628f8ed2b37b94902cddf92))
 
 
 ### Other
