@@ -3,6 +3,7 @@ package shell
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,12 +14,18 @@ func TestBash_ImplementsStreamingTool(t *testing.T) {
 	var _ tool.StreamingTool = newBashTool(t.TempDir())
 }
 
+func shellStreamingChunksCommand() string {
+	if runtime.GOOS == "windows" {
+		return `powershell -NoProfile -Command "[Console]::Out.Write('a'); Start-Sleep -Milliseconds 50; [Console]::Out.Write('b'); Start-Sleep -Milliseconds 50; [Console]::Out.Write('c')"`
+	}
+	return `printf a; sleep 0.05; printf b; sleep 0.05; printf c`
+}
+
 func TestBash_ExecuteStream_EmitsChunks(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	events := make(chan tool.StreamEvent, 64)
 
-	raw, _ := json.Marshal(bashArgs{Command: `printf a; sleep 0.05; printf b; sleep 0.05; printf c`})
+	raw, _ := json.Marshal(bashArgs{Command: shellStreamingChunksCommand()})
 	resCh := make(chan tool.Result, 1)
 	errCh := make(chan error, 1)
 	go func() {
@@ -51,11 +58,10 @@ func TestBash_ExecuteStream_EmitsChunks(t *testing.T) {
 }
 
 func TestBash_ExecuteStream_StderrKind(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	events := make(chan tool.StreamEvent, 64)
 
-	raw, _ := json.Marshal(bashArgs{Command: `printf hi 1>&2`})
+	raw, _ := json.Marshal(bashArgs{Command: `echo hi 1>&2`})
 	go func() {
 		_, _ = b.ExecuteStream(context.Background(), raw, events)
 		close(events)

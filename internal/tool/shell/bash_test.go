@@ -6,17 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/feimingxliu/ub/internal/tool"
 )
-
-func skipOnWindows(t *testing.T) {
-	t.Helper()
-	// Windows is supported; kept as a no-op for any future platform restrictions.
-}
 
 func execBash(t *testing.T, b *bashTool, args bashArgs) tool.Result {
 	t.Helper()
@@ -31,8 +27,49 @@ func execBash(t *testing.T, b *bashTool, args bashArgs) tool.Result {
 	return res
 }
 
+func shellReadFileCommand(path string) string {
+	if runtime.GOOS == "windows" {
+		return "type " + path
+	}
+	return "cat " + path
+}
+
+func shellExitCommand(code int) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("exit /B %d", code)
+	}
+	return fmt.Sprintf("exit %d", code)
+}
+
+func shellSleepCommand(seconds int) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("ping 127.0.0.1 -n %d >NUL", seconds+1)
+	}
+	return fmt.Sprintf("sleep %d", seconds)
+}
+
+func shellNoopCommand() string {
+	if runtime.GOOS == "windows" {
+		return "ver >NUL"
+	}
+	return "true"
+}
+
+func shellLongStdoutCommand(bytes int) string {
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf(`powershell -NoProfile -Command "$s='x'*%d; [Console]::Out.Write($s)"`, bytes)
+	}
+	return fmt.Sprintf("awk 'BEGIN{for(i=0;i<%d;i++)printf \"x\"}'", bytes)
+}
+
+func shellReadStdinCommand() string {
+	if runtime.GOOS == "windows" {
+		return "more"
+	}
+	return "cat"
+}
+
 func TestBash_HappyPath(t *testing.T) {
-	skipOnWindows(t)
 	root := t.TempDir()
 	b := newBashTool(root)
 	res := execBash(t, b, bashArgs{Command: "echo hello"})
@@ -54,7 +91,6 @@ func TestBash_HappyPath(t *testing.T) {
 }
 
 func TestBash_CwdInjection(t *testing.T) {
-	skipOnWindows(t)
 	root := t.TempDir()
 	sub := filepath.Join(root, "sub")
 	if err := os.Mkdir(sub, 0o755); err != nil {
@@ -64,16 +100,15 @@ func TestBash_CwdInjection(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	b := newBashTool(root)
-	res := execBash(t, b, bashArgs{Command: "cat marker.txt", Cwd: "sub"})
+	res := execBash(t, b, bashArgs{Command: shellReadFileCommand("marker.txt"), Cwd: "sub"})
 	if res.IsError || !strings.Contains(res.Content, "\nmark") {
 		t.Fatalf("expected marker in stdout, got:\n%s", res.Content)
 	}
 }
 
 func TestBash_NonZeroExit(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
-	res := execBash(t, b, bashArgs{Command: "exit 7"})
+	res := execBash(t, b, bashArgs{Command: shellExitCommand(7)})
 	if !res.IsError {
 		t.Fatalf("expected IsError=true")
 	}
@@ -83,10 +118,9 @@ func TestBash_NonZeroExit(t *testing.T) {
 }
 
 func TestBash_Timeout(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	start := time.Now()
-	res := execBash(t, b, bashArgs{Command: "sleep 10", TimeoutMs: 200})
+	res := execBash(t, b, bashArgs{Command: shellSleepCommand(10), TimeoutMs: 200})
 	if time.Since(start) > 5*time.Second {
 		t.Fatalf("timeout took too long: %s", time.Since(start))
 	}
@@ -102,14 +136,13 @@ func TestBash_Timeout(t *testing.T) {
 }
 
 func TestBash_Aborted(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		cancel()
 	}()
-	raw, _ := json.Marshal(bashArgs{Command: "sleep 5"})
+	raw, _ := json.Marshal(bashArgs{Command: shellSleepCommand(5)})
 	res, err := b.Execute(ctx, raw)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -123,9 +156,8 @@ func TestBash_Aborted(t *testing.T) {
 }
 
 func TestBash_ShellMetadataBlockOnSuccess(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
-	res := execBash(t, b, bashArgs{Command: "true"})
+	res := execBash(t, b, bashArgs{Command: shellNoopCommand()})
 	if !strings.Contains(res.Content, "<shell_metadata>") || !strings.Contains(res.Content, "</shell_metadata>") {
 		t.Fatalf("missing shell_metadata block:\n%s", res.Content)
 	}
@@ -135,7 +167,6 @@ func TestBash_ShellMetadataBlockOnSuccess(t *testing.T) {
 }
 
 func TestBash_TimeoutAcceptsNumericString(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	raw := json.RawMessage(`{"command":"echo ok","timeout_ms":"120000"}`)
 	res, err := b.Execute(context.Background(), raw)
@@ -192,12 +223,9 @@ func schemaProperties(t *testing.T, schema map[string]any, raw []byte) map[strin
 }
 
 func TestBash_StdoutTruncation(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
-	// 40000 bytes of 'x' via a portable awk one-liner.
 	const target = 40000
-	cmd := fmt.Sprintf("awk 'BEGIN{for(i=0;i<%d;i++)printf \"x\"}'", target)
-	res := execBash(t, b, bashArgs{Command: cmd})
+	res := execBash(t, b, bashArgs{Command: shellLongStdoutCommand(target)})
 	if res.IsError {
 		t.Fatalf("expected success, got Content:\n%s", res.Content[:min(200, len(res.Content))])
 	}
@@ -219,7 +247,6 @@ func TestBash_StdoutTruncation(t *testing.T) {
 }
 
 func TestBash_OutsideRoot(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	raw, _ := json.Marshal(bashArgs{Command: "pwd", Cwd: "../"})
 	_, err := b.Execute(context.Background(), raw)
@@ -229,7 +256,6 @@ func TestBash_OutsideRoot(t *testing.T) {
 }
 
 func TestBash_EmptyCommand(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
 	raw, _ := json.Marshal(bashArgs{Command: ""})
 	if _, err := b.Execute(context.Background(), raw); err == nil {
@@ -238,20 +264,18 @@ func TestBash_EmptyCommand(t *testing.T) {
 }
 
 func TestBash_NegativeTimeout(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
-	raw, _ := json.Marshal(bashArgs{Command: "true", TimeoutMs: -1})
+	raw, _ := json.Marshal(bashArgs{Command: shellNoopCommand(), TimeoutMs: -1})
 	if _, err := b.Execute(context.Background(), raw); err == nil {
 		t.Fatalf("expected negative-timeout error")
 	}
 }
 
 func TestBash_StdinIsDevNull(t *testing.T) {
-	skipOnWindows(t)
 	b := newBashTool(t.TempDir())
-	res := execBash(t, b, bashArgs{Command: "cat"})
+	res := execBash(t, b, bashArgs{Command: shellReadStdinCommand()})
 	if res.IsError {
-		t.Fatalf("expected cat with empty stdin to exit 0, got:\n%s", res.Content)
+		t.Fatalf("expected stdin reader with empty stdin to exit 0, got:\n%s", res.Content)
 	}
 	if !strings.Contains(res.Content, "exit_code=0") {
 		t.Fatalf("missing exit_code=0:\n%s", res.Content)

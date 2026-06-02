@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -572,9 +571,6 @@ func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
 	events := make(chan tui.Event, 8)
 
 	shellCmd := "echo hello"
-	if runtime.GOOS == "windows" {
-		shellCmd = "cmd /C echo hello"
-	}
 	if err := runner.RunShell(context.Background(), shellCmd, events); err != nil {
 		t.Fatalf("RunShell: %v", err)
 	}

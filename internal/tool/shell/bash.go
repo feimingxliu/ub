@@ -118,6 +118,7 @@ func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- t
 		killOnce.Do(func() {
 			killReason = reason
 			if runtime.GOOS == "windows" {
+				_ = exec.Command("taskkill", "/T", "/F", "/PID", fmt.Sprint(pid)).Run()
 				_ = cmd.Process.Kill()
 			} else {
 				_ = procgroup.Kill(pid, syscall.SIGTERM)
