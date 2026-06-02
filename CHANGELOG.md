@@ -20,12 +20,14 @@ All notable changes to this project are documented here.
 - Improve TUI tool detail display ([66bf1a8](https://github.com/feimingxliu/ub/commit/66bf1a8827c227363ee90bdddb3bb466b06caf0c))
 - Stabilize Windows tests ([4e9b8a5](https://github.com/feimingxliu/ub/commit/4e9b8a529b0bcaada0c50a5f35094963a1705f45))
 - Avoid Windows PowerShell quoting in tests ([e768dd1](https://github.com/feimingxliu/ub/commit/e768dd10eb469288ecef7955100cd96bc9851d12))
+- Stabilize stdout truncation test on Windows ([12def82](https://github.com/feimingxliu/ub/commit/12def823cc6b03362077817b342d93b3a3d9330b))
 
 
 ### Maintenance
 
 - V0.3.4 ([3edb3a7](https://github.com/feimingxliu/ub/commit/3edb3a7c875b8c8dd628f8ed2b37b94902cddf92))
 - V0.3.4 ([cd56146](https://github.com/feimingxliu/ub/commit/cd5614691206c07108c9593659a1f591ca589f5a))
+- V0.3.4 ([5378afa](https://github.com/feimingxliu/ub/commit/5378afa30292af65c56783d0365a6341b5aab46b))
 
 
 ### Other
