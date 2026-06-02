@@ -71,17 +71,45 @@ func (p *Provider) Name() string {
 	return p.name
 }
 
-// Caps returns Anthropic capabilities available in I-10.
+// Caps returns Anthropic capabilities for the default model.
 func (p *Provider) Caps() provider.Caps {
 	return provider.Caps{
-		SupportsStreaming: true,
-		SupportsTools:     true,
-		MaxContextTokens:  200_000,
-		SupportsVision:    false,
+		SupportsStreaming:   true,
+		SupportsTools:       true,
+		SupportsPromptCache: true,
+		MaxContextTokens:    200_000,
+		SupportsVision:      false,
 	}
 }
 
-// Chat creates a streaming Anthropic Messages request.
+// CapsForModel returns capabilities adjusted for a specific Anthropic model.
+func (p *Provider) CapsForModel(model string) provider.Caps {
+	caps := p.Caps()
+	if maxTokens := anthropicModelContextTokens(model); maxTokens > 0 {
+		caps.MaxContextTokens = maxTokens
+	}
+	return caps
+}
+
+func anthropicModelContextTokens(model string) int {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if _, rest, ok := strings.Cut(model, "/"); ok {
+		model = strings.TrimSpace(rest)
+	}
+	switch {
+	case strings.Contains(model, "opus"):
+		return 200_000
+	case strings.Contains(model, "sonnet"):
+		return 200_000
+	case strings.Contains(model, "haiku"):
+		return 200_000
+	default:
+		return 0
+	}
+}
+
+// Chat creates a streaming Anthropic Messages request with automatic retry on
+// transient connection errors (429, 529, network failures).
 func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Stream, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, errors.New("anthropic model is required")
@@ -90,7 +118,9 @@ func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Str
 	if err != nil {
 		return nil, err
 	}
-	return newSDKStream(p.client.Messages.NewStreaming(ctx, params)), nil
+	return provider.NewRetryStream(ctx, p.name, func() (provider.Stream, error) {
+		return newSDKStream(p.client.Messages.NewStreaming(ctx, params)), nil
+	})
 }
 
 func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
@@ -109,7 +139,11 @@ func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
 		return sdk.MessageNewParams{}, err
 	}
 	params.Tools = tools
-	for _, msg := range req.Messages {
+	// Repair tool-call pairing before sending: an interrupted/resumed history
+	// can carry an assistant tool_use turn whose results never landed, which
+	// Anthropic rejects with a 400.
+	sanitized := provider.SanitizeToolPairing(req.Messages)
+	for _, msg := range sanitized {
 		switch msg.Role {
 		case message.RoleSystem:
 			system, err := systemTextBlocks(msg)
@@ -124,7 +158,7 @@ func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
 			}
 			params.Messages = append(params.Messages, sdk.NewUserMessage(blocks...))
 		case message.RoleAssistant:
-			blocks, err := contentBlocks(msg)
+			blocks, err := contentBlocksForAssistant(msg, req.Reasoning)
 			if err != nil {
 				return sdk.MessageNewParams{}, err
 			}
@@ -142,7 +176,44 @@ func toMessageParams(req provider.Request) (sdk.MessageNewParams, error) {
 	if len(params.Messages) == 0 {
 		return sdk.MessageNewParams{}, errors.New("anthropic request requires at least one user or assistant message")
 	}
+	// Prompt-cache breakpoints (ephemeral, prefix-match). Render order is
+	// tools → system → messages, so a marker on the last system block caches
+	// tools+system together; with no system, mark the last tool. A marker on
+	// the last block of the last message caches the conversation prefix,
+	// accruing hits incrementally as turns are appended. Max 4 breakpoints;
+	// we use ≤2.
+	applyCacheBreakpoints(&params)
 	return params, nil
+}
+
+// applyCacheBreakpoints places ephemeral cache_control markers on the Anthropic
+// request to enable prompt caching. Two breakpoints are used:
+//   - On the last system block (or last tool if no system): caches tools+system
+//   - On the last content block of the last message: caches the conversation prefix
+//
+// Anthropic allows up to 4 breakpoints; we use ≤2.
+func applyCacheBreakpoints(params *sdk.MessageNewParams) {
+	ephemeral := sdk.NewCacheControlEphemeralParam()
+	// Breakpoint 1: last system block, or last tool if no system.
+	if n := len(params.System); n > 0 {
+		params.System[n-1].CacheControl = ephemeral
+	} else if n := len(params.Tools); n > 0 {
+		if params.Tools[n-1].OfTool != nil {
+			params.Tools[n-1].OfTool.CacheControl = ephemeral
+		}
+	}
+	// Breakpoint 2: last content block of the last message.
+	// Set cache_control on the last text block of the last user message,
+	// which is the most common pattern for conversation prefix caching.
+	if n := len(params.Messages); n > 0 {
+		lastMsg := &params.Messages[n-1]
+		if nb := len(lastMsg.Content); nb > 0 {
+			lastBlock := &lastMsg.Content[nb-1]
+			if lastBlock.OfText != nil {
+				lastBlock.OfText.CacheControl = ephemeral
+			}
+		}
+	}
 }
 
 func thinkingBudget(cfg *reasoning.Config) int64 {
@@ -248,6 +319,40 @@ func contentBlocks(msg message.Message) ([]sdk.ContentBlockParamUnion, error) {
 	return blocks, nil
 }
 
+// contentBlocksForAssistant is like contentBlocks but also handles signed
+// reasoning replay for assistant messages. Anthropic extended thinking must be
+// replayed with the exact thinking text and signature on the next turn.
+func contentBlocksForAssistant(msg message.Message, reasoningCfg *reasoning.Config) ([]sdk.ContentBlockParamUnion, error) {
+	blocks := make([]sdk.ContentBlockParamUnion, 0, len(msg.Content)+1)
+	thinkingEnabled := reasoningCfg != nil && reasoningCfg.Effort != "" && reasoningCfg.Effort != reasoning.EffortNone
+	for _, block := range msg.Content {
+		switch block.Type {
+		case message.BlockReasoning:
+			if thinkingEnabled && block.Reasoning != "" && block.ReasoningSignature != "" {
+				blocks = append(blocks, sdk.NewThinkingBlock(block.ReasoningSignature, block.Reasoning))
+			}
+		case message.BlockText:
+			blocks = append(blocks, sdk.NewTextBlock(block.Text))
+		case message.BlockToolUse:
+			var input any
+			if len(block.Input) > 0 {
+				if err := json.Unmarshal(block.Input, &input); err != nil {
+					return nil, fmt.Errorf("anthropic tool_use input: %w", err)
+				}
+			}
+			if input == nil {
+				input = map[string]any{}
+			}
+			blocks = append(blocks, sdk.NewToolUseBlock(block.ToolUseID, input, block.ToolName))
+		case message.BlockToolResult:
+			blocks = append(blocks, sdk.NewToolResultBlock(block.ToolUseID, block.Output, block.IsError))
+		default:
+			return nil, unsupportedBlock(block.Type)
+		}
+	}
+	return blocks, nil
+}
+
 func unsupportedBlock(blockType message.BlockType) error {
 	return fmt.Errorf("anthropic non-streaming text provider does not support content block %q", blockType)
 }
@@ -270,11 +375,12 @@ func buildHTTPClient(timeout time.Duration) *http.Client {
 }
 
 type sdkStream struct {
-	stream *ssestream.Stream[sdk.MessageStreamEventUnion]
-	queue  []provider.Event
-	usage  *provider.Usage
-	tools  map[int64]*toolUseDelta
-	closed bool
+	stream    *ssestream.Stream[sdk.MessageStreamEventUnion]
+	queue     []provider.Event
+	usage     *provider.Usage
+	tools     map[int64]*toolUseDelta
+	signature strings.Builder // accumulated reasoning signature
+	closed    bool
 }
 
 type toolUseDelta struct {
@@ -331,6 +437,15 @@ func (s *sdkStream) Next(ctx context.Context) (provider.Event, error) {
 			case "thinking_delta":
 				return provider.Event{Type: provider.EventReasoningDelta, Reasoning: delta.Thinking}, nil
 			case "signature_delta":
+				if delta.Signature != "" {
+					s.signature.WriteString(delta.Signature)
+					// Emit the signature so the agent can persist it alongside
+					// the reasoning content for replay on the next turn.
+					s.queue = append(s.queue, provider.Event{
+						Type:               provider.EventReasoningDelta,
+						ReasoningSignature: delta.Signature,
+					})
+				}
 				continue
 			default:
 				return provider.Event{}, fmt.Errorf("anthropic streaming delta %q is not supported", delta.Type)

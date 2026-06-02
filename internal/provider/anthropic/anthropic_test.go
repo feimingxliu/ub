@@ -62,6 +62,73 @@ func TestToMessageParamsSetsThinkingBudget(t *testing.T) {
 	}
 }
 
+func TestToMessageParamsReplaysSignedThinkingAndKeepsText(t *testing.T) {
+	params, err := toMessageParams(provider.Request{
+		Model: "claude-test",
+		Messages: []message.Message{
+			message.New(
+				message.RoleAssistant,
+				message.ReasoningBlock("hidden thinking", "sig"),
+				message.TextBlock("visible answer"),
+			),
+		},
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortHigh},
+	})
+	if err != nil {
+		t.Fatalf("toMessageParams: %v", err)
+	}
+	if len(params.Messages) != 1 || len(params.Messages[0].Content) != 2 {
+		t.Fatalf("content = %#v, want thinking and text blocks", params.Messages)
+	}
+	raw, err := json.Marshal(params.Messages[0].Content)
+	if err != nil {
+		t.Fatalf("Marshal content: %v", err)
+	}
+	body := string(raw)
+	for _, want := range []string{
+		`"type":"thinking"`,
+		`"thinking":"hidden thinking"`,
+		`"signature":"sig"`,
+		`"type":"text"`,
+		`"text":"visible answer"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("content JSON = %s, want %s", body, want)
+		}
+	}
+}
+
+func TestToMessageParamsSkipsReasoningBlockWhenThinkingDisabled(t *testing.T) {
+	params, err := toMessageParams(provider.Request{
+		Model: "claude-test",
+		Messages: []message.Message{
+			message.New(
+				message.RoleAssistant,
+				message.ReasoningBlock("hidden thinking", "sig"),
+				message.TextBlock("visible answer"),
+			),
+		},
+		Reasoning: &reasoning.Config{Effort: reasoning.EffortNone},
+	})
+	if err != nil {
+		t.Fatalf("toMessageParams: %v", err)
+	}
+	if len(params.Messages) != 1 || len(params.Messages[0].Content) != 1 {
+		t.Fatalf("content = %#v, want only visible text", params.Messages)
+	}
+	raw, err := json.Marshal(params.Messages[0].Content)
+	if err != nil {
+		t.Fatalf("Marshal content: %v", err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "hidden thinking") || strings.Contains(body, "thinking") {
+		t.Fatalf("content JSON = %s, want hidden reasoning omitted", body)
+	}
+	if !strings.Contains(body, `"text":"visible answer"`) {
+		t.Fatalf("content JSON = %s, want visible text", body)
+	}
+}
+
 func TestBuildClientSendsBothAuthHeaders(t *testing.T) {
 	var apiKey, auth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -382,6 +449,10 @@ func TestChatStreamsThinkingDelta(t *testing.T) {
 		t.Fatalf("thinking delta event = %#v, err=%v", event, err)
 	}
 	event, err = stream.Next(context.Background())
+	if err != nil || event.Type != provider.EventReasoningDelta || event.ReasoningSignature != "sig" {
+		t.Fatalf("signature event = %#v, err=%v", event, err)
+	}
+	event, err = stream.Next(context.Background())
 	if err != nil || event.Type != provider.EventDone {
 		t.Fatalf("done event = %#v, err=%v", event, err)
 	}
@@ -422,6 +493,85 @@ func TestChatRequiresModelAndMessages(t *testing.T) {
 	}
 	if _, err := p.Chat(context.Background(), provider.Request{Model: "claude-test"}); err == nil || !strings.Contains(err.Error(), "at least one") {
 		t.Fatalf("missing message error = %v", err)
+	}
+}
+
+func TestCapsForModel(t *testing.T) {
+	p, err := NewFromConfig("anthropic", config.ProviderConfig{
+		Type:   "anthropic",
+		APIKey: "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	defaultCaps := p.Caps()
+	if defaultCaps.MaxContextTokens != 200_000 {
+		t.Fatalf("default MaxContextTokens = %d, want 200000", defaultCaps.MaxContextTokens)
+	}
+	concrete := p.(*Provider)
+	modelCaps := concrete.CapsForModel("claude-sonnet-4-20250514")
+	if modelCaps.MaxContextTokens != 200_000 {
+		t.Fatalf("sonnet MaxContextTokens = %d, want 200000", modelCaps.MaxContextTokens)
+	}
+	modelCaps = concrete.CapsForModel("claude-haiku-3-20240307")
+	if modelCaps.MaxContextTokens != 200_000 {
+		t.Fatalf("haiku MaxContextTokens = %d, want 200000", modelCaps.MaxContextTokens)
+	}
+	if !modelCaps.SupportsPromptCache {
+		t.Fatal("anthropic provider should support prompt cache")
+	}
+}
+
+func TestToMessageParamsAppliesCacheBreakpoints(t *testing.T) {
+	params, err := toMessageParams(provider.Request{
+		Model: "claude-test",
+		Tools: []provider.ToolDefinition{{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}},
+		Messages: []message.Message{
+			message.Text(message.RoleSystem, "system"),
+			message.Text(message.RoleUser, "hello"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toMessageParams: %v", err)
+	}
+	// Last system block should have cache_control.
+	if len(params.System) == 0 {
+		t.Fatal("expected system blocks")
+	}
+	lastSystem := params.System[len(params.System)-1]
+	if lastSystem.CacheControl.Type == "" {
+		t.Fatal("last system block should have cache_control")
+	}
+	// Last tool should NOT have cache_control when system has it.
+	if len(params.Tools) > 0 && params.Tools[len(params.Tools)-1].OfTool != nil {
+		tool := params.Tools[len(params.Tools)-1].OfTool
+		if tool.CacheControl.Type != "" {
+			t.Fatal("tool should not carry cache_control when system does")
+		}
+	}
+}
+
+func TestToMessageParamsCacheOnToolsWhenNoSystem(t *testing.T) {
+	params, err := toMessageParams(provider.Request{
+		Model: "claude-test",
+		Tools: []provider.ToolDefinition{{Name: "read", Schema: json.RawMessage(`{"type":"object"}`)}},
+		Messages: []message.Message{
+			message.Text(message.RoleUser, "hello"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toMessageParams: %v", err)
+	}
+	if len(params.System) > 0 {
+		t.Fatal("expected no system blocks")
+	}
+	// Last tool should carry cache_control.
+	if len(params.Tools) == 0 || params.Tools[len(params.Tools)-1].OfTool == nil {
+		t.Fatal("expected tool definitions")
+	}
+	lastTool := params.Tools[len(params.Tools)-1].OfTool
+	if lastTool.CacheControl.Type == "" {
+		t.Fatal("last tool should carry cache_control when there is no system")
 	}
 }
 

@@ -28,6 +28,8 @@ const (
 	BlockText BlockType = "text"
 	// BlockImage references an image by URL.
 	BlockImage BlockType = "image"
+	// BlockReasoning contains hidden provider reasoning that may need replay.
+	BlockReasoning BlockType = "reasoning"
 	// BlockToolUse asks the runtime to invoke a tool.
 	BlockToolUse BlockType = "tool_use"
 	// BlockToolResult contains the result of a tool invocation.
@@ -42,14 +44,16 @@ type Message struct {
 
 // ContentBlock is one ordered piece of message content.
 type ContentBlock struct {
-	Type      BlockType       `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ImageURL  string          `json:"image_url,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	ToolName  string          `json:"tool_name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	Output    string          `json:"output,omitempty"`
-	IsError   bool            `json:"is_error,omitempty"`
+	Type               BlockType       `json:"type"`
+	Text               string          `json:"text,omitempty"`
+	Reasoning          string          `json:"reasoning,omitempty"`
+	ImageURL           string          `json:"image_url,omitempty"`
+	ToolUseID          string          `json:"tool_use_id,omitempty"`
+	ToolName           string          `json:"tool_name,omitempty"`
+	Input              json.RawMessage `json:"input,omitempty"`
+	Output             string          `json:"output,omitempty"`
+	IsError            bool            `json:"is_error,omitempty"`
+	ReasoningSignature string          `json:"reasoning_signature,omitempty"`
 }
 
 // New constructs a message with cloned content blocks.
@@ -70,6 +74,15 @@ func TextBlock(text string) ContentBlock {
 	return ContentBlock{
 		Type: BlockText,
 		Text: text,
+	}
+}
+
+// ReasoningBlock constructs a hidden reasoning content block.
+func ReasoningBlock(reasoning, signature string) ContentBlock {
+	return ContentBlock{
+		Type:               BlockReasoning,
+		Reasoning:          reasoning,
+		ReasoningSignature: signature,
 	}
 }
 

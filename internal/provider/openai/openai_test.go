@@ -71,6 +71,33 @@ func TestToChatCompletionParamsOmitsReasoningEffortForNone(t *testing.T) {
 	}
 }
 
+func TestToChatCompletionParamsIgnoresHiddenReasoningBlocks(t *testing.T) {
+	params, err := toChatCompletionParams(provider.Request{
+		Model: "gpt-test",
+		Messages: []message.Message{
+			message.New(
+				message.RoleAssistant,
+				message.ReasoningBlock("hidden thinking", "sig"),
+				message.TextBlock("visible answer"),
+			),
+		},
+	})
+	if err != nil {
+		t.Fatalf("toChatCompletionParams: %v", err)
+	}
+	raw, err := json.Marshal(params.Messages)
+	if err != nil {
+		t.Fatalf("Marshal messages: %v", err)
+	}
+	body := string(raw)
+	if strings.Contains(body, "hidden thinking") || strings.Contains(body, "reasoning") {
+		t.Fatalf("messages JSON = %s, want hidden reasoning omitted", body)
+	}
+	if !strings.Contains(body, "visible answer") {
+		t.Fatalf("messages JSON = %s, want visible answer", body)
+	}
+}
+
 func TestChatSendsStreamingRequestAndReturnsEvents(t *testing.T) {
 	var requestPath string
 	var requestHeader string
@@ -434,6 +461,61 @@ func TestChatRequiresModelAndMessages(t *testing.T) {
 	}
 	if _, err := p.Chat(context.Background(), provider.Request{Model: "gpt-test"}); err == nil || !strings.Contains(err.Error(), "at least one") {
 		t.Fatalf("missing message error = %v", err)
+	}
+}
+
+func TestCapsForModel(t *testing.T) {
+	p, err := NewFromConfig("openai", config.ProviderConfig{
+		Type:   "openai",
+		APIKey: "sk-test",
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig: %v", err)
+	}
+	defaultCaps := p.Caps()
+	if defaultCaps.MaxContextTokens != 128_000 {
+		t.Fatalf("default MaxContextTokens = %d, want 128000", defaultCaps.MaxContextTokens)
+	}
+	concrete := p.(*Provider)
+	// o-series reasoning models should get 200K.
+	o1Caps := concrete.CapsForModel("o1-preview")
+	if o1Caps.MaxContextTokens != 200_000 {
+		t.Fatalf("o1 MaxContextTokens = %d, want 200000", o1Caps.MaxContextTokens)
+	}
+	// GPT-4o should get 128K.
+	gpt4oCaps := concrete.CapsForModel("gpt-4o")
+	if gpt4oCaps.MaxContextTokens != 128_000 {
+		t.Fatalf("gpt-4o MaxContextTokens = %d, want 128000", gpt4oCaps.MaxContextTokens)
+	}
+	// Unknown model should defer to default.
+	unknownCaps := concrete.CapsForModel("unknown-model")
+	if unknownCaps.MaxContextTokens != 128_000 {
+		t.Fatalf("unknown MaxContextTokens = %d, want 128000 (default)", unknownCaps.MaxContextTokens)
+	}
+}
+
+func TestOpenAIModelContextTokens(t *testing.T) {
+	tests := []struct {
+		model string
+		want  int
+	}{
+		{"o1-preview", 200_000},
+		{"o1-mini", 200_000},
+		{"o3-mini", 200_000},
+		{"o4-mini", 200_000},
+		{"gpt-4o", 128_000},
+		{"gpt-4o-mini", 128_000},
+		{"gpt-4-turbo", 128_000},
+		{"gpt-5", 200_000},
+		{"gpt-3.5-turbo", 16_385},
+		{"openai/gpt-4o", 128_000},
+		{"unknown", 0},
+	}
+	for _, tt := range tests {
+		got := openAIModelContextTokens(tt.model)
+		if got != tt.want {
+			t.Errorf("openAIModelContextTokens(%q) = %d, want %d", tt.model, got, tt.want)
+		}
 	}
 }
 

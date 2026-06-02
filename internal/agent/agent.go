@@ -439,6 +439,7 @@ func toolInteractionSignature(calls []toolCall, results []tool.Result) string {
 func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, stream provider.Stream, estimatedTokens int) (streamResult, error) {
 	var text strings.Builder
 	var reasoningText strings.Builder
+	var reasoningSignature strings.Builder
 	var blocks []message.ContentBlock
 	var calls []toolCall
 	for {
@@ -455,6 +456,11 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			a.emit(Event{Type: EventDeltaText, Text: event.Text})
 		case provider.EventReasoningDelta:
 			chunk := event.Reasoning
+			// Signature-only events carry the Anthropic reasoning signature
+			// for replay on the next turn; no visible text to display.
+			if event.ReasoningSignature != "" {
+				reasoningSignature.WriteString(event.ReasoningSignature)
+			}
 			if chunk == "" {
 				chunk = event.Text
 			}
@@ -508,8 +514,17 @@ done:
 	if err := a.persistAccumulatedThinking(ctx, sessionID, turn, reasoningText.String()); err != nil {
 		return streamResult{}, err
 	}
+	reasoning := reasoningText.String()
+	sig := reasoningSignature.String()
+	var prefix []message.ContentBlock
+	if reasoning != "" && sig != "" {
+		prefix = append(prefix, message.ReasoningBlock(reasoning, sig))
+	}
 	if text.Len() > 0 {
-		blocks = append([]message.ContentBlock{message.TextBlock(text.String())}, blocks...)
+		prefix = append(prefix, message.TextBlock(text.String()))
+	}
+	if len(prefix) > 0 {
+		blocks = append(prefix, blocks...)
 	}
 	return streamResult{
 		text:         text.String(),

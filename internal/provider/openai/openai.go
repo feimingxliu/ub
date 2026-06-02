@@ -97,7 +97,7 @@ func (p *Provider) Name() string {
 	return p.name
 }
 
-// Caps returns OpenAI capabilities available in I-11.
+// Caps returns OpenAI capabilities for the default model.
 func (p *Provider) Caps() provider.Caps {
 	return provider.Caps{
 		SupportsTools:     true,
@@ -107,7 +107,41 @@ func (p *Provider) Caps() provider.Caps {
 	}
 }
 
-// Chat creates a streaming OpenAI ChatCompletion request.
+// CapsForModel returns capabilities adjusted for a specific model. OpenAI
+// models have different context windows: GPT-4o supports 128K, o-series
+// reasoning models support 200K, etc.
+func (p *Provider) CapsForModel(model string) provider.Caps {
+	caps := p.Caps()
+	if maxTokens := openAIModelContextTokens(model); maxTokens > 0 {
+		caps.MaxContextTokens = maxTokens
+	}
+	return caps
+}
+
+func openAIModelContextTokens(model string) int {
+	model = strings.ToLower(strings.TrimSpace(model))
+	// Strip provider prefix if present (e.g. "openai/gpt-4o").
+	if _, rest, ok := strings.Cut(model, "/"); ok {
+		model = strings.TrimSpace(rest)
+	}
+	switch {
+	case strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"), strings.HasPrefix(model, "o4"):
+		return 200_000
+	case strings.HasPrefix(model, "gpt-4o"), strings.HasPrefix(model, "gpt-4-turbo"), model == "gpt-4o":
+		return 128_000
+	case strings.HasPrefix(model, "gpt-5"):
+		return 200_000
+	case strings.HasPrefix(model, "gpt-4"):
+		return 128_000
+	case strings.HasPrefix(model, "gpt-3.5"):
+		return 16_385
+	default:
+		return 0 // unknown, defer to Caps()
+	}
+}
+
+// Chat creates a streaming OpenAI ChatCompletion request with automatic retry
+// on transient connection errors (429, 5xx, network failures).
 func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Stream, error) {
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, errors.New("openai model is required")
@@ -116,7 +150,9 @@ func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Str
 	if err != nil {
 		return nil, err
 	}
-	return newSDKStream(p.client.Chat.Completions.NewStreaming(ctx, params)), nil
+	return provider.NewRetryStream(ctx, p.name, func() (provider.Stream, error) {
+		return newSDKStream(p.client.Chat.Completions.NewStreaming(ctx, params)), nil
+	})
 }
 
 func toChatCompletionParams(req provider.Request) (sdk.ChatCompletionNewParams, error) {
@@ -135,7 +171,11 @@ func toChatCompletionParams(req provider.Request) (sdk.ChatCompletionNewParams, 
 		return sdk.ChatCompletionNewParams{}, err
 	}
 	params.Tools = tools
-	for _, msg := range req.Messages {
+	// Repair tool-call pairing before sending: an interrupted/resumed history
+	// can carry an assistant tool_use turn whose results never landed, which
+	// OpenAI/DeepSeek rejects with a 400 ("must be followed by tool messages…").
+	sanitized := provider.SanitizeToolPairing(req.Messages)
+	for _, msg := range sanitized {
 		converted, err := toMessageParams(msg)
 		if err != nil {
 			return sdk.ChatCompletionNewParams{}, err
@@ -297,6 +337,8 @@ func assistantContent(msg message.Message) (string, []sdk.ChatCompletionMessageT
 		switch block.Type {
 		case message.BlockText:
 			parts = append(parts, block.Text)
+		case message.BlockReasoning:
+			continue
 		case message.BlockToolUse:
 			toolCalls = append(toolCalls, sdk.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &sdk.ChatCompletionMessageFunctionToolCallParam{

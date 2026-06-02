@@ -62,6 +62,26 @@ func TestTextBlockJSONOmitEmpty(t *testing.T) {
 	}
 }
 
+func TestReasoningBlockHiddenFromText(t *testing.T) {
+	block := ReasoningBlock("thinking", "sig")
+	raw, err := json.Marshal(block)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded ContentBlock
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal ContentBlock: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, block) {
+		t.Fatalf("round-trip mismatch\ngot:  %#v\nwant: %#v\nraw: %s", decoded, block, raw)
+	}
+
+	msg := New(RoleAssistant, block, TextBlock("answer"))
+	if got := msg.Text(); got != "answer" {
+		t.Fatalf("Text() = %q, want answer", got)
+	}
+}
+
 func TestToolUseInputRawJSONAndRoundTrip(t *testing.T) {
 	input := json.RawMessage(`{"path":"README.md"}`)
 	block := ToolUseBlock("call-1", "fs.read", input)

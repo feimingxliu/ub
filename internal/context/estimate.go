@@ -188,6 +188,8 @@ func blockFrame(block message.ContentBlock) string {
 		return "text:\n" + block.Text
 	case message.BlockImage:
 		return "image:\n" + block.ImageURL
+	case message.BlockReasoning:
+		return "reasoning:\n" + block.Reasoning + "\nsignature:" + block.ReasoningSignature
 	case message.BlockToolUse:
 		return "tool_use:" + block.ToolName + "\ninput:" + compactJSON(block.Input)
 	case message.BlockToolResult:

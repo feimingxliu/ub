@@ -291,7 +291,7 @@ func (a *Agent) effectiveMaxContextTokens() int {
 	if a.maxContextTokens > 0 {
 		return a.maxContextTokens
 	}
-	return a.provider.Caps().MaxContextTokens
+	return provider.CapsForModel(a.provider, a.model).MaxContextTokens
 }
 
 type summaryWindowOptions struct {
@@ -401,6 +401,8 @@ func renderBlock(block message.ContentBlock) string {
 		return block.Text
 	case message.BlockImage:
 		return "[image] " + block.ImageURL
+	case message.BlockReasoning:
+		return "[reasoning omitted]"
 	case message.BlockToolUse:
 		return "[tool_use " + block.ToolName + "] " + compactRaw(block.Input)
 	case message.BlockToolResult:

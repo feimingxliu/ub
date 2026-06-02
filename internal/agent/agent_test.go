@@ -869,6 +869,84 @@ func TestAgentReasoningActivityDoesNotEnterAssistantText(t *testing.T) {
 	}
 }
 
+func TestAgentStoresSignedThinkingAsHiddenReasoningBlock(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	p := &scriptProvider{scripts: []fake.Script{
+		{
+			fake.ReasoningDelta("checking context"),
+			{Type: provider.EventReasoningDelta, ReasoningSignature: "sig"},
+			fake.TextDelta("answer"),
+			fake.Done(),
+		},
+	}}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Reasoning:  &reasoning.Config{Effort: reasoning.EffortHigh},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := a.Run(context.Background(), Request{Prompt: "think", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assistant := lastMessage(t, res.Messages)
+	if got := assistant.Text(); got != "answer" {
+		t.Fatalf("assistant text = %q, want answer", got)
+	}
+	if len(assistant.Content) < 2 {
+		t.Fatalf("assistant content = %#v, want reasoning and text blocks", assistant.Content)
+	}
+	reasoningBlock := assistant.Content[0]
+	if reasoningBlock.Type != message.BlockReasoning ||
+		reasoningBlock.Reasoning != "checking context" ||
+		reasoningBlock.ReasoningSignature != "sig" {
+		t.Fatalf("reasoning block = %#v, want signed hidden reasoning", reasoningBlock)
+	}
+	if assistant.Content[1].Type != message.BlockText || assistant.Content[1].Text != "answer" {
+		t.Fatalf("text block = %#v, want answer text", assistant.Content[1])
+	}
+}
+
+func TestConsumeStreamStoresSignedThinkingForToolOnlyTurn(t *testing.T) {
+	stream, err := fake.New(fake.Script{
+		fake.ReasoningDelta("need a tool"),
+		{Type: provider.EventReasoningDelta, ReasoningSignature: "sig-tool"},
+		fake.ToolCall("read", map[string]string{"path": "main.go"}),
+		fake.Done(),
+	}).Chat(context.Background(), provider.Request{})
+	if err != nil {
+		t.Fatalf("fake Chat: %v", err)
+	}
+
+	var a Agent
+	consumed, err := a.consumeStream(context.Background(), "", 1, stream, 0)
+	if err != nil {
+		t.Fatalf("consumeStream: %v", err)
+	}
+	if consumed.message.Text() != "" {
+		t.Fatalf("assistant text = %q, want empty", consumed.message.Text())
+	}
+	if len(consumed.message.Content) < 2 {
+		t.Fatalf("assistant content = %#v, want reasoning and tool_use blocks", consumed.message.Content)
+	}
+	reasoningBlock := consumed.message.Content[0]
+	if reasoningBlock.Type != message.BlockReasoning ||
+		reasoningBlock.Reasoning != "need a tool" ||
+		reasoningBlock.ReasoningSignature != "sig-tool" {
+		t.Fatalf("reasoning block = %#v, want signed hidden reasoning", reasoningBlock)
+	}
+	if consumed.message.Content[1].Type != message.BlockToolUse {
+		t.Fatalf("second block = %#v, want tool_use", consumed.message.Content[1])
+	}
+}
+
 func TestAgentPlanModeRejectsEditWithoutModifyingFile(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "main.go")
