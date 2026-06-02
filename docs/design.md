@@ -101,7 +101,13 @@ type Agent struct {
 func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.User) error {
     a.rollout.AppendUser(userMsg)
 
-    for turn := 0; turn < maxTurns; turn++ {
+    turn := 0
+    for {
+        if maxTurns > 0 && turn >= maxTurns {
+            // TUI 可通过 LimitAsker 给一次额外预算；无批准时进入 no-tools 收尾。
+            return a.finalizeWithoutTools(ctx, sess.ID, messages, "tool loop reached max_turns")
+        }
+
         // 1. 准备上下文（含 summary）
         msgs, err := a.ctx.Prepare(sess.History(), a.models.Large.MaxContext)
         if err != nil { return err }
@@ -123,20 +129,27 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
         if len(result.ToolCalls) == 0 { return nil }
 
         // 5. 顺序执行 tool calls（带执行模式与权限审批）
+        toolResults := make([]tool.Result, 0, len(result.ToolCalls))
         for _, call := range result.ToolCalls {
-            if err := a.runTool(ctx, call); err != nil {
+            toolResult, err := a.runTool(ctx, call)
+            if err != nil {
                 // tool 错误回灌给模型，让它处理
             }
+            toolResults = append(toolResults, toolResult)
+        }
+        turn++
+
+        if a.loopDetector.Record(result.ToolCalls, toolResults) {
+            return a.finalizeWithoutTools(ctx, sess.ID, messages, "repeated tool loop detected")
         }
     }
-    return ErrMaxTurns
 }
 ```
 
 要点：
-- **最大 turn 数**：默认 25，防止无限循环（codex / Crush 通用做法）
+- **最大 turn 数**：默认不按固定步数截断；只有配置 `max_turns > 0` 时才启用 hard guard。TUI 触顶时可通过 `LimitAsker` 追加一段预算，否则 agent 会发起一次禁用工具的收尾请求。
 - **并行 tool call**：V1 顺序执行，V2 再考虑并行（要保证写操作串行）
-- **loop detection**：Crush 有 `loop_detection.go`（同一 tool call 重复 N 次抑制），V2 引入
+- **loop detection**：内置基础重复检测；最近窗口内相同 tool-call/result 签名重复超过阈值时，agent 不再继续调用工具，而是发起一次禁用工具的收尾请求。更复杂的跨模式/跨会话策略放到 V2 深化。
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
 - **执行模式**：`mode` 从 session / CLI / profile 注入，影响 write/exec tool 的放行路径；模式切换写 `ModeSwitch` 事件
 - **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit 工具项可通过活动焦点展开 colored unified diff；read/ls/glob/bash 等无文件 diff 的工具展开时展示限幅后的 tool result 内容，bash 会把 `<shell_metadata>` 转成普通 metadata 行；streaming partial output 在最终 done/failed 到达时不被空详情或仅 metadata 的详情覆盖。恢复 session 时，TUI 从 rollout `tool_result` payload 重建相同的摘要和详情，保留 files/truncation metadata，而不是只从 message history 的纯文本 tool_result 回放。

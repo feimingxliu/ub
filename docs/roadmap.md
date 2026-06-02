@@ -453,14 +453,14 @@
 - **In Scope**：
   - `internal/agent/`：`Agent.Run(ctx, sess, userMsg) error`
   - 从 session/config/CLI 注入 `execution.Mode`；每轮 tool dispatch 都带当前 mode
-  - 单 session 内顺序处理 turns，maxTurns=25
+  - 单 session 内顺序处理 turns；`max_turns > 0` 时作为可选 hard guard，默认不按步数截断
   - 把工具 schema 传给 provider；解析模型 tool_use；调 Registry
   - **dispatcher 两阶段调用**：若工具实现 `PreviewableTool` → 先 Preview → 把 Preview 喂 `permission.Manager.Ask(Request)` → Allow 时才 Execute
   - `plan` 模式下模型请求 write tool 时，dispatcher 返回 tool error 而不写盘
   - tool_result 回写消息流，进 rollout
   - 让 anthropic / openai provider 支持 tool calls（更新流式 Event 类型）
   - CLI 子命令变成 `ub run -p "..."`（headless，支持 `--mode`），保留 `ub chat` 作为"裸聊天不带工具"
-- **Out of Scope**：TUI、permission UI（用 mock auto-allow asker）、并行 tool call、loop detection、auto summary
+- **Out of Scope**：TUI、permission UI（用 mock auto-allow asker）、并行 tool call、更复杂 loop detection 策略、auto summary
 - **关键签名**：见 design §3
 - **验证**：
   - **fake provider 单测**（无需任何外部依赖）：构造 fake script "调 fs.read → 用 result 文本回答" → assert 最终消息正确

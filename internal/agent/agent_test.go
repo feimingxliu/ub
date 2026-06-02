@@ -688,6 +688,81 @@ func TestAgentLimitAskerDecliningFallsThroughToFinalize(t *testing.T) {
 	}
 }
 
+func TestAgentDefaultMaxTurnsIsUnbounded(t *testing.T) {
+	a, err := New(Options{
+		Provider: &scriptProvider{},
+		Tools:    tool.New(),
+		Model:    "fake/model",
+		Mode:     execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if a.maxTurns != 0 {
+		t.Fatalf("maxTurns = %d, want 0 (unbounded default)", a.maxTurns)
+	}
+}
+
+func TestAgentDetectsRepeatedToolLoop(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	scripts := make([]fake.Script, 0, repeatedToolMaxRepeats+2)
+	for i := 0; i < repeatedToolMaxRepeats+1; i++ {
+		scripts = append(scripts, fake.Script{fake.ToolCall("read", map[string]any{"path": "main.go"}), fake.Done()})
+	}
+	scripts = append(scripts, fake.Script{fake.TextDelta("stopped repeated loop"), fake.Done()})
+	p := &scriptProvider{scripts: scripts}
+	var events []Event
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_repeat", Prompt: "loop", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "stopped repeated loop" {
+		t.Fatalf("text = %q, want repeated-loop final output", res.Text)
+	}
+	if got, want := len(p.requests), repeatedToolMaxRepeats+2; got != want {
+		t.Fatalf("chat calls = %d, want %d", got, want)
+	}
+	finalReq := p.requests[len(p.requests)-1]
+	if len(finalReq.Tools) != 0 {
+		t.Fatalf("final request tools = %#v, want none", finalReq.Tools)
+	}
+	if !containsText(finalReq.Messages, "Do not call tools") {
+		t.Fatalf("final request missing no-tool instruction: %#v", finalReq.Messages)
+	}
+	foundNotice := false
+	for _, event := range events {
+		if event.Type == EventActivity && strings.Contains(event.Summary, "repeated tool loop detected") {
+			foundNotice = true
+			break
+		}
+	}
+	if !foundNotice {
+		t.Fatalf("missing repeated-loop activity notice: %#v", events)
+	}
+}
+
 func TestAgentEmitsRuntimeEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o644); err != nil {

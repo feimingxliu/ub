@@ -27,7 +27,7 @@ const MaxSubagentDepth = 1
 
 type taskArgs struct {
 	Prompt   string      `json:"prompt"            jsonschema:"required,description=Self-contained instructions for the sub-agent. The sub-agent has the same tools as you but a fresh context."`
-	MaxTurns tool.IntArg `json:"max_turns,omitempty" jsonschema:"description=Optional cap on the sub-agent's tool-call iterations. Defaults to the sub-agent's configured maxTurns."`
+	MaxTurns tool.IntArg `json:"max_turns,omitempty" jsonschema:"description=Optional positive cap on the sub-agent's tool-call iterations. Omit to inherit the sub-agent's default loop policy."`
 }
 
 type taskTool struct {

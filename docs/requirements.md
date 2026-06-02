@@ -90,6 +90,7 @@
 - F-TOOL-2：V1 必备工具列表见 §3.1
 - F-TOOL-3：MCP 工具与本地工具走同一接口，从 namespace 区分
 - F-TOOL-4：工具结果可以是文本、文件 diff、错误，统一进入消息流
+- F-TOOL-5：Agent loop MUST NOT 使用小的固定默认轮数截断正常工具链路；`max_turns` 未设置时默认不按步数截断，只有 `max_turns > 0` 才启用 hard guard。系统 MUST 对重复相同 tool-call/result 的循环做基础检测，并在命中时发起一次禁用工具的收尾请求，避免无限重复。
 
 ### 4.4 执行模式
 

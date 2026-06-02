@@ -33,8 +33,7 @@ func (m Model) limitPromptView(width int) string {
 }
 
 // defaultLimitExtension is the size of one approved "give it more turns"
-// burst. Mirrors the default cap so a single yes nominally doubles the
-// budget without snowballing into an unbounded loop.
+// burst when an explicit max_turns guard is configured.
 const defaultLimitExtension = 50
 
 // LimitRequest is one pending host-side decision about whether to extend

@@ -3,6 +3,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,13 +25,16 @@ import (
 )
 
 // defaultMaxTurns caps how many tool-call iterations a single Run may take.
-// Bumped from 25 to 50 because realistic bug-fix / multi-file refactor
-// tasks routinely chew through 20-40 tool calls just exploring the
-// codebase before they can apply the patch; hitting the cap mid-task
-// forces finalizeWithoutTools, which is awkward and often produces
-// useless output (the model wants to call more tools and cannot).
-// Users can override via config (`max_turns`).
-const defaultMaxTurns = 50
+// A value <= 0 means the normal turn loop is unbounded and ends when the model
+// stops asking for tools. Runaway protection comes from repeated-tool detection,
+// context compaction, cancellation, and provider errors instead of a small fixed
+// default that interrupts legitimate long tasks.
+const defaultMaxTurns = 0
+
+const (
+	repeatedToolWindowSize = 10
+	repeatedToolMaxRepeats = 5
+)
 
 // ErrMaxTurns is returned when a run exceeds its provider/tool loop limit.
 var ErrMaxTurns = errors.New("agent: max turns reached")
@@ -124,6 +129,12 @@ type streamResult struct {
 	reasoningLen int
 }
 
+type toolLoopDetector struct {
+	window     []string
+	windowSize int
+	maxRepeats int
+}
+
 // New constructs an Agent.
 func New(opts Options) (*Agent, error) {
 	if opts.Provider == nil {
@@ -216,9 +227,10 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	turn := 0
 	limit := a.maxTurns
 	outputTokensRecoveryCount := 0
+	loopDetector := newToolLoopDetector(repeatedToolWindowSize, repeatedToolMaxRepeats)
 loop:
 	for {
-		for turn < limit {
+		for limit <= 0 || turn < limit {
 			tools, err := toolDefinitions(a.tools, a.currentMode())
 			if err != nil {
 				return Result{}, err
@@ -272,8 +284,10 @@ loop:
 				a.emit(Event{Type: EventDone, Text: consumed.text})
 				return Result{Text: consumed.text, Messages: messages}, nil
 			}
+			toolResults := make([]tool.Result, 0, len(consumed.toolCalls))
 			for _, call := range consumed.toolCalls {
 				result := a.runTool(ctx, req.SessionID, call)
+				toolResults = append(toolResults, result)
 				messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
 				if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 					return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
@@ -282,6 +296,9 @@ loop:
 				}
 			}
 			turn++
+			if loopDetector.Record(consumed.toolCalls, toolResults) {
+				return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages, "repeated tool loop detected; finalizing without tools")
+			}
 		}
 		// Hit the limit. Ask the host whether to keep going before falling
 		// through to finalizeWithoutTools — reasoning models often have more
@@ -303,15 +320,18 @@ loop:
 		}
 		break
 	}
-	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages)
+	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages, fmt.Sprintf("tool loop reached %d turns; finalizing without tools", limit))
 }
 
-func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn int, messages []message.Message) (Result, error) {
+func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn int, messages []message.Message, summary string) (Result, error) {
+	if strings.TrimSpace(summary) == "" {
+		summary = "tool loop finalizing without tools"
+	}
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityNotice,
 		Status:       "running",
-		Summary:      fmt.Sprintf("tool loop reached %d turns; finalizing without tools", a.maxTurns),
+		Summary:      summary,
 	})
 
 	requestMessages := cloneMessages(messages)
@@ -361,6 +381,59 @@ func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {
 	}
 	cp := *cfg
 	return &cp
+}
+
+func newToolLoopDetector(windowSize, maxRepeats int) *toolLoopDetector {
+	return &toolLoopDetector{
+		windowSize: max(1, windowSize),
+		maxRepeats: max(1, maxRepeats),
+	}
+}
+
+func (d *toolLoopDetector) Record(calls []toolCall, results []tool.Result) bool {
+	if d == nil {
+		return false
+	}
+	sig := toolInteractionSignature(calls, results)
+	if sig == "" {
+		d.window = nil
+		return false
+	}
+	d.window = append(d.window, sig)
+	if len(d.window) > d.windowSize {
+		d.window = d.window[len(d.window)-d.windowSize:]
+	}
+	repeats := 0
+	for _, item := range d.window {
+		if item == sig {
+			repeats++
+		}
+	}
+	return repeats > d.maxRepeats
+}
+
+func toolInteractionSignature(calls []toolCall, results []tool.Result) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	h := sha256.New()
+	for i, call := range calls {
+		io.WriteString(h, call.Name)
+		io.WriteString(h, "\x00")
+		io.WriteString(h, string(call.Input))
+		io.WriteString(h, "\x00")
+		if i < len(results) {
+			io.WriteString(h, results[i].Content)
+			io.WriteString(h, "\x00")
+			if results[i].IsError {
+				io.WriteString(h, "error")
+			} else {
+				io.WriteString(h, "ok")
+			}
+		}
+		io.WriteString(h, "\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, stream provider.Stream, estimatedTokens int) (streamResult, error) {
