@@ -52,6 +52,16 @@ func TestParseNew(t *testing.T) {
 	}
 }
 
+func TestParseResume(t *testing.T) {
+	cmd, err := Parse("/resume sess_123")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "resume" || len(cmd.Args) != 1 || cmd.Args[0] != "sess_123" {
+		t.Fatalf("command = %#v, want resume sess_123", cmd)
+	}
+}
+
 func TestParseApprovalModel(t *testing.T) {
 	cmd, err := Parse("/approval-model fake/reviewer")
 	if err != nil {
@@ -88,6 +98,16 @@ func TestMatchInitReturnsAgentsDescription(t *testing.T) {
 		t.Fatalf("matches = %#v, want init", matches)
 	}
 	if matches[0].Usage != "/init [guidance]" || matches[0].Description != "run an agent pass to create or update AGENTS.md" {
+		t.Fatalf("matches = %#v", matches)
+	}
+}
+
+func TestMatchResumeAlias(t *testing.T) {
+	matches := Match("/res")
+	if len(matches) != 1 {
+		t.Fatalf("matches = %#v, want resume", matches)
+	}
+	if matches[0].Name != "resume" || matches[0].Usage != "/resume [session-id]" {
 		t.Fatalf("matches = %#v", matches)
 	}
 }

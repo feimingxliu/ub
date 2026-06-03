@@ -1163,6 +1163,15 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 			return m.switchSession(cmd.Args[0])
 		}
 		return m.openSessionPicker()
+	case "resume":
+		if len(cmd.Args) > 1 || (len(cmd.Args) == 1 && cmd.Args[0] == "search") {
+			m.messages.append(systemRole, "usage: /resume [session-id]")
+			return m, nil
+		}
+		if len(cmd.Args) == 1 {
+			return m.switchSession(cmd.Args[0])
+		}
+		return m.openSessionPicker()
 	case "profile":
 		if len(cmd.Args) == 0 {
 			m.messages.append(systemRole, "profile: use `/profile <name>` to show restart guidance")

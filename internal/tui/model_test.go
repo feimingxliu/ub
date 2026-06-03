@@ -3516,6 +3516,73 @@ func TestSlashSessionsPickerFiltersAndSwitchesSession(t *testing.T) {
 	}
 }
 
+func TestSlashResumeOpensSessionPicker(t *testing.T) {
+	runner := &scriptedRunner{
+		sessions: []SessionInfo{
+			{ID: "s1", Title: "First", Model: "fake/one", Current: true},
+			{ID: "s2", Title: "Second", Model: "fake/two"},
+		},
+	}
+	model := NewModel(Options{Runner: runner, Model: "fake/one"})
+	model = sendText(t, model, "/resume")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash resume returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if !strings.Contains(viewString(model), "select session") || !strings.Contains(viewString(model), "s2") {
+		t.Fatalf("resume picker missing:\n%s", viewString(model))
+	}
+}
+
+func TestSlashResumeSwitchesExplicitSession(t *testing.T) {
+	runner := &scriptedRunner{
+		sessionStates: map[string]SessionState{
+			"s2": {
+				ID:    "s2",
+				Model: "fake/two",
+				Messages: []InitialMessage{
+					{Role: userRole, Text: "restored prompt"},
+				},
+			},
+		},
+	}
+	model := NewModel(Options{Runner: runner, Model: "fake/one"})
+	model = sendText(t, model, "/resume s2")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash resume id returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.currentSessionID != "s2" {
+		t.Fatalf("current session = %q, want s2", runner.currentSessionID)
+	}
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"restored prompt", "session set to s2"}) {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashResumeDoesNotSearchSessions(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/resume search test")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash resume search returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	texts := model.MessageTexts()
+	if len(texts) != 1 || !strings.Contains(texts[0], "usage: /resume [session-id]") {
+		t.Fatalf("messages = %#v, want resume usage", texts)
+	}
+	if strings.Contains(strings.Join(texts, "\n"), "searching sessions") {
+		t.Fatalf("resume should not trigger session search: %#v", texts)
+	}
+}
+
 func TestSelectSessionOnStartOpensPicker(t *testing.T) {
 	runner := &scriptedRunner{
 		sessions: []SessionInfo{

@@ -156,7 +156,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **TUI 消息队列**：同一 session 内 Agent turn 仍保持串行。运行中用户输入普通消息并回车时，TUI 只写入本地 FIFO 队列，不并发调用 Agent；当前 stream 正常关闭后自动取队首启动下一轮。排队消息在真正启动前不写入 rollout，避免被中断或编辑后的草稿污染历史；运行中上下方向键优先进入队列编辑，再退回普通历史输入浏览。
 - **TUI 启动覆盖**：直接运行 `ub` 打开 TUI 时支持 `--provider <name>` 与 `--model <id>`，走与 `ub chat` 相同的 provider/model 选择规则，只影响本次启动，不写回配置。
 - **TUI provider 切换**：`/provider [provider] [model]` 在当前 TUI session 内切换后续主对话 provider；无参数时展示 provider picker，显式切换后刷新 model/effort 候选与状态栏。切换只写回当前 session 元数据，不写回配置；不指定 model 时优先保留目标 provider 可用的当前 model。
-- **TUI session 恢复**：`ub --resume` 不再静默选择最近 session，而是在启动后打开当前 workspace 的历史 session picker；`ub --resume=<id>` / `ub --resume <id>` 仍在进入 TUI 前直接恢复指定 session。恢复时同时还原 session 元数据中的 provider 与 model；旧 session 若缺少 provider，会先按配置/远端模型列表尽力推断。
+- **TUI session 恢复**：`ub --resume` 不再静默选择最近 session，而是在启动后打开当前 workspace 的历史 session picker；`ub --resume=<id>` / `ub --resume <id>` 仍在进入 TUI 前直接恢复指定 session。TUI 内 `/resume` 对齐 CLI resume 语义：无参数打开 session picker，带 session id 时直接恢复；`/sessions` 继续负责 session picker、直接切换和 `search <query>` 历史事件搜索。恢复时同时还原 session 元数据中的 provider 与 model；旧 session 若缺少 provider，会先按配置/远端模型列表尽力推断。
 - **TUI 本地输入增强**：首个非空字符为 `!` 的输入绕过 Agent，输入区显示 shell 模式提示，直接复用本地 `bash` 工具执行并只在当前 TUI 以本地输出展示结果，不写入 rollout/history、不走权限审批、也不渲染为模型 tool 调用；普通输入中的 `@prefix` 触发 workspace 文件候选，选择后插入 `@relative/path` 文本引用，不自动读取文件内容；输入组件关闭 virtual cursor，由每帧 `tea.View.Cursor` 暴露输入框真实光标，保证 IME 预编辑绘制在当前输入行。
 
 ## 4. Tool 系统

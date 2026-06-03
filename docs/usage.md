@@ -96,7 +96,8 @@
 | `/config` | — | 展示当前 model / mode / cwd |
 | `/clear` | — | 清空当前对话视图（不删 session） |
 | `/new` | — | 在当前工作区新建一个空 session（旧的保留） |
-| `/sessions` | — | 列出当前工作区的历史 session，方向键选择 + Enter 切换 |
+| `/sessions` | `[session-id\|search <query>]` | 列出当前工作区的历史 session，方向键选择 + Enter 切换；带 id 时直接切换 |
+| `/resume` | `[session-id]` | 恢复历史 session：无参数打开选择器，带 id 时直接恢复 |
 | `/init` | `[guidance]` | 启动一轮 agent 调研当前工作区，并创建或改进 `AGENTS.md` |
 | `/provider` | `[provider] [model]` | 无参数列可用 provider；带参数切换 provider（可同时换 model） |
 | `/model` | `[model]` | 无参数列当前 provider 下可用 model；带参数切换 |
