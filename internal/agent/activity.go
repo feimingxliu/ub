@@ -211,6 +211,10 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 	case "plan_write":
 		add("title", "title")
 		addCount("steps", "steps")
+	case "plan_update":
+		add("plan_id", "plan_id")
+		add("title", "title")
+		addCount("steps", "steps")
 	case "plan_update_step":
 		add("plan_id", "plan_id")
 		add("step", "step_index")

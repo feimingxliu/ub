@@ -81,7 +81,7 @@ func newWriteTool(workspace string) *writeTool {
 
 func (t *writeTool) Name() string { return "plan_write" }
 func (t *writeTool) Description() string {
-	return "Write a new plan markdown to the user's state directory with a title, ordered steps, and optional notes. Available only in plan mode. Use before multi-step implementation work, risky changes, or tasks needing review; include inspection, edit, validation, and rollback/checkpoint steps. Returns the plan_id used by plan_update_step."
+	return "Write a new plan markdown to the user's state directory with a title, ordered steps, and optional notes. Available only in plan mode. Use before multi-step implementation work, risky changes, or tasks needing review; include inspection, edit, validation, and rollback/checkpoint steps. If a plan_id already exists and the user corrects or changes the plan, use plan_update instead of creating another plan. Returns the plan_id used by plan_update and plan_update_step."
 }
 func (t *writeTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *writeTool) Risk() tool.Risk            { return tool.RiskSafe }

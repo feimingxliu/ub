@@ -35,6 +35,7 @@ func TestCodingAgentToolDescriptionsCarryGuidance(t *testing.T) {
 		"grep":             {"locate symbols", "then read"},
 		"task":             {"self-contained", "independent from the main context"},
 		"plan_write":       {"Available only in plan mode", "validation"},
+		"plan_update":      {"Available only in plan mode", "instead of plan_write"},
 		"plan_update_step": {"Mark a step done only after", "verification evidence"},
 	}
 	for name, wants := range checks {

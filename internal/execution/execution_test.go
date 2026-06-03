@@ -45,8 +45,15 @@ func TestGatePlanRejectsWrite(t *testing.T) {
 	}
 }
 
-func TestGateAllowsExecForApproval(t *testing.T) {
-	for _, mode := range []Mode{ModeWork, ModePlan, ModeAuto} {
+func TestGatePlanRejectsExec(t *testing.T) {
+	err := Gate(ModePlan, tool.RiskExec)
+	if err == nil || !strings.Contains(err.Error(), "exec tools are disabled") {
+		t.Fatalf("Gate error = %v", err)
+	}
+}
+
+func TestGateAllowsExecOutsidePlan(t *testing.T) {
+	for _, mode := range []Mode{ModeWork, ModeAuto} {
 		if err := Gate(mode, tool.RiskExec); err != nil {
 			t.Fatalf("Gate(%s, exec): %v", mode, err)
 		}

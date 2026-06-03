@@ -139,6 +139,95 @@ func TestPlanWrite_EmptyTitleRejected(t *testing.T) {
 	}
 }
 
+func TestPlanRevise_UpdatesExistingPlanInPlace(t *testing.T) {
+	ws := testWorkspace(t)
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	w := newWriteTool(ws)
+	res, err := execTool(t, w, writeArgs{Title: "Initial Plan", Steps: []string{"inspect", "patch"}, Notes: "draft"})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	planID := extractPlanID(t, res.Content)
+	path, err := planPath(ws, planID)
+	if err != nil {
+		t.Fatalf("plan path: %v", err)
+	}
+
+	freezeTime(t, time.Date(2026, 5, 27, 10, 5, 0, 0, time.UTC))
+	u := newReviseTool(ws)
+	reviseRes, err := execTool(t, u, reviseArgs{
+		PlanID: planID,
+		Title:  "Corrected Plan",
+		Steps:  []string{"re-read scope", "patch narrow change", "run focused tests"},
+		Notes:  "corrected by user",
+		Reason: "user correction",
+	})
+	if err != nil {
+		t.Fatalf("revise: %v", err)
+	}
+	if !strings.Contains(reviseRes.Content, "plan_id="+planID) || !strings.Contains(reviseRes.Content, "path="+path) {
+		t.Fatalf("revise content should keep same plan id/path:\n%s", reviseRes.Content)
+	}
+	body := readPlan(t, ws, planID)
+	for _, want := range []string{
+		"# Corrected Plan",
+		"- [ ] 1. re-read scope",
+		"- [ ] 2. patch narrow change",
+		"- [ ] 3. run focused tests",
+		"corrected by user",
+		"plan updated: user correction",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("revised plan missing %q:\n%s", want, body)
+		}
+	}
+	root, err := planRoot(ws)
+	if err != nil {
+		t.Fatalf("plan root: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read plan root: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("plan_update should not create a second plan, entries=%d", len(entries))
+	}
+	if len(reviseRes.Files) != 1 || reviseRes.Files[0].Kind != tool.KindModify || reviseRes.Files[0].Path != path {
+		t.Fatalf("revise Files = %+v, want modify %s", reviseRes.Files, path)
+	}
+}
+
+func TestPlanRevise_CanClearNotes(t *testing.T) {
+	ws := testWorkspace(t)
+	w := newWriteTool(ws)
+	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}, Notes: "remove me"})
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	planID := extractPlanID(t, res.Content)
+
+	u := newReviseTool(ws)
+	if _, err := execTool(t, u, map[string]any{
+		"plan_id": planID,
+		"notes":   "",
+	}); err != nil {
+		t.Fatalf("revise clear notes: %v", err)
+	}
+	body := readPlan(t, ws, planID)
+	if strings.Contains(body, "remove me") {
+		t.Fatalf("notes were not cleared:\n%s", body)
+	}
+}
+
+func TestPlanRevise_RequiresChange(t *testing.T) {
+	ws := testWorkspace(t)
+	u := newReviseTool(ws)
+	_, err := execTool(t, u, map[string]any{"plan_id": "missing"})
+	if err == nil || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("expected change-required error, got: %v", err)
+	}
+}
+
 func TestPlanUpdate_MarksDoneAndAppendsLog(t *testing.T) {
 	ws := testWorkspace(t)
 	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
@@ -269,7 +358,7 @@ func TestPlanUpdate_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestRegister_RegistersTwoTools(t *testing.T) {
+func TestRegister_RegistersPlanTools(t *testing.T) {
 	reg := tool.New()
 	if err := Register(reg, t.TempDir()); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -278,7 +367,7 @@ func TestRegister_RegistersTwoTools(t *testing.T) {
 	for _, tl := range reg.All() {
 		names[tl.Name()] = true
 	}
-	for _, want := range []string{"plan_write", "plan_update_step"} {
+	for _, want := range []string{"plan_write", "plan_update", "plan_update_step"} {
 		if !names[want] {
 			t.Errorf("missing tool %s in %v", want, names)
 		}

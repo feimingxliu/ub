@@ -35,8 +35,13 @@ func Gate(mode Mode, risk tool.Risk) error {
 	if err != nil {
 		return err
 	}
-	if parsed == ModePlan && risk == tool.RiskWrite {
-		return fmt.Errorf("plan mode is read-only: write tools are disabled")
+	if parsed == ModePlan {
+		switch risk {
+		case tool.RiskWrite:
+			return fmt.Errorf("plan mode is read-only: write tools are disabled")
+		case tool.RiskExec:
+			return fmt.Errorf("plan mode is read-only: exec tools are disabled")
+		}
 	}
 	return nil
 }

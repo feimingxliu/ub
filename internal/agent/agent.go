@@ -596,7 +596,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 		return result
 	}
 	if !toolAvailableInMode(call.Name, a.currentMode()) {
-		result := tool.Result{Content: fmt.Sprintf("tool %q is only available in plan mode", call.Name), IsError: true}
+		result := tool.Result{Content: toolUnavailableInModeMessage(call.Name, a.currentMode()), IsError: true}
 		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
 		a.emitToolActivity(call, "failed", summary, detail, true)
 		return result
@@ -845,12 +845,38 @@ func toolAvailableInMode(name string, mode execution.Mode) bool {
 	if err != nil {
 		parsed = execution.ModeWork
 	}
+	if parsed == execution.ModePlan {
+		return toolAllowedInPlanMode(name)
+	}
 	switch name {
-	case "plan_write":
-		return parsed == execution.ModePlan
+	case "plan_write", "plan_update":
+		return false
 	default:
 		return true
 	}
+}
+
+func toolAllowedInPlanMode(name string) bool {
+	switch name {
+	case "read", "ls", "glob", "grep", "plan_write", "plan_update":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolUnavailableInModeMessage(name string, mode execution.Mode) string {
+	parsed, err := execution.ParseMode(string(mode))
+	if err != nil {
+		parsed = execution.ModeWork
+	}
+	if parsed == execution.ModePlan {
+		return fmt.Sprintf("tool %q is not available in plan mode; use read, ls, glob, grep, plan_write, or plan_update", name)
+	}
+	if name == "plan_write" || name == "plan_update" {
+		return fmt.Sprintf("tool %q is only available in plan mode", name)
+	}
+	return fmt.Sprintf("tool %q is not available in %s mode", name, parsed)
 }
 
 func cloneMessages(messages []message.Message) []message.Message {

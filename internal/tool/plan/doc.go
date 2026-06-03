@@ -4,6 +4,6 @@
 // done / skipped / failed as work proceeds. The tools deliberately use
 // RiskSafe because the storage target is ub-managed metadata outside the
 // workspace, not user code. The agent controls mode-specific visibility:
-// plan_write is only advertised/executable in plan mode, while
-// plan_update_step can mark progress after switching to execution modes.
+// plan_write and plan_update are only advertised/executable in plan mode,
+// while plan_update_step can mark progress after switching to execution modes.
 package plan

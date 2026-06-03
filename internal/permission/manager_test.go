@@ -133,6 +133,27 @@ func TestManagerPlanRejectsWriteWithoutAsker(t *testing.T) {
 	}
 }
 
+func TestManagerPlanRejectsExecWithoutAsker(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	manager, err := NewManager(Options{
+		Asker:           asker,
+		GlobalRulesPath: testRulesPath(t),
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModePlan, "git status"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if res.Allowed || res.Decision != DecisionDeny || res.Source != SourceMode {
+		t.Fatalf("result = %#v, want mode denial", res)
+	}
+	if asker.calls != 0 {
+		t.Fatalf("asker calls = %d, want 0", asker.calls)
+	}
+}
+
 func TestManagerDefaultExecUsesHumanAsker(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{

@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
-	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tui/diffview"
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
@@ -103,10 +101,6 @@ func (m Model) View() string {
 	b.WriteString(fieldLine(styles, "tool", fallback(req.Tool, "unknown")))
 	b.WriteString(fieldLine(styles, "risk", fallback(string(req.Risk), "unknown")))
 	b.WriteString(fieldLine(styles, "mode", fallback(string(req.Mode), "default")))
-	if req.Mode == execution.ModePlan && req.Risk == tool.RiskExec {
-		b.WriteString(styles.Render(styles.Modal.Warning, "Plan mode: command may still have side effects"))
-		b.WriteByte('\n')
-	}
 	if strings.TrimSpace(req.ApprovalReason) != "" {
 		b.WriteString(fieldLine(styles, "approval agent", req.ApprovalReason))
 	}

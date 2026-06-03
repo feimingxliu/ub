@@ -69,11 +69,12 @@ func (a *Agent) executionModeMessage() (message.Message, bool) {
 mode=plan
 </execution_mode>
 Plan mode instructions:
-- This is read-only planning mode. Inspect the workspace with safe read-only tools when needed.
+- This is read-only planning mode. Inspect the workspace only with read, ls, glob, and grep when needed.
 - For implementation requests such as add, fix, refactor, configure, test, build, or CI setup, create a plan with the plan_write tool before starting implementation.
-- Do not create, edit, delete, move, format, install, or otherwise change project files in plan mode.
+- If a plan already exists and the user corrects or changes it, update that same plan with plan_update instead of creating another plan.
+- Do not create, edit, delete, move, format, install, execute commands, launch sub-agents, or otherwise change project files in plan mode.
 - After writing the plan, report the plan_id and wait for the user to switch to work or auto mode before executing it.
-- If the user only asks a question, answer normally; use plan_write only when an execution plan is useful.`
+- If the user only asks a question, answer normally; use plan_write or plan_update only when a persistent execution plan is useful.`
 	return message.Text(message.RoleSystem, body), true
 }
 

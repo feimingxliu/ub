@@ -1497,6 +1497,8 @@ func toolAction(name string) string {
 		return "Writing memory..."
 	case "plan_write":
 		return "Writing plan..."
+	case "plan_update":
+		return "Updating plan..."
 	case "plan_update_step":
 		return "Updating plan step..."
 	case "tool_result":
@@ -1558,6 +1560,8 @@ func toolTitle(name, summary string) string {
 		verb = "Remembered"
 	case "plan_write":
 		verb = "Wrote plan"
+	case "plan_update":
+		verb = "Updated plan"
 	case "plan_update_step":
 		verb = "Updated plan step"
 	case "tool_result":

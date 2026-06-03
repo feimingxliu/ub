@@ -58,7 +58,7 @@ ub/
 │   ├── tool/
 │   │   ├── tool.go                    # Tool 接口、Risk、Registry
 │   │   ├── fs/                        # read / write / edit / multiedit / ls / glob / tool_result
-│   │   ├── plan/                      # plan_write / plan_update_step
+│   │   ├── plan/                      # plan_write / plan_update / plan_update_step
 │   │   ├── search/                    # grep / glob
 │   │   ├── shell/                     # bash
 │   │   ├── job/                       # job_run / job_output / job_kill
@@ -204,11 +204,11 @@ type FileChange struct {
 ```
 
 **风险等级**：
-- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update_step / remember / recall / task
+- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / remember / recall / task
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
 
-`plan_write` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` 只在 plan 模式暴露和执行;work/auto 下即使 provider 误调用也返回错误。plan 模式不向 provider 广告 `write` 风险工具,误调用仍由 mode gate 拦截。两者都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
+`plan_write` / `plan_update` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),用户纠正已有计划时用 `plan_update` 原地更新同一个 artifact,work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` / `plan_update` 只在 plan 模式暴露和执行;`plan_update_step` 只在 work/auto 模式用于执行进度。plan 模式只向 provider 广告 `read` / `ls` / `glob` / `grep` / `plan_write` / `plan_update`,误调用其它工具仍由 mode gate 拦截。三者都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
 
 LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `hover`、`completion`、`document_symbols`、`rename`、`code_action`。其中 `rename` 与 `code_action` **只返回 LSP 的建议**,不直接落盘 —— rename 输出"按文件路径排序的边界列表",model 拿到后用 `multiedit` 自行应用,从而走 ub 的 preview/permission 协议;`code_action` 只列可用 action 的 `title (kind)[ — has_edit]`,不执行任何 action
 
@@ -513,7 +513,7 @@ type ModePolicy struct {
 
 **三种模式**：
 - `work`：允许 workspace 内文件读写；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
-- `plan`：只读规划；`write` 风险工具在 dispatcher 层直接拒绝并把错误回灌给模型；`exec` 风险工具仍走用户审批，审批弹窗必须提示 Plan 模式下命令可能有副作用。
+- `plan`：只读规划；只广告 `read` / `ls` / `glob` / `grep` / `plan_write` / `plan_update`。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具在 dispatcher 层直接拒绝并把错误回灌给模型。
 - `auto`：文件读写策略同 `work`；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
 
 **approval agent** 是一个受限的二级 agent，只输出 `allow` / `deny` / `unsure` 与一句理由，不执行工具、不修改上下文、不写文件。它的输入只包含命令文本、cwd、风险等级、当前 mode、最近相关上下文摘要和已命中的规则信息；API key 等 secret 不传入。黑名单命令不进入 approval agent，直接走用户确认。

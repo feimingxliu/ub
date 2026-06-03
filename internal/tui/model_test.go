@@ -1469,6 +1469,7 @@ func TestBuiltInToolActivitiesUseExplicitLabels(t *testing.T) {
 		{"task", "Running Task...", "Ran Task"},
 		{"remember", "Writing memory...", "Remembered"},
 		{"plan_write", "Writing plan...", "Wrote plan"},
+		{"plan_update", "Updating plan...", "Updated plan"},
 		{"plan_update_step", "Updating plan step...", "Updated plan step"},
 		{"tool_result", "Reading tool result...", "Read tool result"},
 		{"diagnostics", "Checking diagnostics...", "Checked diagnostics"},

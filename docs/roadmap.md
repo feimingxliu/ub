@@ -503,7 +503,7 @@
 - **In Scope**：
   - `internal/tui/dialog/permission`：modal 显示工具名、参数预览、风险等级
   - 若 `Request.Preview != nil`：在 modal 中嵌入 diff 摘要（一行 summary + 折叠 unified diff，按 `d` 展开）
-  - Plan 模式下的 exec 审批必须显示 "Plan mode: command may still have side effects"
+  - Plan 模式不允许 exec 工具；模型误调时直接返回 mode gate 错误，不进入审批弹窗
   - auto 模式下若 approval agent 拒绝 / 不确定 / 出错，modal 展示 approval agent reason 后要求用户显式决策
   - 5 个审批候选以列表展示，说明每个选项的作用范围；方向键选择，Enter 确认，数字键仅保留为快捷键：
     - Allow once

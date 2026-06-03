@@ -399,8 +399,10 @@ func TestAgentInjectsPlanModeInstructionsWithoutPersistingThem(t *testing.T) {
 	for _, want := range []string{
 		"<execution_mode>",
 		"mode=plan",
+		"Inspect the workspace only with read, ls, glob, and grep",
 		"create a plan with the plan_write tool before starting implementation",
-		"Do not create, edit, delete, move, format, install",
+		"update that same plan with plan_update instead of creating another plan",
+		"Do not create, edit, delete, move, format, install, execute commands",
 		"report the plan_id and wait",
 	} {
 		if !containsText(got, want) {
@@ -982,14 +984,52 @@ func TestAgentPlanModeRejectsEditWithoutModifyingFile(t *testing.T) {
 	}
 }
 
+func TestAgentPlanModeRejectsExecWithoutApproval(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(&namedRiskTool{name: "bash", risk: tool.RiskExec}); err != nil {
+		t.Fatalf("register bash: %v", err)
+	}
+	asker := &recordingAsker{decision: permission.DecisionAllow}
+	perm := newPermissionManager(t, asker)
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("bash", map[string]any{"command": "git status"}), fake.Done()},
+		{fake.TextDelta("blocked"), fake.Done()},
+	}}
+	a := newTestAgent(t, p, reg, perm, execution.ModePlan)
+
+	if _, err := a.Run(context.Background(), Request{Prompt: "inspect with bash", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(asker.requests) != 0 {
+		t.Fatalf("plan-mode bash should not reach permission asker: %#v", asker.requests)
+	}
+	last := lastMessage(t, p.requests[1].Messages)
+	block := last.Content[0]
+	if !block.IsError || !strings.Contains(block.Output, "not available in plan mode") {
+		t.Fatalf("tool result block = %#v, want plan-mode denial", block)
+	}
+}
+
 func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	reg := tool.New()
 	planWrite := &namedSafeTool{name: "plan_write"}
 	if err := reg.Register(planWrite); err != nil {
 		t.Fatalf("register plan_write: %v", err)
 	}
+	if err := reg.Register(&namedSafeTool{name: "plan_update"}); err != nil {
+		t.Fatalf("register plan_update: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "plan_update_step"}); err != nil {
+		t.Fatalf("register plan_update_step: %v", err)
+	}
 	if err := reg.Register(&namedSafeTool{name: "read"}); err != nil {
 		t.Fatalf("register read: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "grep"}); err != nil {
+		t.Fatalf("register grep: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "remember"}); err != nil {
+		t.Fatalf("register remember: %v", err)
 	}
 	if err := reg.Register(&namedRiskTool{name: "edit", risk: tool.RiskWrite}); err != nil {
 		t.Fatalf("register edit: %v", err)
@@ -1004,6 +1044,12 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if toolNamesContain(tools, "plan_write") {
 		t.Fatalf("auto mode should not advertise plan_write: %#v", tools)
 	}
+	if toolNamesContain(tools, "plan_update") {
+		t.Fatalf("auto mode should not advertise plan_update: %#v", tools)
+	}
+	if !toolNamesContain(tools, "plan_update_step") {
+		t.Fatalf("auto mode should keep plan_update_step for execution progress: %#v", tools)
+	}
 	if !toolNamesContain(tools, "read") {
 		t.Fatalf("auto mode should keep non-plan tools: %#v", tools)
 	}
@@ -1017,11 +1063,18 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "plan_write") {
 		t.Fatalf("plan mode should advertise plan_write: %#v", tools)
 	}
-	if toolNamesContain(tools, "edit") {
-		t.Fatalf("plan mode should not advertise write tools: %#v", tools)
+	if !toolNamesContain(tools, "plan_update") {
+		t.Fatalf("plan mode should advertise plan_update: %#v", tools)
 	}
-	if !toolNamesContain(tools, "bash") {
-		t.Fatalf("plan mode should keep exec tools for approved inspection commands: %#v", tools)
+	for _, hidden := range []string{"plan_update_step", "edit", "bash", "remember"} {
+		if toolNamesContain(tools, hidden) {
+			t.Fatalf("plan mode should not advertise %s: %#v", hidden, tools)
+		}
+	}
+	for _, shown := range []string{"read", "grep"} {
+		if !toolNamesContain(tools, shown) {
+			t.Fatalf("plan mode should advertise %s: %#v", shown, tools)
+		}
 	}
 
 	perm := newPermissionManager(t, nil)
@@ -1048,6 +1101,9 @@ func TestAgentRefreshesAdvertisedToolsAfterModeSwitch(t *testing.T) {
 	reg := tool.New()
 	if err := reg.Register(&namedSafeTool{name: "plan_write"}); err != nil {
 		t.Fatalf("register plan_write: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "plan_update"}); err != nil {
+		t.Fatalf("register plan_update: %v", err)
 	}
 	if err := reg.Register(&namedRiskTool{name: "write", risk: tool.RiskWrite}); err != nil {
 		t.Fatalf("register write: %v", err)
@@ -1086,6 +1142,9 @@ func TestAgentRefreshesAdvertisedToolsAfterModeSwitch(t *testing.T) {
 	}
 	if !toolNamesContain(p.requests[1].Tools, "plan_write") {
 		t.Fatalf("plan mode should advertise plan_write after switch: %#v", p.requests[1].Tools)
+	}
+	if !toolNamesContain(p.requests[1].Tools, "plan_update") {
+		t.Fatalf("plan mode should advertise plan_update after switch: %#v", p.requests[1].Tools)
 	}
 	if toolNamesContain(p.requests[1].Tools, "write") {
 		t.Fatalf("plan mode should hide write after switch: %#v", p.requests[1].Tools)
@@ -1274,7 +1333,7 @@ func TestAgentEmitsApprovalAgentFallbackAndHumanDecision(t *testing.T) {
 	}
 }
 
-func TestAgentReadsModeAtToolPermissionTime(t *testing.T) {
+func TestAgentReadsModeAtToolGateTime(t *testing.T) {
 	reg := tool.New()
 	if err := reg.Register(&previewExecTool{}); err != nil {
 		t.Fatalf("register tool: %v", err)
@@ -1303,11 +1362,13 @@ func TestAgentReadsModeAtToolPermissionTime(t *testing.T) {
 	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if asker.calls != 1 {
-		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	if asker.calls != 0 {
+		t.Fatalf("asker calls = %d, want 0", asker.calls)
 	}
-	if got := asker.requests[0].Mode; got != execution.ModePlan {
-		t.Fatalf("permission mode = %q, want plan", got)
+	last := lastMessage(t, p.requests[1].Messages)
+	block := last.Content[0]
+	if !block.IsError || !strings.Contains(block.Output, "not available in plan mode") {
+		t.Fatalf("tool result block = %#v, want mode denial", block)
 	}
 }
 

@@ -50,7 +50,6 @@ func TestModalRendersContextAndDiff(t *testing.T) {
 	for _, want := range []string{
 		"tool: bash",
 		"risk: exec",
-		"Plan mode: command may still have side effects",
 		"approval agent: approval unsure",
 		"preview: Edit main.go",
 		"press d to show diff",
