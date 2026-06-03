@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev/dl/)
-[![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)]()
+[![Status: release](https://img.shields.io/badge/status-release-brightgreen.svg)]()
 [![中文](https://img.shields.io/badge/docs-中文-red.svg)](README.zh-CN.md)
 
 </div>
@@ -118,7 +118,7 @@ See [`docs/design.md`](docs/design.md) for the long version.
 
 ## 🛣️ Status
 
-V1 scope ([`docs/roadmap.md`](docs/roadmap.md)) is feature-complete. The codebase is approaching its first tagged release. Expect rough edges; expect API churn before `v1.0.0`.
+V1 scope ([`docs/roadmap.md`](docs/roadmap.md)) is feature-complete and tagged releases are available. Current releases are still `v0.x`, so expect rough edges and API churn before `v1.0.0`.
 
 If something looks wrong, [open an issue](https://github.com/feimingxliu/ub/issues). PRs welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions.
 

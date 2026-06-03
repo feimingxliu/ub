@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev/dl/)
-[![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)]()
+[![Status: release](https://img.shields.io/badge/status-release-brightgreen.svg)]()
 [![English](https://img.shields.io/badge/docs-English-blue.svg)](README.md)
 
 </div>
@@ -115,7 +115,7 @@ ub doctor --plain                   # 体检
 
 ## 🛣️ 现状
 
-V1 范围（[`docs/roadmap.md`](docs/roadmap.md)）已经 feature-complete,正在收尾首个 release。预期会有粗糙的边角和 `v1.0.0` 前的 API 变动。
+V1 范围（[`docs/roadmap.md`](docs/roadmap.md)）已经 feature-complete,且已有 tagged release 可用。当前 release 仍是 `v0.x`,预期还会有粗糙的边角和 `v1.0.0` 前的 API 变动。
 
 有问题请[开 issue](https://github.com/feimingxliu/ub/issues)。欢迎 PR,贡献约定见 [`AGENTS.md`](AGENTS.md)。
 
