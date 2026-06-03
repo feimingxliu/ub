@@ -2,16 +2,20 @@
 // workspace ("build command is X", "issue #42 root cause is Y") and the
 // user's broader environment ("prefer pnpm over npm", "VPN URL is Z").
 //
-// Two scopes:
+// Three layers:
 //
-//   - workspace: <workspace>/.ub/memory.md — committed (or .gitignored) per
-//     project, owned by the team
-//   - global:    <XDG_CONFIG_HOME or ~/.config>/ub/memory.md — owned by the
-//     individual user across all workspaces
+//   - global instructions: <XDG_CONFIG_HOME>/ub/instructions.md —
+//     hand-written user preferences that travel with the user.
+//   - project instructions: <workspace>/AGENTS.md — hand-written project
+//     facts that travel with the project. (Read-only for this package;
+//     loaded by the prompt harness.)
+//   - auto memory: <XDG_STATE_HOME>/ub/memory/<project-key>/memory.md —
+//     machine-appended facts keyed by project, never committed to git.
 //
-// Entries append; readers concatenate global-then-workspace. There is no
-// structured schema beyond "## <timestamp>" headings so users can hand-edit
-// memory files without breaking the runtime.
+// Auto memory entries are organized by category (preference, project,
+// pattern, decision, debug, general) within a single markdown file. The
+// file format uses H2 section headings for categories and bullet items for
+// entries, so users can hand-edit without breaking the runtime.
 package memory
 
 import (
@@ -19,72 +23,135 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
+
+	"github.com/feimingxliu/ub/internal/paths"
 )
 
-// Scope selects which memory file an operation targets.
+// Scope selects which memory source an operation targets.
 type Scope string
 
 const (
-	ScopeWorkspace Scope = "workspace"
-	ScopeGlobal    Scope = "global"
+	ScopeAuto      Scope = "auto"      // project auto memory (default)
+	ScopeGlobal    Scope = "global"    // global hand-written instructions
+	ScopeWorkspace Scope = "workspace" // deprecated alias for auto; kept for API compat
 )
 
-// nowFunc is overridden in tests for deterministic entry headers.
-var nowFunc = func() time.Time { return time.Now() }
+// Category classifies a memory entry for prioritized injection.
+type Category string
+
+const (
+	CatPreference Category = "preference" // user preferences — always injected
+	CatProject    Category = "project"    // project facts — high priority
+	CatPattern    Category = "pattern"    // code style/patterns — medium
+	CatDecision   Category = "decision"   // architecture decisions — medium
+	CatDebug      Category = "debug"      // debug notes — low, decays
+	CatGeneral    Category = "general"    // misc — low
+)
+
+// categoryPriority defines injection order: lower number = higher priority.
+var categoryPriority = map[Category]int{
+	CatPreference: 0,
+	CatProject:    1,
+	CatPattern:    2,
+	CatDecision:   3,
+	CatGeneral:    4,
+	CatDebug:      5,
+}
+
+// DefaultCategory is used when no category is specified.
+const DefaultCategory = CatGeneral
+
+// nowFunc is overridden in tests for deterministic entry timestamps.
+var nowFunc = func() time.Time { return time.Now().UTC() }
 
 // DefaultReadMaxChars is the default budget used when agent.Options does
 // not specify one.
 const DefaultReadMaxChars = 4000
 
-// ValidScope reports whether s is one of the two supported values.
+// ValidScope reports whether s is one of the supported scope values.
 func ValidScope(s string) bool {
 	switch Scope(s) {
-	case ScopeWorkspace, ScopeGlobal:
+	case ScopeAuto, ScopeGlobal, ScopeWorkspace:
 		return true
 	}
 	return false
 }
 
-// Path returns the absolute path of the memory file for one scope. For
-// the workspace scope, workspaceRoot MUST be non-empty.
+// ValidCategory reports whether c is a recognized category.
+func ValidCategory(c string) bool {
+	_, ok := categoryPriority[Category(c)]
+	return ok
+}
+
+// normalizeScope maps deprecated "workspace" → "auto" and returns the
+// effective scope.
+func normalizeScope(s Scope) Scope {
+	if s == ScopeWorkspace {
+		return ScopeAuto
+	}
+	return s
+}
+
+// Entry is one structured memory record.
+type Entry struct {
+	Category  Category
+	Timestamp time.Time
+	Text      string
+}
+
+// Path returns the absolute path of the memory file for one scope.
+//
+//   - ScopeAuto: $XDG_STATE_HOME/ub/memory/<project-key>/memory.md
+//   - ScopeGlobal: $XDG_CONFIG_HOME/ub/instructions.md
+//
+// workspaceRoot MUST be non-empty for ScopeAuto.
 func Path(workspaceRoot string, scope Scope) (string, error) {
+	scope = normalizeScope(scope)
 	switch scope {
-	case ScopeWorkspace:
+	case ScopeAuto:
 		if strings.TrimSpace(workspaceRoot) == "" {
-			return "", errors.New("memory: workspace root required for workspace scope")
+			return "", errors.New("memory: workspace root required for auto scope")
 		}
-		return filepath.Join(workspaceRoot, ".ub", "memory.md"), nil
-	case ScopeGlobal:
-		root, err := configHome()
+		key, err := paths.ProjectKey(workspaceRoot)
+		if err != nil {
+			return "", fmt.Errorf("memory: project key: %w", err)
+		}
+		stateRoot, err := paths.StateRoot()
 		if err != nil {
 			return "", err
 		}
-		return filepath.Join(root, "ub", "memory.md"), nil
+		return filepath.Join(stateRoot, "memory", key, "memory.md"), nil
+	case ScopeGlobal:
+		cfgHome, err := paths.ConfigHome()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(cfgHome, "ub", "instructions.md"), nil
 	default:
 		return "", fmt.Errorf("memory: unknown scope %q", scope)
 	}
 }
 
-func configHome() (string, error) {
-	if v := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); v != "" {
-		return v, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config"), nil
-}
-
-// Append writes a new entry to the scope's memory file. Returns the
-// absolute path of the file and the heading string of the new entry.
-func Append(workspaceRoot string, scope Scope, text string) (string, string, error) {
+// Append writes a new entry to the scope's memory file. Auto-memory entries
+// are de-duplicated within the same category: similar existing text is
+// updated (timestamp refreshed, text replaced) instead of appending a
+// duplicate. Global instructions are append-only so hand-written content is
+// never rewritten by the structured auto-memory parser.
+//
+// Returns the absolute path of the file and a human-readable heading string.
+func Append(workspaceRoot string, scope Scope, category Category, text string) (string, string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return "", "", errors.New("memory: text is required")
 	}
+	if _, ok := categoryPriority[category]; !ok {
+		return "", "", fmt.Errorf("memory: invalid category %q", category)
+	}
+	scope = normalizeScope(scope)
 	path, err := Path(workspaceRoot, scope)
 	if err != nil {
 		return "", "", err
@@ -92,60 +159,421 @@ func Append(workspaceRoot string, scope Scope, text string) (string, string, err
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", "", fmt.Errorf("memory: mkdir: %w", err)
 	}
-	heading := "## " + nowFunc().Format(time.RFC3339)
-	entry := "\n" + heading + "\n\n" + text + "\n"
-	// Open with append so concurrent ub invocations on the same memory file
-	// don't clobber each other's writes mid-flight.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return "", "", fmt.Errorf("memory: open: %w", err)
+
+	ts := nowFunc()
+	heading := fmt.Sprintf("## %s", ts.Format(time.RFC3339))
+
+	newEntry := Entry{Category: category, Timestamp: ts, Text: text}
+	if scope == ScopeGlobal {
+		if err := appendGlobalInstruction(path, newEntry); err != nil {
+			return "", "", fmt.Errorf("memory: write: %w", err)
+		}
+		return path, heading, nil
 	}
-	defer f.Close()
-	if _, err := f.WriteString(entry); err != nil {
+
+	// Load existing auto-memory entries for dedup check.
+	entries, err := parseFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("memory: read: %w", err)
+	}
+
+	deduped := false
+	for i, e := range entries {
+		if e.Category == category && isSimilar(e.Text, text) {
+			entries[i] = newEntry
+			deduped = true
+			break
+		}
+	}
+	if !deduped {
+		entries = append(entries, newEntry)
+	}
+
+	if err := writeFile(path, entries); err != nil {
 		return "", "", fmt.Errorf("memory: write: %w", err)
 	}
 	return path, heading, nil
 }
 
-// Read returns the concatenated memory the agent should see this turn:
-// global entries first, then workspace entries, with HTML comment markers
-// so the model can tell them apart. Each file's missing or empty content
-// is silently dropped — there's no "memory file not found" error path
-// surfaced upward.
-//
-// When maxChars > 0 and the combined text exceeds the budget, the head is
-// truncated (keeping the tail = the newest entries) and a "... [memory
-// truncated]" marker is inserted at the new start.
-func Read(workspaceRoot string, maxChars int) string {
-	var parts []string
-	if gp, err := Path("", ScopeGlobal); err == nil {
-		if body := readFile(gp); body != "" {
-			parts = append(parts, "<!-- global memory -->\n"+body)
+func appendGlobalInstruction(path string, e Entry) error {
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	prefix := ""
+	if strings.TrimSpace(string(existing)) != "" {
+		if len(existing) > 0 && existing[len(existing)-1] == '\n' {
+			prefix = "\n"
+		} else {
+			prefix = "\n\n"
 		}
 	}
-	if strings.TrimSpace(workspaceRoot) != "" {
-		if wp, err := Path(workspaceRoot, ScopeWorkspace); err == nil {
-			if body := readFile(wp); body != "" {
-				parts = append(parts, "<!-- workspace memory -->\n"+body)
-			}
-		}
+	entry := fmt.Sprintf("%s## %s\n\n- [%s] %s\n", prefix, e.Timestamp.Format(time.RFC3339), e.Category, e.Text)
+
+	// Append-only so hand-written instructions are never discarded by the
+	// structured auto-memory parser.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
 	}
-	if len(parts) == 0 {
-		return ""
+	defer f.Close()
+	if _, err := f.WriteString(entry); err != nil {
+		return err
 	}
-	joined := strings.Join(parts, "\n---\n")
-	if maxChars > 0 && len(joined) > maxChars {
-		// Drop the head, keep the tail.
-		drop := len(joined) - maxChars
-		joined = "... [memory truncated]\n" + joined[drop:]
-	}
-	return joined
+	return nil
 }
 
+// Read returns the concatenated memory the agent should see this turn:
+// global instructions first, then auto memory entries, with section
+// markers so the model can tell them apart.
+//
+// When maxChars > 0 and the combined text exceeds the budget, auto memory
+// entries are included by category priority (preference first, debug last).
+// Within the same category, newer entries are preferred. Global instructions
+// are always kept. A "... [memory truncated]" marker is prepended when some
+// entries are dropped.
+func Read(workspaceRoot string, maxChars int) string {
+	var parts []string
+	var globalBody string
+
+	// Global instructions (hand-written, always included).
+	if gp, err := Path("", ScopeGlobal); err == nil {
+		if body := readFile(gp); body != "" {
+			globalBody = "<!-- global instructions -->\n" + body
+			parts = append(parts, globalBody)
+		}
+	}
+
+	// Auto memory (machine-appended, budgeted).
+	var autoEntries []Entry
+	if strings.TrimSpace(workspaceRoot) != "" {
+		if ap, err := Path(workspaceRoot, ScopeAuto); err == nil {
+			entries, _ := parseFile(ap)
+			autoEntries = entries
+		}
+	}
+
+	if len(parts) == 0 && len(autoEntries) == 0 {
+		return ""
+	}
+
+	// If no budget or everything fits, just concatenate.
+	autoRendered := renderAutoMemory(autoEntries)
+	if len(parts) > 0 {
+		parts = append(parts, "<!-- auto memory -->\n"+autoRendered)
+	} else {
+		parts = append(parts, "<!-- auto memory -->\n"+autoRendered)
+	}
+	// Remove empty auto memory section.
+	filtered := parts[:0]
+	for _, p := range parts {
+		if strings.TrimSpace(strings.TrimPrefix(p, "<!-- auto memory -->")) != "" ||
+			!strings.HasPrefix(p, "<!-- auto memory -->") {
+			filtered = append(filtered, p)
+		}
+	}
+	if len(filtered) == 0 {
+		return ""
+	}
+
+	joined := strings.Join(filtered, "\n---\n")
+	if maxChars <= 0 || len(joined) <= maxChars {
+		return joined
+	}
+
+	// Budget exceeded: rebuild auto memory with priority-based selection.
+	truncMarker := "... [memory truncated]\n"
+	budget := maxChars - len(truncMarker)
+	if budget < 0 {
+		budget = 0
+	}
+
+	// Reserve space for global instructions.
+	globalBudget := 0
+	if globalBody != "" {
+		globalBudget = len(globalBody) + len("\n---\n")
+		if globalBudget > budget {
+			globalBudget = budget
+		}
+	}
+	autoBudget := budget - globalBudget
+
+	// Sort auto entries by priority then recency.
+	sorted := make([]Entry, len(autoEntries))
+	copy(sorted, autoEntries)
+	sort.Slice(sorted, func(i, j int) bool {
+		pi, pj := categoryPriority[sorted[i].Category], categoryPriority[sorted[j].Category]
+		if pi != pj {
+			return pi < pj
+		}
+		return sorted[i].Timestamp.After(sorted[j].Timestamp)
+	})
+
+	var autoB strings.Builder
+	autoB.WriteString("<!-- auto memory -->\n")
+	autoHeaderLen := autoB.Len()
+	for _, e := range sorted {
+		line := fmt.Sprintf("[%s] %s\n", e.Category, e.Text)
+		if autoB.Len()-autoHeaderLen+len(line) > autoBudget {
+			continue
+		}
+		autoB.WriteString(line)
+	}
+
+	var result strings.Builder
+	result.WriteString(truncMarker)
+	if globalBody != "" {
+		result.WriteString(globalBody)
+		result.WriteString("\n---\n")
+	}
+	result.WriteString(autoB.String())
+	return result.String()
+}
+
+// renderAutoMemory renders entries as category-sectioned markdown.
+func renderAutoMemory(entries []Entry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+
+	groups := make(map[Category][]Entry)
+	for _, e := range entries {
+		groups[e.Category] = append(groups[e.Category], e)
+	}
+
+	var cats []Category
+	for c := range groups {
+		cats = append(cats, c)
+	}
+	sort.Slice(cats, func(i, j int) bool {
+		return categoryPriority[cats[i]] < categoryPriority[cats[j]]
+	})
+
+	var b strings.Builder
+	for _, cat := range cats {
+		b.WriteString("## " + string(cat) + "\n\n")
+		items := groups[cat]
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Timestamp.After(items[j].Timestamp)
+		})
+		for _, e := range items {
+			fmt.Fprintf(&b, "- %s *(%s)*\n", e.Text, e.Timestamp.Format(time.RFC3339))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// Recall searches auto memory entries matching a query. If query is empty,
+// all entries are returned (optionally filtered by category). Returns an
+// empty slice when no memory file exists.
+func Recall(workspaceRoot string, query string, category Category) ([]Entry, error) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return nil, errors.New("memory: workspace root required for recall")
+	}
+	path, err := Path(workspaceRoot, ScopeAuto)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := parseFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var result []Entry
+	for _, e := range entries {
+		if category != "" && e.Category != category {
+			continue
+		}
+		if query != "" && !strings.Contains(
+			strings.ToLower(e.Text),
+			strings.ToLower(query),
+		) {
+			continue
+		}
+		result = append(result, e)
+	}
+	return result, nil
+}
+
+// --- File format ---
+
+// The auto memory file uses category-sectioned markdown:
+//
+//	## preference
+//
+//	- prefer pnpm over npm *(2026-05-27T10:00:00Z)*
+//	- always use conventional commits *(2026-05-28T09:00:00Z)*
+//
+//	## project
+//
+//	- build is `make build` *(2026-05-27T10:00:00Z)*
+//
+// Entries are grouped by category. Each entry is a bullet point with an
+// italic timestamp. The file is fully hand-editable.
+
+// writeFile serializes entries to category-sectioned markdown.
+func writeFile(path string, entries []Entry) error {
+	// Group by category, preserving category priority order.
+	groups := make(map[Category][]Entry)
+	for _, e := range entries {
+		groups[e.Category] = append(groups[e.Category], e)
+	}
+
+	var cats []Category
+	for c := range groups {
+		cats = append(cats, c)
+	}
+	sort.Slice(cats, func(i, j int) bool {
+		return categoryPriority[cats[i]] < categoryPriority[cats[j]]
+	})
+
+	var b strings.Builder
+	for _, cat := range cats {
+		b.WriteString("## " + string(cat) + "\n\n")
+		items := groups[cat]
+		// Sort within category: newest first.
+		sort.Slice(items, func(i, j int) bool {
+			return items[i].Timestamp.After(items[j].Timestamp)
+		})
+		for _, e := range items {
+			fmt.Fprintf(&b, "- %s *(%s)*\n", e.Text, e.Timestamp.Format(time.RFC3339))
+		}
+		b.WriteString("\n")
+	}
+
+	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+// parseFile reads and parses a category-sectioned markdown file.
+func parseFile(path string) ([]Entry, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseEntries(string(body)), nil
+}
+
+// parseEntries parses category-sectioned markdown into entries.
+func parseEntries(content string) []Entry {
+	var entries []Entry
+	var curCat Category
+
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			catStr := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
+			if ValidCategory(catStr) {
+				curCat = Category(catStr)
+			} else {
+				curCat = CatGeneral
+			}
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		text, ts, ok := parseBullet(trimmed[2:])
+		if !ok {
+			continue
+		}
+		entries = append(entries, Entry{
+			Category:  curCat,
+			Timestamp: ts,
+			Text:      text,
+		})
+	}
+	return entries
+}
+
+// parseBullet parses "text *(timestamp)*" from a bullet item.
+func parseBullet(s string) (text string, ts time.Time, ok bool) {
+	// Look for trailing *(RFC3339)*
+	idx := strings.LastIndex(s, "*(")
+	if idx < 0 {
+		return s, time.Time{}, false
+	}
+	text = strings.TrimSpace(s[:idx])
+	rest := s[idx+2:]
+	closeIdx := strings.Index(rest, ")*")
+	if closeIdx < 0 {
+		return s, time.Time{}, false
+	}
+	tsStr := rest[:closeIdx]
+	parsed, err := time.Parse(time.RFC3339, tsStr)
+	if err != nil {
+		return s, time.Time{}, false
+	}
+	return text, parsed, true
+}
+
+// readFile reads a plain file and returns its trimmed content, or empty
+// string on any error.
 func readFile(path string) string {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// isSimilar reports whether two texts are similar enough to be considered
+// duplicates. Current heuristic: normalized substring containment, or
+// sufficient word overlap.
+func isSimilar(a, b string) bool {
+	al := normalize(a)
+	bl := normalize(b)
+	if al == "" || bl == "" {
+		return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+	}
+	// Substring containment after normalization.
+	if strings.Contains(al, bl) || strings.Contains(bl, al) {
+		return true
+	}
+	// Word overlap: if ≥60% of words in the shorter string appear in the
+	// longer one, consider similar.
+	wordsA := wordSet(al)
+	wordsB := wordSet(bl)
+	if len(wordsA) == 0 || len(wordsB) == 0 {
+		return false
+	}
+	shorter, longer := wordsA, wordsB
+	if len(wordsA) > len(wordsB) {
+		shorter, longer = wordsB, wordsA
+	}
+	common := 0
+	for w := range shorter {
+		if longer[w] {
+			common++
+		}
+	}
+	return float64(common)/float64(len(shorter)) >= 0.6
+}
+
+// normalize strips punctuation and collapses whitespace for comparison.
+func normalize(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r):
+			b.WriteRune(r)
+		case unicode.IsSpace(r):
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func wordSet(s string) map[string]bool {
+	words := strings.Fields(s)
+	set := make(map[string]bool, len(words))
+	for _, w := range words {
+		set[w] = true
+	}
+	return set
 }

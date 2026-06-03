@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -51,7 +50,10 @@ func (t *updateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 		return tool.Result{}, fmt.Errorf("plan_update_step: %w", err)
 	}
 
-	path := planPath(t.workspace, a.PlanID)
+	path, err := planPath(t.workspace, a.PlanID)
+	if err != nil {
+		return tool.Result{}, fmt.Errorf("plan_update_step: %w", err)
+	}
 	doc, err := loadPlan(path)
 	if err != nil {
 		return tool.Result{}, fmt.Errorf("plan_update_step: %w", err)
@@ -79,13 +81,9 @@ func (t *updateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Resul
 	}
 
 	stepsRendered := renderStepsBlock(doc.steps)
-	rel, _ := filepath.Rel(t.workspace, path)
-	if rel == "" {
-		rel = path
-	}
 	return tool.Result{
 		Content: fmt.Sprintf("plan_id=%s\nstatus=%s\n\n%s", a.PlanID, doc.status, stepsRendered),
-		Files:   []tool.FileChange{{Path: rel, Kind: tool.KindModify}},
+		Files:   []tool.FileChange{{Path: path, Kind: tool.KindModify}},
 	}, nil
 }
 

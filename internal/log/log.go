@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/feimingxliu/ub/internal/paths"
 )
 
 // RotationOptions controls best-effort file rotation before a log file is
@@ -52,14 +54,11 @@ func SetupTUIFromEnvWithRotation(stderr io.Writer, rotation RotationOptions) (*s
 
 // DefaultFilePath returns the default user-level log file path.
 func DefaultFilePath() (string, error) {
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ub", "ub.log"), nil
-	}
-	home, err := os.UserHomeDir()
+	stateRoot, err := paths.StateRoot()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "state", "ub", "ub.log"), nil
+	return filepath.Join(stateRoot, "ub.log"), nil
 }
 
 func setupFromEnv(stderr io.Writer, defaultFile string, rotation RotationOptions) (*slog.Logger, func() error, string, error) {

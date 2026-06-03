@@ -500,8 +500,8 @@ func TestMessagesForTUIFromRolloutUsesToolResultPayloadDetail(t *testing.T) {
 		t.Fatalf("AssistantMessage: %v", err)
 	}
 	toolResultEvent, err := rollout.ToolResult("sess_1", 1, "call_plan", "plan_write", tool.Result{
-		Content: "plan_id=plan-1\npath=.ub/plans/plan-1.md\n\n# Plan\n\n- [ ] inspect",
-		Files:   []tool.FileChange{{Path: ".ub/plans/plan-1.md", Kind: tool.KindCreate}},
+		Content: "plan_id=plan-1\npath=/home/user/.local/state/ub/plans/abc123/plan-1.md\n\n# Plan\n\n- [ ] inspect",
+		Files:   []tool.FileChange{{Path: "/home/user/.local/state/ub/plans/abc123/plan-1.md", Kind: tool.KindCreate}},
 	})
 	if err != nil {
 		t.Fatalf("ToolResult: %v", err)
@@ -516,7 +516,7 @@ func TestMessagesForTUIFromRolloutUsesToolResultPayloadDetail(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("messages len = %d, want 2: %#v", len(got), got)
 	}
-	if got[1].Summary != "create .ub/plans/plan-1.md" || !strings.Contains(got[1].Content, "# Plan") {
+	if got[1].Summary != "create /home/user/.local/state/ub/plans/abc123/plan-1.md" || !strings.Contains(got[1].Content, "# Plan") {
 		t.Fatalf("tool result activity = %#v", got[1])
 	}
 }

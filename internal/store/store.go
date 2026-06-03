@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/feimingxliu/ub/internal/paths"
 	_ "modernc.org/sqlite"
 )
 
@@ -48,14 +49,11 @@ type Session struct {
 
 // DefaultPath returns the user-level SQLite database path.
 func DefaultPath() (string, error) {
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ub", "ub.db"), nil
-	}
-	home, err := os.UserHomeDir()
+	dataHome, err := paths.DataHome()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "ub", "ub.db"), nil
+	return filepath.Join(dataHome, "ub", "ub.db"), nil
 }
 
 // Open opens the SQLite database at path and applies pending migrations.

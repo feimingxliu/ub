@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/paths"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/feimingxliu/ub/internal/tooloutput"
 )
@@ -174,14 +175,11 @@ func cleanupStatePath(override string) (string, error) {
 	if override != "" {
 		return override, nil
 	}
-	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ub", "cleanup.json"), nil
-	}
-	home, err := os.UserHomeDir()
+	stateRoot, err := paths.StateRoot()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "state", "ub", "cleanup.json"), nil
+	return filepath.Join(stateRoot, "cleanup.json"), nil
 }
 
 func readCleanupState(path string) (cleanupState, bool, error) {

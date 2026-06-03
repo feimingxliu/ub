@@ -7,9 +7,8 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
-// Register adds the plan_write and plan_update_step tools to reg. The
-// workspaceRoot is the workspace cwd; plan files are written under
-// `<workspaceRoot>/.ub/plans/`.
+// Register adds the plan_write and plan_update_step tools to reg. Plan files
+// are stored under $XDG_STATE_HOME/ub/plans/<project-key>/.
 func Register(reg *tool.Registry, workspaceRoot string) error {
 	if reg == nil {
 		return fmt.Errorf("plan: nil registry")

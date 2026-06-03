@@ -204,11 +204,11 @@ type FileChange struct {
 ```
 
 **风险等级**：
-- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update_step / remember / task
+- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update_step / remember / recall / task
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
 
-`plan_write` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `.ub/plans/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` 只在 plan 模式暴露和执行;work/auto 下即使 provider 误调用也返回错误。plan 模式不向 provider 广告 `write` 风险工具,误调用仍由 mode gate 拦截。两者都是 `RiskSafe`(写的是 ub 内部 artifact 目录,不是用户代码)。
+`plan_write` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` 只在 plan 模式暴露和执行;work/auto 下即使 provider 误调用也返回错误。plan 模式不向 provider 广告 `write` 风险工具,误调用仍由 mode gate 拦截。两者都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
 
 LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `hover`、`completion`、`document_symbols`、`rename`、`code_action`。其中 `rename` 与 `code_action` **只返回 LSP 的建议**,不直接落盘 —— rename 输出"按文件路径排序的边界列表",model 拿到后用 `multiedit` 自行应用,从而走 ub 的 preview/permission 协议;`code_action` 只列可用 action 的 `title (kind)[ — has_edit]`,不执行任何 action
 

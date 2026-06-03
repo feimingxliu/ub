@@ -42,9 +42,9 @@ func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message
 }
 
 // memoryMessage returns a role=system message containing the
-// <workspace_memory>...</workspace_memory> envelope of the current memory
-// files. Returns ok=false when the agent has no workspace configured or
-// when neither memory file has content.
+// <memory>...</memory> envelope of the current memory sources.
+// Returns ok=false when the agent has no workspace configured or
+// when no memory content exists.
 func (a *Agent) memoryMessage() (message.Message, bool) {
 	if a.workspaceRoot == "" {
 		return message.Message{}, false
@@ -57,7 +57,7 @@ func (a *Agent) memoryMessage() (message.Message, bool) {
 	if strings.TrimSpace(body) == "" {
 		return message.Message{}, false
 	}
-	return message.Text(message.RoleSystem, "<workspace_memory>\n"+body+"\n</workspace_memory>"), true
+	return message.Text(message.RoleSystem, "<memory>\n"+body+"\n</memory>"), true
 }
 
 func (a *Agent) executionModeMessage() (message.Message, bool) {

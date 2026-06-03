@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/feimingxliu/ub/internal/config"
+	"github.com/feimingxliu/ub/internal/paths"
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
@@ -84,14 +85,7 @@ func ReserveOutputTokens(cfg config.ContextConfig) int {
 
 // StateRoot returns ub's user state directory.
 func StateRoot() (string, error) {
-	if xdg := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); xdg != "" {
-		return filepath.Join(xdg, "ub"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "state", "ub"), nil
+	return paths.StateRoot()
 }
 
 // OutputRoot returns the root directory containing all tool-output spillover

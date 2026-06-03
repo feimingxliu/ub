@@ -81,7 +81,7 @@ func newWriteTool(workspace string) *writeTool {
 
 func (t *writeTool) Name() string { return "plan_write" }
 func (t *writeTool) Description() string {
-	return "Write a new plan markdown to <workspace>/.ub/plans/<id>.md with a title, ordered steps, and optional notes. Available only in plan mode. Use before multi-step implementation work, risky changes, or tasks needing review; include inspection, edit, validation, and rollback/checkpoint steps. Returns the plan_id used by plan_update_step."
+	return "Write a new plan markdown to the user's state directory with a title, ordered steps, and optional notes. Available only in plan mode. Use before multi-step implementation work, risky changes, or tasks needing review; include inspection, edit, validation, and rollback/checkpoint steps. Returns the plan_id used by plan_update_step."
 }
 func (t *writeTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *writeTool) Risk() tool.Risk            { return tool.RiskSafe }
@@ -104,7 +104,10 @@ func (t *writeTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result
 	}
 
 	planID := newPlanID(a.Title)
-	path := planPath(t.workspace, planID)
+	path, err := planPath(t.workspace, planID)
+	if err != nil {
+		return tool.Result{}, fmt.Errorf("plan_write: %w", err)
+	}
 	if _, err := os.Stat(path); err == nil {
 		return tool.Result{}, fmt.Errorf("plan_write: plan_id %s already exists", planID)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -128,12 +131,8 @@ func (t *writeTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result
 		return tool.Result{}, fmt.Errorf("plan_write: write: %w", err)
 	}
 
-	rel, _ := filepath.Rel(t.workspace, path)
-	if rel == "" {
-		rel = path
-	}
 	return tool.Result{
 		Content: fmt.Sprintf("plan_id=%s\npath=%s\n\n%s", planID, path, rendered),
-		Files:   []tool.FileChange{{Path: rel, Kind: tool.KindCreate}},
+		Files:   []tool.FileChange{{Path: path, Kind: tool.KindCreate}},
 	}, nil
 }

@@ -28,6 +28,12 @@ func execTool(t *testing.T, tl tool.Tool, args any) (tool.Result, error) {
 	return tl.Execute(context.Background(), raw)
 }
 
+func testWorkspace(t *testing.T) string {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	return t.TempDir()
+}
+
 func TestSlugify(t *testing.T) {
 	cases := map[string]string{
 		"":                                "plan",
@@ -55,7 +61,7 @@ func TestNewPlanID_MonotonicallyDifferentTimestamps(t *testing.T) {
 }
 
 func TestPlanWrite_HappyPath(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
 	tl := newWriteTool(ws)
 	res, err := execTool(t, tl, writeArgs{
@@ -69,10 +75,7 @@ func TestPlanWrite_HappyPath(t *testing.T) {
 	if !strings.Contains(res.Content, "plan_id=20260527T100000Z-fix-login-bug") {
 		t.Fatalf("Content missing plan_id: %q", res.Content)
 	}
-	body, err := os.ReadFile(filepath.Join(ws, ".ub/plans/20260527T100000Z-fix-login-bug.md"))
-	if err != nil {
-		t.Fatalf("read plan: %v", err)
-	}
+	body := readPlan(t, ws, "20260527T100000Z-fix-login-bug")
 	content := string(body)
 	for _, want := range []string{
 		"# Fix Login Bug",
@@ -95,7 +98,7 @@ func TestPlanWrite_HappyPath(t *testing.T) {
 }
 
 func TestPlanWrite_AcceptsJSONEncodedStepsString(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
 	tl := newWriteTool(ws)
 	res, err := execTool(t, tl, map[string]any{
@@ -119,7 +122,7 @@ func TestPlanWrite_AcceptsJSONEncodedStepsString(t *testing.T) {
 }
 
 func TestPlanWrite_EmptyStepsRejected(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	tl := newWriteTool(ws)
 	_, err := execTool(t, tl, writeArgs{Title: "x", Steps: []string{}})
 	if err == nil || !strings.Contains(err.Error(), "steps is required") {
@@ -128,7 +131,7 @@ func TestPlanWrite_EmptyStepsRejected(t *testing.T) {
 }
 
 func TestPlanWrite_EmptyTitleRejected(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	tl := newWriteTool(ws)
 	_, err := execTool(t, tl, writeArgs{Title: "", Steps: []string{"x"}})
 	if err == nil || !strings.Contains(err.Error(), "title is required") {
@@ -137,7 +140,7 @@ func TestPlanWrite_EmptyTitleRejected(t *testing.T) {
 }
 
 func TestPlanUpdate_MarksDoneAndAppendsLog(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
 	w := newWriteTool(ws)
 	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b", "c"}})
@@ -165,7 +168,7 @@ func TestPlanUpdate_MarksDoneAndAppendsLog(t *testing.T) {
 }
 
 func TestPlanUpdate_AcceptsStringStepIndex(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	w := newWriteTool(ws)
 	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b"}})
 	if err != nil {
@@ -187,7 +190,7 @@ func TestPlanUpdate_AcceptsStringStepIndex(t *testing.T) {
 }
 
 func TestPlanUpdate_InProgressIsNonTerminal(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	w := newWriteTool(ws)
 	res, err := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
 	if err != nil {
@@ -216,7 +219,7 @@ func TestPlanUpdate_InProgressIsNonTerminal(t *testing.T) {
 }
 
 func TestPlanUpdate_AutoCompleteWhenAllDone(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	w := newWriteTool(ws)
 	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a", "b"}})
 	planID := extractPlanID(t, res.Content)
@@ -234,7 +237,7 @@ func TestPlanUpdate_AutoCompleteWhenAllDone(t *testing.T) {
 }
 
 func TestPlanUpdate_OutOfRange(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	w := newWriteTool(ws)
 	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
 	planID := extractPlanID(t, res.Content)
@@ -246,7 +249,7 @@ func TestPlanUpdate_OutOfRange(t *testing.T) {
 }
 
 func TestPlanUpdate_InvalidStatus(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	w := newWriteTool(ws)
 	res, _ := execTool(t, w, writeArgs{Title: "x", Steps: []string{"a"}})
 	planID := extractPlanID(t, res.Content)
@@ -258,7 +261,7 @@ func TestPlanUpdate_InvalidStatus(t *testing.T) {
 }
 
 func TestPlanUpdate_FileNotFound(t *testing.T) {
-	ws := t.TempDir()
+	ws := testWorkspace(t)
 	u := newUpdateTool(ws)
 	_, err := execTool(t, u, updateArgs{PlanID: "missing", StepIndex: tool.IntArg(1), Status: "done"})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
@@ -304,7 +307,11 @@ func extractPlanID(t *testing.T, content string) string {
 
 func readPlan(t *testing.T, ws, planID string) string {
 	t.Helper()
-	body, err := os.ReadFile(filepath.Join(ws, ".ub/plans", planID+".md"))
+	path, err := planPath(ws, planID)
+	if err != nil {
+		t.Fatalf("plan path: %v", err)
+	}
+	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read plan: %v", err)
 	}

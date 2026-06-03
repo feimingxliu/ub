@@ -7,10 +7,10 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 )
 
-// Register adds the `remember` tool to reg, scoped to workspaceRoot for the
-// workspace memory scope. workspaceRoot may be empty, in which case the
-// tool still registers and `remember(scope=global)` keeps working; only
-// `scope=workspace` calls will fail.
+// Register adds the `remember` and `recall` tools to reg, scoped to
+// workspaceRoot for the auto memory scope. workspaceRoot may be empty, in
+// which case the tools still register and `remember(scope=global)` keeps
+// working; only `scope=auto` calls will fail.
 func Register(reg *tool.Registry, workspaceRoot string) error {
 	if reg == nil {
 		return fmt.Errorf("memory tool: nil registry")
@@ -19,5 +19,13 @@ func Register(reg *tool.Registry, workspaceRoot string) error {
 	if root != "" {
 		root = filepath.Clean(root)
 	}
-	return reg.Register(newRememberTool(root))
+	for _, t := range []tool.Tool{
+		newRememberTool(root),
+		newRecallTool(root),
+	} {
+		if err := reg.Register(t); err != nil {
+			return err
+		}
+	}
+	return nil
 }

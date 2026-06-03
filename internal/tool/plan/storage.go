@@ -9,10 +9,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/feimingxliu/ub/internal/paths"
 )
 
 const (
-	plansDir          = ".ub/plans"
 	plansDirPerm      = 0o755
 	planFilePerm      = 0o644
 	planTimestampForm = "20060102T150405Z"
@@ -26,13 +27,26 @@ const (
 var nowFunc = func() time.Time { return time.Now().UTC() }
 
 // planRoot returns the absolute path of the plans directory for a workspace.
-func planRoot(workspace string) string {
-	return filepath.Join(workspace, plansDir)
+// Plans are stored under $XDG_STATE_HOME/ub/plans/<project-key>/.
+func planRoot(workspace string) (string, error) {
+	key, err := paths.ProjectKey(workspace)
+	if err != nil {
+		return "", fmt.Errorf("plan: project key: %w", err)
+	}
+	stateRoot, err := paths.StateRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateRoot, "plans", key), nil
 }
 
 // planPath returns the absolute path of one plan markdown file.
-func planPath(workspace, planID string) string {
-	return filepath.Join(planRoot(workspace), planID+".md")
+func planPath(workspace, planID string) (string, error) {
+	root, err := planRoot(workspace)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, planID+".md"), nil
 }
 
 var slugReplacer = regexp.MustCompile(`[^A-Za-z0-9-]+`)

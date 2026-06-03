@@ -18,6 +18,7 @@ import (
 	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/hook"
+	"github.com/feimingxliu/ub/internal/memory"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -1387,12 +1388,12 @@ func TestToolActivityResultFormatsShellDetail(t *testing.T) {
 }
 
 func TestToolActivityResultUsesContentWhenFilesHaveNoDiff(t *testing.T) {
-	content := "plan_id=plan-1\npath=.ub/plans/plan-1.md\n\n# Plan\n\n- [ ] inspect"
+	content := "plan_id=plan-1\npath=/home/user/.local/state/ub/plans/abc123/plan-1.md\n\n# Plan\n\n- [ ] inspect"
 	summary, detail := ToolActivityResult("plan_write", "title=Plan", tool.Result{
 		Content: content,
-		Files:   []tool.FileChange{{Path: ".ub/plans/plan-1.md", Kind: tool.KindCreate}},
+		Files:   []tool.FileChange{{Path: "/home/user/.local/state/ub/plans/abc123/plan-1.md", Kind: tool.KindCreate}},
 	})
-	if summary != "create .ub/plans/plan-1.md" {
+	if summary != "create /home/user/.local/state/ub/plans/abc123/plan-1.md" {
 		t.Fatalf("summary = %q, want file summary", summary)
 	}
 	if detail != content {
@@ -2465,11 +2466,11 @@ func TestAgent_NoRunnerWhenOptionUnset(t *testing.T) {
 
 func TestAgent_InjectsWorkspaceMemoryWhenPresent(t *testing.T) {
 	ws := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(ws, ".ub"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(ws, ".ub/memory.md"), []byte("## 2026-05-27\n\nbuild is `make build`\n"), 0o644); err != nil {
-		t.Fatalf("write memory: %v", err)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// Write auto memory via the memory package.
+	if _, _, err := memory.Append(ws, memory.ScopeAuto, memory.CatProject, "build is `make build`"); err != nil {
+		t.Fatalf("append memory: %v", err)
 	}
 	reg := tool.New()
 	if err := fs.Register(reg, ws); err != nil {
@@ -2496,22 +2497,23 @@ func TestAgent_InjectsWorkspaceMemoryWhenPresent(t *testing.T) {
 	if len(p.requests) == 0 {
 		t.Fatalf("no provider call")
 	}
-	// One of the request's messages MUST contain the workspace_memory block.
+	// One of the request's messages MUST contain the memory block.
 	found := false
 	for _, m := range p.requests[0].Messages {
-		if m.Role == message.RoleSystem && strings.Contains(m.Text(), "<workspace_memory>") && strings.Contains(m.Text(), "make build") {
+		if m.Role == message.RoleSystem && strings.Contains(m.Text(), "<memory>") && strings.Contains(m.Text(), "make build") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected workspace_memory injected; got: %#v", p.requests[0].Messages)
+		t.Fatalf("expected memory injected; got: %#v", p.requests[0].Messages)
 	}
 }
 
 func TestAgent_OmitsMemoryWhenAbsent(t *testing.T) {
 	ws := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	reg := tool.New()
 	if err := fs.Register(reg, ws); err != nil {
 		t.Fatalf("register fs: %v", err)
@@ -2535,7 +2537,7 @@ func TestAgent_OmitsMemoryWhenAbsent(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	for _, m := range p.requests[0].Messages {
-		if strings.Contains(m.Text(), "<workspace_memory>") {
+		if strings.Contains(m.Text(), "<memory>") {
 			t.Fatalf("memory should not be injected when files absent")
 		}
 	}
