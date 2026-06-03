@@ -489,6 +489,8 @@ cleanup:
 
 加载顺序：内置默认 → 全局配置 → 工作目录 `.ub/config.yaml` → 环境变量覆盖。
 
+`tui.theme` 会传给 TUI 的 Markdown renderer；当前支持 Glamour 内置样式 `dark`、`light`、`notty`、`ascii`、`dracula`、`tokyo-night`、`pink`，未知值回退到 `dark`。
+
 `cleanup.enabled` 区分 unset 与显式 `false`，因此用户可以在全局或 profile 中关闭默认开启的清理。日志轮转在打开 log 文件前执行：超过阈值时 `ub.log` 变为 `ub.log.1`，已有历史依次后移，超过 `max_backups` 的旧文件删除；不压缩日志，`max_size_mb <= 0` 或 `max_backups < 0` 视为关闭轮转。`UB_LOG_FILE` 与 TUI 默认日志路径走同一套轮转逻辑。
 
 ## 9. 执行模式与权限模型

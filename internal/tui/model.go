@@ -59,6 +59,7 @@ type Options struct {
 	Turn           int
 	ExecutionMode  string
 	Cwd            string
+	Theme          string
 	EventTimeout   time.Duration
 	SelectSession  bool
 	Clipboard      Clipboard
@@ -136,7 +137,7 @@ type Model struct {
 
 // NewModel creates the root TUI model.
 func NewModel(opts Options) Model {
-	styles := tuitheme.Default()
+	styles := tuitheme.ForTheme(opts.Theme)
 	width, height := normalizedWindowSize(opts.initialWidth, opts.initialHeight)
 	input := textinput.New()
 	input.Placeholder = "Type a message or /help"

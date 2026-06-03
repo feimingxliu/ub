@@ -104,6 +104,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		Turn:           runner.Turn(),
 		ExecutionMode:  string(runner.mode),
 		Cwd:            cwd,
+		Theme:          cfg.TUI.Theme,
 		EventTimeout:   runner.eventTimeout,
 		SelectSession:  selectSessionOnStart,
 	})

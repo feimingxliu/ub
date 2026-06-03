@@ -1,7 +1,12 @@
 // Package tuitheme contains the small built-in visual theme used by the TUI.
 package tuitheme
 
-import "charm.land/lipgloss/v2"
+import (
+	"strings"
+
+	glamourstyles "charm.land/glamour/v2/styles"
+	"charm.land/lipgloss/v2"
+)
 
 // Styles groups semantic styles for the terminal UI. It is intentionally small:
 // callers should ask for role/status/tool meaning instead of hard-coding colors.
@@ -98,6 +103,8 @@ type DiffStyles struct {
 	Context lipgloss.Style
 }
 
+const defaultMarkdownStyle = glamourstyles.DarkStyle
+
 // Default returns the built-in theme. The palette is restrained and keeps
 // activity colors semantic rather than decorative.
 func Default() Styles {
@@ -120,7 +127,7 @@ func Default() Styles {
 		Focus:      bright.Copy().Background(lipgloss.Color("24")),
 		SubtleLine: lipgloss.NewStyle().Foreground(lipgloss.Color("238")),
 		Markdown: MarkdownStyles{
-			StyleName: "notty",
+			StyleName: defaultMarkdownStyle,
 		},
 	}
 	s.Role.UserPrefix = teal.Copy().Bold(true)
@@ -189,9 +196,38 @@ func Default() Styles {
 	return s
 }
 
+// ForTheme returns the built-in theme with the configured Markdown renderer
+// style applied. Unknown values fall back to the default dark style.
+func ForTheme(theme string) Styles {
+	s := Default()
+	s.Markdown.StyleName = markdownStyleName(theme)
+	return s
+}
+
+func markdownStyleName(theme string) string {
+	switch strings.ToLower(strings.TrimSpace(theme)) {
+	case "", "default", glamourstyles.DarkStyle:
+		return glamourstyles.DarkStyle
+	case glamourstyles.LightStyle:
+		return glamourstyles.LightStyle
+	case glamourstyles.NoTTYStyle, "plain":
+		return glamourstyles.NoTTYStyle
+	case glamourstyles.AsciiStyle:
+		return glamourstyles.AsciiStyle
+	case glamourstyles.DraculaStyle:
+		return glamourstyles.DraculaStyle
+	case glamourstyles.TokyoNightStyle, "tokyonight", "tokyo_night":
+		return glamourstyles.TokyoNightStyle
+	case glamourstyles.PinkStyle:
+		return glamourstyles.PinkStyle
+	default:
+		return defaultMarkdownStyle
+	}
+}
+
 // Plain returns styles that preserve the same text and symbols without ANSI.
 func Plain() Styles {
-	return Styles{Plain: true, Markdown: MarkdownStyles{StyleName: "notty"}}
+	return Styles{Plain: true, Markdown: MarkdownStyles{StyleName: glamourstyles.NoTTYStyle}}
 }
 
 // Render applies a style unless the theme is in plain mode.

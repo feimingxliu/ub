@@ -1055,6 +1055,13 @@ func TestMarkdownMessagesRenderReadableBlocks(t *testing.T) {
 	}
 }
 
+func TestModelUsesConfiguredMarkdownTheme(t *testing.T) {
+	model := NewModel(Options{Theme: "light"})
+	if got := model.styles.Markdown.StyleName; got != "light" {
+		t.Fatalf("markdown style = %q, want light", got)
+	}
+}
+
 func TestPlainMessageRenderHasNoANSI(t *testing.T) {
 	list := newMessageList()
 	list.append(userRole, "# Title\n\n- item")
