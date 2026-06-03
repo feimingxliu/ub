@@ -9,10 +9,14 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/provider"
 )
+
+// toolCallSeq generates unique tool call IDs for fake provider events.
+var toolCallSeq atomic.Int64
 
 // Script is the ordered event list emitted by the fake provider.
 type Script []provider.Event
@@ -106,7 +110,7 @@ func ReasoningDelta(text string) provider.Event {
 	return provider.Event{Type: provider.EventReasoningDelta, Reasoning: text}
 }
 
-// ToolCall creates a tool_call script event.
+// ToolCall creates a tool_call script event with a unique ID.
 func ToolCall(name string, input any) provider.Event {
 	raw, err := json.Marshal(input)
 	if err != nil {
@@ -114,7 +118,7 @@ func ToolCall(name string, input any) provider.Event {
 	}
 	return provider.Event{
 		Type:      provider.EventToolCall,
-		ToolUseID: "fake-tool-call-1",
+		ToolUseID: fmt.Sprintf("fake-tool-call-%d", toolCallSeq.Add(1)),
 		ToolName:  name,
 		Input:     raw,
 	}
@@ -193,9 +197,13 @@ func eventFromConfig(item config.ProviderScriptEvent) (provider.Event, error) {
 		if len(raw) == 0 {
 			raw = []byte(`null`)
 		}
+		toolUseID := item.ToolUseID
+		if toolUseID == "" {
+			toolUseID = fmt.Sprintf("fake-tool-call-%d", toolCallSeq.Add(1))
+		}
 		return provider.Event{
 			Type:      provider.EventToolCall,
-			ToolUseID: item.ToolUseID,
+			ToolUseID: toolUseID,
 			ToolName:  item.ToolName,
 			Input:     raw,
 		}, nil

@@ -22,6 +22,7 @@ import (
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tooloutput"
+	"golang.org/x/sync/errgroup"
 )
 
 // defaultMaxTurns caps how many tool-call iterations a single Run may take.
@@ -284,13 +285,31 @@ loop:
 				a.emit(Event{Type: EventDone, Text: consumed.text})
 				return Result{Text: consumed.text, Messages: messages}, nil
 			}
-			toolResults := make([]tool.Result, 0, len(consumed.toolCalls))
-			for _, call := range consumed.toolCalls {
-				result := a.runTool(ctx, req.SessionID, call)
-				toolResults = append(toolResults, result)
-				messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(call.ID, result.Content, result.IsError)))
+			// Execute tool calls concurrently, then collect results in order.
+			type indexedResult struct {
+				call   toolCall
+				result tool.Result
+			}
+			results := make([]indexedResult, len(consumed.toolCalls))
+			g, gctx := errgroup.WithContext(ctx)
+			g.SetLimit(len(consumed.toolCalls))
+			for i, call := range consumed.toolCalls {
+				i, call := i, call
+				g.Go(func() error {
+					r := a.runTool(gctx, req.SessionID, call)
+					results[i] = indexedResult{call: call, result: r}
+					return nil
+				})
+			}
+			if err := g.Wait(); err != nil {
+				return Result{}, err
+			}
+			toolResults := make([]tool.Result, 0, len(results))
+			for _, ir := range results {
+				toolResults = append(toolResults, ir.result)
+				messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(ir.call.ID, ir.result.Content, ir.result.IsError)))
 				if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
-					return rollout.ToolResult(req.SessionID, req.Turn, call.ID, call.Name, result)
+					return rollout.ToolResult(req.SessionID, req.Turn, ir.call.ID, ir.call.Name, ir.result)
 				}); err != nil {
 					return Result{}, err
 				}

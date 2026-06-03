@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/feimingxliu/ub/internal/approval"
 	"github.com/feimingxliu/ub/internal/execution"
@@ -25,6 +26,7 @@ type Manager struct {
 	globalRulesPath string
 	globalRules     []Rule
 	sessionRules    []Rule
+	mu              sync.RWMutex
 }
 
 // NewManager constructs a permission manager and loads global rules.
@@ -56,7 +58,9 @@ func (m *Manager) SetApprovalAgent(agent approval.Agent) {
 	if m == nil {
 		return
 	}
+	m.mu.Lock()
 	m.approvalAgent = agent
+	m.mu.Unlock()
 }
 
 // Ask returns the permission decision for one tool call.
@@ -76,17 +80,22 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 	command := commandFromRequest(req)
 	blacklisted := isBlacklisted(command)
 	if !blacklisted {
-		if rule, ok := matchRule(m.globalRules, req, command); ok {
-			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(rule)}, nil
+		m.mu.RLock()
+		globalRule, globalOK := matchRule(m.globalRules, req, command)
+		sessionRule, sessionOK := matchRule(m.sessionRules, req, command)
+		agent := m.approvalAgent
+		m.mu.RUnlock()
+		if globalOK {
+			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(globalRule)}, nil
 		}
-		if rule, ok := matchRule(m.sessionRules, req, command); ok {
-			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(rule)}, nil
+		if sessionOK {
+			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(sessionRule)}, nil
 		}
 		if mode == execution.ModeAuto {
-			if m.approvalAgent == nil {
+			if agent == nil {
 				slog.Info("approval agent unavailable; falling back to human approval", "tool", req.Tool, "risk", req.Risk, "mode", req.Mode)
 			} else {
-				agentRes, err := m.approvalAgent.ReviewCommand(ctx, approval.Request{
+				agentRes, err := agent.ReviewCommand(ctx, approval.Request{
 					Tool:           req.Tool,
 					Args:           req.Args,
 					Risk:           req.Risk,
@@ -148,17 +157,23 @@ func (m *Manager) applyHumanDecision(decision Decision, req Request, command str
 	case DecisionDeny:
 		return Result{Decision: decision, Allowed: false, Source: SourceHuman}, nil
 	case DecisionAlwaysCmd:
+		m.mu.Lock()
 		m.sessionRules = append(m.sessionRules, Rule{Tool: req.Tool, Command: command})
+		m.mu.Unlock()
 		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
 	case DecisionAlwaysTool:
+		m.mu.Lock()
 		m.sessionRules = append(m.sessionRules, Rule{Tool: req.Tool})
+		m.mu.Unlock()
 		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
 	case DecisionAlwaysGlobal:
 		rule := Rule{Tool: req.Tool}
 		if err := SaveGlobalRule(m.globalRulesPath, rule); err != nil {
 			return Result{}, err
 		}
+		m.mu.Lock()
 		m.globalRules = append(m.globalRules, rule)
+		m.mu.Unlock()
 		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
 	default:
 		return Result{}, fmt.Errorf("permission: unknown decision %q", decision)

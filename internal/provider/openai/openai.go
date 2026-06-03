@@ -161,7 +161,7 @@ func toChatCompletionParams(req provider.Request) (sdk.ChatCompletionNewParams, 
 		StreamOptions: sdk.ChatCompletionStreamOptionsParam{
 			IncludeUsage: sdk.Bool(true),
 		},
-		ParallelToolCalls: sdk.Bool(false),
+		ParallelToolCalls: sdk.Bool(true),
 	}
 	if req.Reasoning != nil && req.Reasoning.Effort != "" && req.Reasoning.Effort != reasoning.EffortNone {
 		params.ReasoningEffort = shared.ReasoningEffort(string(req.Reasoning.Effort))
