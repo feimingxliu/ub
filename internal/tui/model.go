@@ -2611,7 +2611,7 @@ func (m Model) maxMessageScroll() int {
 	if height <= 0 {
 		return 0
 	}
-	lines := len(m.messages.lines(width))
+	lines := len(m.messages.render(width, m.styles).lines)
 	if lines <= height {
 		return 0
 	}

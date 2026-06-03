@@ -3324,6 +3324,36 @@ func TestMessageAreaJumpsToStartAndEnd(t *testing.T) {
 	}
 }
 
+func TestMessageAreaJumpsToStartWithStyledMarkdownLineCount(t *testing.T) {
+	markdown := strings.Repeat("# Heading\n\n", 24)
+	model := NewModel(Options{
+		Theme: "pink",
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "first prompt"},
+			{Role: assistantRole, Text: markdown},
+		},
+	})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	model = assertModel(t, updated)
+
+	width := contentWidth(model.width)
+	plainLines := len(model.messages.render(width, tuitheme.Plain()).lines)
+	styledLines := len(model.messages.render(width, model.styles).lines)
+	if styledLines <= plainLines {
+		t.Fatalf("test setup needs styled markdown to be taller: styled=%d plain=%d", styledLines, plainLines)
+	}
+
+	updated, cmd := model.Update(keyPress(tea.KeyHome, tea.ModCtrl))
+	if cmd != nil {
+		t.Fatalf("ctrl+home returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "first prompt") {
+		t.Fatalf("ctrl+home should reach the first prompt with styled markdown:\n%s", view)
+	}
+}
+
 func TestFramePadsToTerminalSize(t *testing.T) {
 	model := NewModel(Options{Messages: []InitialMessage{{Role: assistantRole, Text: "short"}}})
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 72, Height: 16})
