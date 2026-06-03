@@ -179,7 +179,12 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
-	models := configuredProviderModels(providerCfg, model)
+	providerCheckResult := checkProvider(cmd.Context(), providerName, providerCfg)
+	models := mergeModelCandidates(
+		model,
+		configuredProviderModels(providerCfg, ""),
+		providerCheckResult.Models,
+	)
 	mainInfo := modelinfo.Resolve(providerName, providerCfg, model)
 	reasoningCfg := modelinfo.RequestConfig(cfg.Reasoning, mainInfo)
 	mode, err := execution.ParseMode(cfg.ExecutionMode)
@@ -203,6 +208,8 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		return nil, err
 	}
 	writeToolWarnings(cmd.ErrOrStderr(), tools.Warnings)
+	providerChecks := map[string]providerCheck{}
+	providerChecks[providerCheckKey(providerName, providerCfg)] = providerCheckResult
 	return &tuiAgentRunner{
 		cmd:                  cmd,
 		cfg:                  cfg,
@@ -228,7 +235,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
 		maxTurns:             cfg.MaxTurns,
-		providerChecks:       map[string]providerCheck{},
+		providerChecks:       providerChecks,
 	}, nil
 }
 
@@ -716,12 +723,14 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	if model == "" {
 		return fmt.Errorf("model cannot be empty")
 	}
-	if !modelInList(r.models, model) {
-		r.models = r.providerModels(r.cmd.Context(), r.providerName, r.providerCfg, "")
+	candidates := r.models
+	if r != nil && r.cmd != nil {
+		candidates = mergeModelCandidates(model, candidates, r.providerModels(r.cmd.Context(), r.providerName, r.providerCfg, ""))
 	}
-	if !modelInList(r.models, model) {
+	if !modelInList(candidates, model) {
 		return fmt.Errorf("model %q is not available for the current provider", model)
 	}
+	r.models = candidates
 	r.model = model
 	r.models = appendModelCandidate(r.models, model)
 	if r.summaryUsesCurrent {

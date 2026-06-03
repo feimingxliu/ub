@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,6 +266,88 @@ func TestTUIRunnerSetProviderKeepsCurrentModelWhenAvailable(t *testing.T) {
 	}
 	if state.Model != "shared/model" || runner.model != "shared/model" {
 		t.Fatalf("model after provider switch = state %q runner %q, want shared/model", state.Model, runner.model)
+	}
+}
+
+func TestTUIAgentRunnerInitMergesConfiguredAndDiscoveredModels(t *testing.T) {
+	requested := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested = true
+		if r.URL.Path != "/models" {
+			t.Fatalf("path = %q, want /models", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"remote/model"},{"id":"configured/model"}]}`))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type:    "openai-compat",
+				BaseURL: server.URL,
+				Models: map[string]config.ModelConfig{
+					"configured/model": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "", "")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	if !requested {
+		t.Fatal("provider model list was not requested during initialization")
+	}
+	got := strings.Join(runner.Models(), "\n")
+	want := strings.Join([]string{"configured/model", "remote/model"}, "\n")
+	if got != want {
+		t.Fatalf("initial models = %s, want %s", got, want)
+	}
+}
+
+func TestTUIRunnerSetModelPreservesDiscoveredModelsAfterConfiguredSwitch(t *testing.T) {
+	cfg := config.ProviderConfig{
+		Type:    "openai",
+		BaseURL: "https://example.test/v1",
+		Models: map[string]config.ModelConfig{
+			"configured/model":  {},
+			"configured/model2": {},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner := &tuiAgentRunner{
+		cmd:          cmd,
+		providerName: "primary",
+		providerCfg:  cfg,
+		model:        "configured/model",
+		models:       []string{"configured/model", "configured/model2"},
+		providerChecks: map[string]providerCheck{
+			providerCheckKey("primary", cfg): {
+				Status: "ok",
+				Models: []string{"configured/model", "configured/model2", "remote/model"},
+			},
+		},
+	}
+
+	if err := runner.SetModel("configured/model2"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if runner.model != "configured/model2" {
+		t.Fatalf("model = %q, want configured/model2", runner.model)
+	}
+	want := []string{"configured/model2", "configured/model", "remote/model"}
+	got := strings.Join(runner.Models(), "\n")
+	if strings.Join(want, "\n") != got {
+		t.Fatalf("models = %q, want %q", got, strings.Join(want, ","))
 	}
 }
 
