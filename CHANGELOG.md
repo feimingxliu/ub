@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.6] - 2026-06-03
+
+
+### Added
+
+- Add resume slash command ([bce326a](https://github.com/feimingxliu/ub/commit/bce326af942f4abb1247f3895adb43eb3be03e97))
+
+
+### Documentation
+
+- Update README ([0864755](https://github.com/feimingxliu/ub/commit/0864755ee922793d599de2b1892c6e05b75f1a41))
+
+
+### Fixed
+
+- Apply configured markdown theme ([de3b268](https://github.com/feimingxliu/ub/commit/de3b268f001772202e5549fa683bf0efda76b485))
+- Use styled line count for transcript scroll ([331cd97](https://github.com/feimingxliu/ub/commit/331cd97ac94796d01ae4fe0d876a484e29f0b1e2))
+
 ## [0.3.5] - 2026-06-02
 
 
@@ -14,6 +32,11 @@ All notable changes to this project are documented here.
 
 - Harden retry and reasoning replay ([fcbc6e7](https://github.com/feimingxliu/ub/commit/fcbc6e76802c8866a1dacbfeac237c8a58ffd5d8))
 - Scope live activity updates by turn ([b336ba7](https://github.com/feimingxliu/ub/commit/b336ba78f697d305242de98d82e329bb2e51fffa))
+
+
+### Maintenance
+
+- V0.3.5 ([ecfcb8e](https://github.com/feimingxliu/ub/commit/ecfcb8ead44a7857d0afae5a0d80b4b0bf419b07))
 
 ## [0.3.4] - 2026-06-02
 
