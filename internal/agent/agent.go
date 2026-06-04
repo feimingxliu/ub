@@ -640,6 +640,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 			Risk:             t.Risk(),
 			Mode:             a.currentMode(),
 			Preview:          preview,
+			Workspace:        a.workspaceRoot,
 			ApprovalObserver: a.permissionObserver(call.Name, &approvalObserved),
 		})
 		if err != nil {

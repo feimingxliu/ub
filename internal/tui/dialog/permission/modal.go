@@ -46,9 +46,14 @@ var options = []option{
 		Description: "Allow future calls to this tool until this session exits. Wider than exact command.",
 	},
 	{
-		Decision:    permission.DecisionAlwaysGlobal,
-		Label:       "Always allow this tool globally",
-		Description: "Persist a user-level allow rule for this tool and apply it in future sessions.",
+		Decision:    permission.DecisionAlwaysProjectCmd,
+		Label:       "Always allow exact command in this project",
+		Description: "Persist a project-local allow rule for this exact command in .ub/permissions.yaml.",
+	},
+	{
+		Decision:    permission.DecisionAlwaysProjectPattern,
+		Label:       "Always allow similar command in this project",
+		Description: "Persist Claude-style wildcard rules such as 'go test:*' in .ub/permissions.yaml.",
 	},
 }
 
@@ -129,16 +134,17 @@ func (m Model) View() string {
 			marker = "> "
 		}
 		line := marker + option.Label
+		if strings.TrimSpace(option.Description) != "" {
+			line += " - " + option.Description
+		}
 		if i == m.selected {
 			b.WriteString(styles.Render(styles.Modal.Selected, line))
 		} else {
 			b.WriteString(styles.Render(styles.Modal.Option, line))
 		}
 		b.WriteByte('\n')
-		b.WriteString(styles.Render(styles.Modal.Help, "    "+option.Description))
-		b.WriteByte('\n')
 	}
-	b.WriteString(styles.Render(styles.Modal.Help, "shortcuts: 1-5"))
+	b.WriteString(styles.Render(styles.Modal.Help, "shortcuts: 1-6"))
 	return styles.Render(styles.Modal.Box, b.String())
 }
 
@@ -186,7 +192,9 @@ func DecisionForKey(key string) (permission.Decision, bool) {
 	case "4":
 		return permission.DecisionAlwaysTool, true
 	case "5":
-		return permission.DecisionAlwaysGlobal, true
+		return permission.DecisionAlwaysProjectCmd, true
+	case "6":
+		return permission.DecisionAlwaysProjectPattern, true
 	default:
 		return "", false
 	}

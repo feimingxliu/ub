@@ -1233,9 +1233,8 @@ func TestAgentEmitsApprovalAgentDecisionOnce(t *testing.T) {
 	}
 	asker := &recordingAsker{decision: permission.DecisionDeny}
 	perm, err := permission.NewManager(permission.Options{
-		Asker:           asker,
-		ApprovalAgent:   approvalAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe read-only command"}},
-		GlobalRulesPath: filepath.Join(t.TempDir(), "permissions.yaml"),
+		Asker:         asker,
+		ApprovalAgent: approvalAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe read-only command"}},
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -1287,9 +1286,8 @@ func TestAgentEmitsApprovalAgentFallbackAndHumanDecision(t *testing.T) {
 	}
 	asker := &recordingAsker{decision: permission.DecisionAllow}
 	perm, err := permission.NewManager(permission.Options{
-		Asker:           asker,
-		ApprovalAgent:   approvalAgent{result: approval.Result{Decision: approval.DecisionUnsure, Reason: "needs user context"}},
-		GlobalRulesPath: filepath.Join(t.TempDir(), "permissions.yaml"),
+		Asker:         asker,
+		ApprovalAgent: approvalAgent{result: approval.Result{Decision: approval.DecisionUnsure, Reason: "needs user context"}},
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -2005,8 +2003,7 @@ func newTestAgent(t *testing.T, p provider.Provider, reg *tool.Registry, perm *p
 func newPermissionManager(t *testing.T, asker permission.Asker) *permission.Manager {
 	t.Helper()
 	perm, err := permission.NewManager(permission.Options{
-		Asker:           asker,
-		GlobalRulesPath: filepath.Join(t.TempDir(), "permissions.yaml"),
+		Asker: asker,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)

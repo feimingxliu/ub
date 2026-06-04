@@ -435,7 +435,15 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
-	perm, err := permission.NewManager(permission.Options{Asker: autoAllowAsker{}, ApprovalAgent: approvalAgent})
+	projectRulesPath, err := permission.ProjectRulesPath(tools.Workspace)
+	if err != nil {
+		return err
+	}
+	perm, err := permission.NewManager(permission.Options{
+		Asker:            autoAllowAsker{},
+		ApprovalAgent:    approvalAgent,
+		ProjectRulesPath: projectRulesPath,
+	})
 	if err != nil {
 		return err
 	}

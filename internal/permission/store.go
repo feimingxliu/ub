@@ -9,49 +9,68 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-// DefaultRulesPath returns the user-level global permissions path.
-func DefaultRulesPath() (string, error) {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "ub", "permissions.yaml"), nil
+// ProjectRulesPath returns the project-local permissions path for a workspace.
+func ProjectRulesPath(workspace string) (string, error) {
+	workspace = filepath.Clean(workspace)
+	if workspace == "." || workspace == "" {
+		return "", errors.New("permission workspace is empty")
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".config", "ub", "permissions.yaml"), nil
+	return filepath.Join(workspace, ".ub", "permissions.yaml"), nil
 }
 
-// LoadGlobalRules loads persisted global allow-rules. Missing or empty
-// files are treated as no rules.
-func LoadGlobalRules(path string) ([]Rule, error) {
-	if path == "" {
-		return nil, errors.New("permission rules path is empty")
-	}
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+// LoadProjectRules loads persisted project-local Claude-style permission
+// rules. Missing or empty files are treated as no rules.
+func LoadProjectRules(path string) ([]Rule, []Rule, []Rule, error) {
+	file, err := loadRuleFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read permission rules: %w", err)
+		return nil, nil, nil, err
 	}
-	if len(raw) == 0 {
-		return nil, nil
-	}
-	var file ruleFile
-	if err := yaml.Unmarshal(raw, &file); err != nil {
-		return nil, fmt.Errorf("parse permission rules: %w", err)
-	}
-	return append([]Rule(nil), file.Global...), nil
+	return parsePermissionRules(file.Permissions)
 }
 
-// SaveGlobalRule appends one global rule and atomically writes the file.
-func SaveGlobalRule(path string, rule Rule) error {
-	rules, err := LoadGlobalRules(path)
+// SaveProjectRule appends one project-local rule and atomically writes the file.
+func SaveProjectRule(path string, action RuleAction, rule string) error {
+	return SaveProjectRules(path, action, []string{rule})
+}
+
+// SaveProjectRules appends project-local rules and atomically writes the file.
+func SaveProjectRules(path string, action RuleAction, rules []string) error {
+	file, err := loadRuleFile(path)
 	if err != nil {
 		return err
 	}
-	rules = append(rules, rule)
-	return writeRuleFileAtomic(path, ruleFile{Global: rules}, nil)
+	switch action {
+	case RuleAllow:
+		file.Permissions.Allow = append(file.Permissions.Allow, rules...)
+	case RuleAsk:
+		file.Permissions.Ask = append(file.Permissions.Ask, rules...)
+	case RuleDeny:
+		file.Permissions.Deny = append(file.Permissions.Deny, rules...)
+	default:
+		return fmt.Errorf("unknown permission rule action %q", action)
+	}
+	return writeRuleFileAtomic(path, file, nil)
+}
+
+func loadRuleFile(path string) (ruleFile, error) {
+	if path == "" {
+		return ruleFile{}, errors.New("permission rules path is empty")
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return ruleFile{}, nil
+	}
+	if err != nil {
+		return ruleFile{}, fmt.Errorf("read permission rules: %w", err)
+	}
+	if len(raw) == 0 {
+		return ruleFile{}, nil
+	}
+	var file ruleFile
+	if err := yaml.Unmarshal(raw, &file); err != nil {
+		return ruleFile{}, fmt.Errorf("parse permission rules: %w", err)
+	}
+	return file, nil
 }
 
 func writeRuleFileAtomic(path string, file ruleFile, beforeRename func(tmp string) error) error {

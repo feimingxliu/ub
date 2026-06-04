@@ -16,7 +16,8 @@ func TestDecisionForKey(t *testing.T) {
 		"2": permission.DecisionDeny,
 		"3": permission.DecisionAlwaysCmd,
 		"4": permission.DecisionAlwaysTool,
-		"5": permission.DecisionAlwaysGlobal,
+		"5": permission.DecisionAlwaysProjectCmd,
+		"6": permission.DecisionAlwaysProjectPattern,
 	}
 	for key, want := range cases {
 		got, ok := DecisionForKey(key)
@@ -56,7 +57,9 @@ func TestModalRendersContextAndDiff(t *testing.T) {
 		"> Allow once",
 		"Run only this request",
 		"Always allow exact command in this session",
-		"Persist a user-level allow rule",
+		"Always allow exact command in this project",
+		"Persist a project-local allow rule",
+		"Always allow similar command in this project",
 	} {
 		if !strings.Contains(collapsed, want) {
 			t.Fatalf("collapsed view missing %q:\n%s", want, collapsed)

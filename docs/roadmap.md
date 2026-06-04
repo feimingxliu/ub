@@ -401,20 +401,21 @@
 - **Out of Scope**：跨重启恢复
 - **验证**：单测起 `sleep 5` → 立刻 kill → exit code 检查；起 echo 循环 → 拿 tail
 
-### I-20 Permission Manager + 执行模式 + approval agent + 全局规则持久化 + 黑名单
+### I-20 Permission Manager + 执行模式 + approval agent + 项目规则持久化 + 黑名单
 
-- **目标**：审批回调机制 + 3 种 execution mode + approval agent 命令审批 + 5 种 Decision + global 规则的磁盘持久化
+- **目标**：审批回调机制 + 3 种 execution mode + approval agent 命令审批 + 6 种 Decision + project 规则的磁盘持久化
 - **依赖**：I-13 / I-15 / I-18
 - **In Scope**：
   - `internal/execution/`：`Mode`（work / plan / auto）、mode 解析、mode policy、mode switch 事件 payload
-  - `internal/permission/`：`Manager`、`Decision`（5 种：Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysGlobal）、`Rule`
+  - `internal/permission/`：`Manager`、`Decision`（Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysProjectCmd / AlwaysProjectPattern）、Claude-style `Rule`
   - `internal/approval/`：approval agent 接口；输入为 command/cwd/risk/mode/context summary/rule match 信息，输出 allow/deny/unsure + reason
   - 两层规则存储：
     - **session 级**（AlwaysCmd / AlwaysTool）：内存 map
-    - **global 级**（AlwaysGlobal）：序列化到 `~/.config/ub/permissions.yaml`，启动时加载
+    - **project 级**（AlwaysProjectCmd / AlwaysProjectPattern）：序列化到 `<workspace>/.ub/permissions.yaml` 的 `permissions.allow`，启动时加载
+    - 手工项目规则支持 `permissions.allow` / `permissions.ask` / `permissions.deny`
   - 黑名单正则（硬编码 `rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）：即便 always-rule match 也强制再问
   - `Manager.Ask(ctx, req)` 按 mode 调用注入的 human `Asker` 或 approval agent
-  - 查询顺序：mode gate → 黑名单 → global rules → session rules → approval agent（auto only）→ human Asker
+  - 查询顺序：mode gate → 黑名单 → project deny → project allow → session allow → project ask → approval agent（auto only）→ human Asker
   - Asker 收到的请求包含可选的 `Preview`（来自 PreviewableTool）
 - **Out of Scope**：TUI 弹窗实现（I-24）
 - **关键签名**：
@@ -434,16 +435,16 @@
       Preview *tool.Preview  // optional
   }
   // 持久化
-  func LoadGlobalRules(path string) ([]Rule, error)
-  func SaveGlobalRule(path string, r Rule) error  // append + atomic write
+  func LoadProjectRules(path string) (allow []Rule, ask []Rule, deny []Rule, err error)
+  func SaveProjectRule(path string, action RuleAction, rule string) error  // append + atomic write
   ```
 - **验证**：
-  - 单测：mock Asker，跑 5 种 Decision 路径
+  - 单测：mock Asker，跑 6 种 Decision 路径
   - 单测：`plan` 模式拒绝 write 风险工具且不触发 Execute
   - 单测：`work` 模式下未命中 allow-rule 的 exec 工具走 human Asker
   - 单测：`auto` 模式下 approval agent allow 时不问用户；deny/unsure/error 时回退 human Asker
-  - 黑名单优先级测试（即便 global rule match 也再弹）
-  - 持久化：写入 AlwaysGlobal → 重启加载 → 同样 call 不再问 Asker
+  - 黑名单优先级测试（即便 persisted rule match 也再弹）
+  - 持久化：写入 AlwaysProjectCmd / AlwaysProjectPattern → 重启加载 → 同项目同 command / pattern 不再问 Asker
   - 原子写：模拟写入中途 panic → permissions.yaml 不被破坏（用临时文件 + rename）
 
 ### I-21 Agent loop v1（含 tool use）
@@ -510,8 +511,9 @@
     - Deny
     - Always allow exact command (session)
     - Always allow tool (session)
-    - Always allow tool (global, persist)
-  - 选 `5` 时调 `permission.SaveGlobalRule`，并在 modal 上短暂提示 "saved to ~/.config/ub/permissions.yaml"
+    - Always allow exact command (project, persist)
+    - Always allow similar command (project, persist)
+  - 选 `5`/`6` 时调 `permission.SaveProjectRule`，并在 modal 上短暂提示 "saved to <workspace>/.ub/permissions.yaml"
   - Permission Manager 的 Asker 切换为 TUI 实现
 - **Out of Scope**：完整 diff 渲染（I-25 做带语法高亮的 diffview）
 - **验证**：

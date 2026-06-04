@@ -44,9 +44,18 @@ func (m *mockAgent) ReviewCommand(_ context.Context, req approval.Request) (appr
 	return m.result, m.err
 }
 
-func testRulesPath(t *testing.T) string {
+func testProjectRulesPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "ub", "permissions.yaml")
+	return filepath.Join(t.TempDir(), "project", ".ub", "permissions.yaml")
+}
+
+func mustRule(t *testing.T, raw string, action RuleAction) Rule {
+	t.Helper()
+	rule, err := parsePermissionRule(raw, action)
+	if err != nil {
+		t.Fatalf("parsePermissionRule(%q): %v", raw, err)
+	}
+	return rule
 }
 
 func commandArgs(t *testing.T, command string) json.RawMessage {
@@ -81,19 +90,23 @@ func TestManagerHumanDecisionPaths(t *testing.T) {
 		{name: "deny", decision: DecisionDeny, allowed: false},
 		{name: "always command", decision: DecisionAlwaysCmd, allowed: true},
 		{name: "always tool", decision: DecisionAlwaysTool, allowed: true},
-		{name: "always global", decision: DecisionAlwaysGlobal, allowed: true},
+		{name: "always project command", decision: DecisionAlwaysProjectCmd, allowed: true},
+		{name: "always project pattern", decision: DecisionAlwaysProjectPattern, allowed: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			projectRulesPath := testProjectRulesPath(t)
 			asker := &mockAsker{decision: tc.decision}
 			manager, err := NewManager(Options{
-				Asker:           asker,
-				GlobalRulesPath: testRulesPath(t),
+				Asker:            asker,
+				ProjectRulesPath: projectRulesPath,
 			})
 			if err != nil {
 				t.Fatalf("NewManager: %v", err)
 			}
-			res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status"))
+			req := execReq(t, execution.ModeWork, "git status")
+			req.Workspace = filepath.Dir(filepath.Dir(projectRulesPath))
+			res, err := manager.Ask(context.Background(), req)
 			if err != nil {
 				t.Fatalf("Ask: %v", err)
 			}
@@ -110,8 +123,7 @@ func TestManagerHumanDecisionPaths(t *testing.T) {
 func TestManagerPlanRejectsWriteWithoutAsker(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		GlobalRulesPath: testRulesPath(t),
+		Asker: asker,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -136,8 +148,7 @@ func TestManagerPlanRejectsWriteWithoutAsker(t *testing.T) {
 func TestManagerPlanRejectsExecWithoutAsker(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		GlobalRulesPath: testRulesPath(t),
+		Asker: asker,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -157,8 +168,7 @@ func TestManagerPlanRejectsExecWithoutAsker(t *testing.T) {
 func TestManagerDefaultExecUsesHumanAsker(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		GlobalRulesPath: testRulesPath(t),
+		Asker: asker,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -179,9 +189,8 @@ func TestManagerAgentApproveAllowSkipsHuman(t *testing.T) {
 	asker := &mockAsker{decision: DecisionDeny}
 	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe command"}}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		ApprovalAgent:   agent,
-		GlobalRulesPath: testRulesPath(t),
+		Asker:         asker,
+		ApprovalAgent: agent,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -210,9 +219,8 @@ func TestManagerLogsApprovalAgentDecision(t *testing.T) {
 	asker := &mockAsker{decision: DecisionDeny}
 	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe command"}}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		ApprovalAgent:   agent,
-		GlobalRulesPath: testRulesPath(t),
+		Asker:         asker,
+		ApprovalAgent: agent,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -243,9 +251,8 @@ func TestManagerAgentApproveFallbacksToHuman(t *testing.T) {
 			asker := &mockAsker{decision: DecisionAllow}
 			agent := &mockAgent{result: tc.result, err: tc.err}
 			manager, err := NewManager(Options{
-				Asker:           asker,
-				ApprovalAgent:   agent,
-				GlobalRulesPath: testRulesPath(t),
+				Asker:         asker,
+				ApprovalAgent: agent,
 			})
 			if err != nil {
 				t.Fatalf("NewManager: %v", err)
@@ -271,9 +278,8 @@ func TestManagerPassesApprovalReasonToHuman(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionUnsure, Reason: "needs repo context"}}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		ApprovalAgent:   agent,
-		GlobalRulesPath: testRulesPath(t),
+		Asker:         asker,
+		ApprovalAgent: agent,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -293,8 +299,7 @@ func TestManagerSessionRules(t *testing.T) {
 	t.Run("always command matches exact command", func(t *testing.T) {
 		asker := &mockAsker{decision: DecisionAlwaysCmd}
 		manager, err := NewManager(Options{
-			Asker:           asker,
-			GlobalRulesPath: testRulesPath(t),
+			Asker: asker,
 		})
 		if err != nil {
 			t.Fatalf("NewManager: %v", err)
@@ -318,8 +323,7 @@ func TestManagerSessionRules(t *testing.T) {
 	t.Run("always tool matches different commands", func(t *testing.T) {
 		asker := &mockAsker{decision: DecisionAlwaysTool}
 		manager, err := NewManager(Options{
-			Asker:           asker,
-			GlobalRulesPath: testRulesPath(t),
+			Asker: asker,
 		})
 		if err != nil {
 			t.Fatalf("NewManager: %v", err)
@@ -341,12 +345,11 @@ func TestManagerSessionRules(t *testing.T) {
 	})
 }
 
-func TestManagerBlacklistBypassesGlobalRule(t *testing.T) {
+func TestManagerBlacklistBypassesAllowRule(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		GlobalRulesPath: testRulesPath(t),
-		GlobalRules:     []Rule{{Tool: "bash"}},
+		Asker:      asker,
+		AllowRules: []Rule{mustRule(t, "Bash", RuleAllow)},
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -367,9 +370,8 @@ func TestManagerBlacklistBypassesApprovalAgent(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow}}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		ApprovalAgent:   agent,
-		GlobalRulesPath: testRulesPath(t),
+		Asker:         asker,
+		ApprovalAgent: agent,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -389,37 +391,185 @@ func TestManagerBlacklistBypassesApprovalAgent(t *testing.T) {
 	}
 }
 
-func TestManagerAlwaysGlobalAcrossManagers(t *testing.T) {
-	path := testRulesPath(t)
-	asker := &mockAsker{decision: DecisionAlwaysGlobal}
+func TestManagerAlwaysProjectCommandAcrossManagers(t *testing.T) {
+	path := testProjectRulesPath(t)
+	workspace := filepath.Dir(filepath.Dir(path))
+	asker := &mockAsker{decision: DecisionAlwaysProjectCmd}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		GlobalRulesPath: path,
+		Asker:            asker,
+		ProjectRulesPath: path,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-	if _, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status")); err != nil {
+	req := execReq(t, execution.ModeWork, "git status")
+	req.Workspace = workspace
+	if _, err := manager.Ask(context.Background(), req); err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
 
 	nextAsker := &mockAsker{decision: DecisionDeny}
 	nextManager, err := NewManager(Options{
-		Asker:           nextAsker,
-		GlobalRulesPath: path,
+		Asker:            nextAsker,
+		ProjectRulesPath: path,
 	})
 	if err != nil {
 		t.Fatalf("NewManager next: %v", err)
 	}
-	res, err := nextManager.Ask(context.Background(), execReq(t, execution.ModeWork, "go test ./..."))
+	res, err := nextManager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status"))
 	if err != nil {
-		t.Fatalf("Ask next: %v", err)
+		t.Fatalf("Ask next same: %v", err)
+	}
+	if !res.Allowed || res.Source != SourceRule || !strings.Contains(res.Reason, "matched allow exact command rule") {
+		t.Fatalf("result = %#v, want persisted project command rule allow", res)
+	}
+	res, err = nextManager.Ask(context.Background(), execReq(t, execution.ModeWork, "go test ./..."))
+	if err != nil {
+		t.Fatalf("Ask next different: %v", err)
+	}
+	if res.Allowed || res.Source != SourceHuman {
+		t.Fatalf("different command result = %#v, want human deny", res)
+	}
+	if nextAsker.calls != 1 {
+		t.Fatalf("next asker calls = %d, want 1", nextAsker.calls)
+	}
+}
+
+func TestManagerAlwaysProjectPatternAcrossManagers(t *testing.T) {
+	path := testProjectRulesPath(t)
+	workspace := filepath.Dir(filepath.Dir(path))
+	asker := &mockAsker{decision: DecisionAlwaysProjectPattern}
+	manager, err := NewManager(Options{
+		Asker:            asker,
+		ProjectRulesPath: path,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	req := execReq(t, execution.ModeWork, "go test ./internal/permission")
+	req.Workspace = workspace
+	if _, err := manager.Ask(context.Background(), req); err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+
+	nextAsker := &mockAsker{decision: DecisionDeny}
+	nextManager, err := NewManager(Options{
+		Asker:            nextAsker,
+		ProjectRulesPath: path,
+	})
+	if err != nil {
+		t.Fatalf("NewManager next: %v", err)
+	}
+	res, err := nextManager.Ask(context.Background(), execReq(t, execution.ModeWork, "go test ./internal/tui"))
+	if err != nil {
+		t.Fatalf("Ask next similar: %v", err)
+	}
+	if !res.Allowed || res.Source != SourceRule || !strings.Contains(res.Reason, "matched allow rule") {
+		t.Fatalf("result = %#v, want persisted project command pattern allow", res)
+	}
+	res, err = nextManager.Ask(context.Background(), execReq(t, execution.ModeWork, "go build ./cmd/ub"))
+	if err != nil {
+		t.Fatalf("Ask next different: %v", err)
+	}
+	if res.Allowed || res.Source != SourceHuman {
+		t.Fatalf("different command result = %#v, want human deny", res)
+	}
+	if nextAsker.calls != 1 {
+		t.Fatalf("next asker calls = %d, want 1", nextAsker.calls)
+	}
+}
+
+func TestManagerCommandPatternDoesNotCoverCompoundCommand(t *testing.T) {
+	asker := &mockAsker{decision: DecisionDeny}
+	manager, err := NewManager(Options{
+		Asker:      asker,
+		AllowRules: []Rule{mustRule(t, "Bash(git status:*)", RuleAllow)},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status && rm -rf ./build"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if res.Allowed || res.Source != SourceHuman {
+		t.Fatalf("result = %#v, want human deny because second subcommand is uncovered", res)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	}
+}
+
+func TestManagerCommandPatternCoversCompoundWhenEachSubcommandMatches(t *testing.T) {
+	asker := &mockAsker{decision: DecisionDeny}
+	manager, err := NewManager(Options{
+		Asker: asker,
+		AllowRules: []Rule{
+			mustRule(t, "Bash(git status:*)", RuleAllow),
+			mustRule(t, "Bash(go test:*)", RuleAllow),
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status && go test ./..."))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
 	}
 	if !res.Allowed || res.Source != SourceRule {
-		t.Fatalf("result = %#v, want persisted global rule allow", res)
+		t.Fatalf("result = %#v, want rule allow", res)
 	}
-	if nextAsker.calls != 0 {
-		t.Fatalf("next asker calls = %d, want 0", nextAsker.calls)
+	if asker.calls != 0 {
+		t.Fatalf("asker calls = %d, want 0", asker.calls)
+	}
+}
+
+func TestManagerDenyRuleBlocksBeforeHumanOrAgent(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow}}
+	manager, err := NewManager(Options{
+		Asker:         asker,
+		ApprovalAgent: agent,
+		DenyRules:     []Rule{mustRule(t, "Bash(curl:*)", RuleDeny)},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "curl https://example.test"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if res.Allowed || res.Source != SourceRule || res.Decision != DecisionDeny {
+		t.Fatalf("result = %#v, want deny rule", res)
+	}
+	if asker.calls != 0 || agent.calls != 0 {
+		t.Fatalf("asker/agent calls = %d/%d, want 0/0", asker.calls, agent.calls)
+	}
+}
+
+func TestManagerAskRuleForcesHumanInAutoMode(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow}}
+	manager, err := NewManager(Options{
+		Asker:         asker,
+		ApprovalAgent: agent,
+		AskRules:      []Rule{mustRule(t, "Bash(git push:*)", RuleAsk)},
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeAuto, "git push origin main"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if !res.Allowed || res.Source != SourceHuman {
+		t.Fatalf("result = %#v, want human allow from ask rule", res)
+	}
+	if asker.calls != 1 || agent.calls != 0 {
+		t.Fatalf("asker/agent calls = %d/%d, want 1/0", asker.calls, agent.calls)
+	}
+	if got := asker.requests[0].ApprovalReason; !strings.Contains(got, "matched ask rule") {
+		t.Fatalf("approval reason = %q, want ask rule reason", got)
 	}
 }
 
@@ -433,8 +583,7 @@ func TestManagerPreviewPassedToAsker(t *testing.T) {
 	}
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{
-		Asker:           asker,
-		GlobalRulesPath: testRulesPath(t),
+		Asker: asker,
 	})
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)

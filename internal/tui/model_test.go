@@ -1660,8 +1660,8 @@ func TestModelPermissionRequestReturnsDecision(t *testing.T) {
 	}
 	select {
 	case got := <-response:
-		if got != permission.DecisionAlwaysGlobal {
-			t.Fatalf("decision = %q, want always global", got)
+		if got != permission.DecisionAlwaysProjectCmd {
+			t.Fatalf("decision = %q, want always project command", got)
 		}
 	default:
 		t.Fatalf("no decision returned")

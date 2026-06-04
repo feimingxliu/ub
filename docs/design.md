@@ -441,11 +441,13 @@ providers:
     base_url: https://llm-gateway.intra.example.com/anthropic/v1
 
 permissions:
-  always_allow:
-    - tool: bash
-      command_prefix: "git status"
-    - tool: bash
-      command_prefix: "ls "
+  allow:
+    - Bash(git status)
+    - Bash(ls:*)
+  ask:
+    - Bash(git push:*)
+  deny:
+    - Bash(curl:*)
 
 mcp_servers:
   filesystem:
@@ -525,7 +527,8 @@ const (
     Deny
     AlwaysAllowCommand   // session 内：同 tool + 同参数自动放行（内存）
     AlwaysAllowTool      // session 内：同 tool 全放行（内存）
-    AlwaysAllowGlobal    // 跨 session 持久化到 ~/.config/ub/permissions.yaml
+    AlwaysAllowProjectCommand // 项目内跨 session：同 tool + 同 command 持久化
+    AlwaysAllowProjectPattern // 项目内跨 session：同 tool + Claude-style Bash pattern 持久化
 )
 
 type ApprovalAgent interface {
@@ -535,28 +538,35 @@ type ApprovalAgent interface {
 
 **两层规则存储**：
 - **session 级**（`AlwaysAllowCommand` / `AlwaysAllowTool`）：内存 map，agent 进程退出即丢
-- **global 级**（`AlwaysAllowGlobal`）：序列化到 `~/.config/ub/permissions.yaml`，启动时加载到内存
+- **project 级**：序列化到 `<workspace>/.ub/permissions.yaml`，启动时加载到内存；格式参考 Claude Code `settings.json` 的 permission rules
   ```yaml
-  # ~/.config/ub/permissions.yaml — 由 TUI 写入，用户也可手改
-  global:
-    - tool: bash
-      command_prefix: "git status"
-    - tool: fs.edit         # 整工具放行
+  # <workspace>/.ub/permissions.yaml — 由 TUI 写入，用户也可手改
+  permissions:
+    allow:
+      - Bash(git status)
+      - Bash(go test:*)
+    ask:
+      - Bash(git push:*)
+    deny:
+      - Bash(curl:*)
   ```
 
 UI 流程：
 1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式拒绝所有 `write` 风险工具
 2. 若工具实现 PreviewableTool，先调 `Preview()`
-3. 对 `exec` 风险工具先查 global rules → 再查 session rules（match 则直接 Allow；黑名单除外）
+3. 对 `exec` 风险工具先查 project `deny` rules → project `allow` rules → session allow rules → project `ask` rules（黑名单除外）；`deny` 直接拒绝，`allow` 直接通过，`ask` 强制人工确认
 4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，并用 `slog` 记录 `allow`/`deny`/`unsure` 或错误原因；返回 `deny`/`unsure`/error 时再向 TUI 发请求
-5. TUI 弹 modal，以候选列表展示 5 个选项（与 F-PERM-3 对齐），每个选项都说明作用范围；上/下方向键移动，Enter 确认，`1`~`5` 仅作为快捷键：
+5. TUI 弹 modal，以候选列表展示 6 个选项（与 F-PERM-3 对齐），每个选项都说明作用范围；上/下方向键移动，Enter 确认，`1`~`6` 仅作为快捷键：
    - Allow once：只允许本次请求，不保存规则
    - Deny：拒绝本次请求，不保存规则
    - Always allow this exact command (session)：本 session 内允许完全相同 command
    - Always allow this tool (session)：本 session 内允许同一 tool 的后续调用
-   - Always allow this tool (global)：写入 `~/.config/ub/permissions.yaml`，后续 session 生效
-6. 决策写入 rollout（`PermissionDecision` 事件，含 `source=rule|approval_agent|human`）；选 3/4 更新内存 rules；选 5 同时追加到磁盘 yaml
+   - Always allow this exact command (project)：向 `permissions.allow` 追加 `Bash(<exact command>)`
+   - Always allow this similar command (project)：向 `permissions.allow` 追加 Claude-style `Bash(<prefix>:*)`
+6. 决策写入 rollout（`PermissionDecision` 事件，含 `source=rule|approval_agent|human`）；选 3/4 更新内存 rules；选 5/6 同时追加到项目级磁盘 yaml
 7. dispatcher 拿到决策继续
+
+`Bash(pattern)` 规则采用 Claude-style prefix/wildcard 语义：无 `*` 时精确匹配；`cmd:*` 匹配该前缀的 shell 命令；compound command 会按 `&&`、`;`、管道、换行等拆分，只有每个子命令都命中 allow rule 才能自动放行，任一子命令命中 deny rule 则整条命令拒绝。
 
 **approval 模型切换规划**：`/approval-model [model]` 只影响 auto 模式的命令审批模型，不改变主对话模型。无参数时展示 approval provider 的候选模型；显式指定时必须通过候选列表校验；切换成功后重建 `permission.Manager` 内的 approval agent，并仅影响后续 tool approval。
 

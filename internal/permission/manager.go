@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/feimingxliu/ub/internal/approval"
@@ -13,43 +14,48 @@ import (
 
 // Options configures a Manager.
 type Options struct {
-	Asker           Asker
-	ApprovalAgent   approval.Agent
-	GlobalRulesPath string
-	GlobalRules     []Rule
+	Asker            Asker
+	ApprovalAgent    approval.Agent
+	ProjectRulesPath string
+	AllowRules       []Rule
+	AskRules         []Rule
+	DenyRules        []Rule
 }
 
 // Manager applies execution mode, rules, approval agent and human decisions.
 type Manager struct {
-	asker           Asker
-	approvalAgent   approval.Agent
-	globalRulesPath string
-	globalRules     []Rule
-	sessionRules    []Rule
-	mu              sync.RWMutex
+	asker            Asker
+	approvalAgent    approval.Agent
+	projectRulesPath string
+	allowRules       []Rule
+	askRules         []Rule
+	denyRules        []Rule
+	sessionRules     []Rule
+	mu               sync.RWMutex
 }
 
-// NewManager constructs a permission manager and loads global rules.
+// NewManager constructs a permission manager and loads project rules.
 func NewManager(opts Options) (*Manager, error) {
-	path := opts.GlobalRulesPath
-	if path == "" {
-		var err error
-		path, err = DefaultRulesPath()
+	projectPath := opts.ProjectRulesPath
+	allowRules := append([]Rule(nil), opts.AllowRules...)
+	askRules := append([]Rule(nil), opts.AskRules...)
+	denyRules := append([]Rule(nil), opts.DenyRules...)
+	if projectPath != "" {
+		loadedAllow, loadedAsk, loadedDeny, err := LoadProjectRules(projectPath)
 		if err != nil {
-			return nil, fmt.Errorf("locate permission rules: %w", err)
+			return nil, err
 		}
+		allowRules = append(allowRules, loadedAllow...)
+		askRules = append(askRules, loadedAsk...)
+		denyRules = append(denyRules, loadedDeny...)
 	}
-	globalRules := append([]Rule(nil), opts.GlobalRules...)
-	loaded, err := LoadGlobalRules(path)
-	if err != nil {
-		return nil, err
-	}
-	globalRules = append(globalRules, loaded...)
 	return &Manager{
-		asker:           opts.Asker,
-		approvalAgent:   opts.ApprovalAgent,
-		globalRulesPath: path,
-		globalRules:     globalRules,
+		asker:            opts.Asker,
+		approvalAgent:    opts.ApprovalAgent,
+		projectRulesPath: projectPath,
+		allowRules:       allowRules,
+		askRules:         askRules,
+		denyRules:        denyRules,
 	}, nil
 }
 
@@ -81,15 +87,28 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 	blacklisted := isBlacklisted(command)
 	if !blacklisted {
 		m.mu.RLock()
-		globalRule, globalOK := matchRule(m.globalRules, req, command)
-		sessionRule, sessionOK := matchRule(m.sessionRules, req, command)
+		denyRule, denyOK := matchAnyRule(m.denyRules, req, command)
+		allowRule, allowOK := matchAllowRule(m.allowRules, req, command)
+		askRule, askOK := matchAnyRule(m.askRules, req, command)
+		sessionRule, sessionOK := matchAllowRule(m.sessionRules, req, command)
 		agent := m.approvalAgent
 		m.mu.RUnlock()
-		if globalOK {
-			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(globalRule)}, nil
+		if denyOK {
+			return Result{Decision: DecisionDeny, Allowed: false, Source: SourceRule, Reason: ruleReason(denyRule)}, nil
+		}
+		if allowOK {
+			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(allowRule)}, nil
 		}
 		if sessionOK {
 			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceRule, Reason: ruleReason(sessionRule)}, nil
+		}
+		if askOK {
+			req.ApprovalReason = ruleReason(askRule)
+			decision, err := m.askHuman(ctx, req)
+			if err != nil {
+				return Result{}, err
+			}
+			return m.applyHumanDecision(decision, req, command)
 		}
 		if mode == execution.ModeAuto {
 			if agent == nil {
@@ -157,22 +176,58 @@ func (m *Manager) applyHumanDecision(decision Decision, req Request, command str
 	case DecisionDeny:
 		return Result{Decision: decision, Allowed: false, Source: SourceHuman}, nil
 	case DecisionAlwaysCmd:
+		if command == "" {
+			return Result{}, fmt.Errorf("permission: exact command rule requires command text")
+		}
 		m.mu.Lock()
-		m.sessionRules = append(m.sessionRules, Rule{Tool: req.Tool, Command: command})
+		m.sessionRules = append(m.sessionRules, Rule{Raw: formatPermissionRule(req.Tool, command), Action: RuleAllow, Tool: permissionToolName(req.Tool), Pattern: command})
 		m.mu.Unlock()
 		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
 	case DecisionAlwaysTool:
 		m.mu.Lock()
-		m.sessionRules = append(m.sessionRules, Rule{Tool: req.Tool})
+		m.sessionRules = append(m.sessionRules, Rule{Raw: formatPermissionRule(req.Tool, ""), Action: RuleAllow, Tool: permissionToolName(req.Tool)})
 		m.mu.Unlock()
 		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
-	case DecisionAlwaysGlobal:
-		rule := Rule{Tool: req.Tool}
-		if err := SaveGlobalRule(m.globalRulesPath, rule); err != nil {
+	case DecisionAlwaysProjectCmd:
+		if command == "" {
+			return Result{}, fmt.Errorf("permission: project command rule requires command text")
+		}
+		path, err := m.projectRulePath(req)
+		if err != nil {
+			return Result{}, err
+		}
+		raw := formatPermissionRule(req.Tool, command)
+		rule, err := parsePermissionRule(raw, RuleAllow)
+		if err != nil {
+			return Result{}, err
+		}
+		if err := SaveProjectRule(path, RuleAllow, raw); err != nil {
 			return Result{}, err
 		}
 		m.mu.Lock()
-		m.globalRules = append(m.globalRules, rule)
+		m.projectRulesPath = path
+		m.allowRules = append(m.allowRules, rule)
+		m.mu.Unlock()
+		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
+	case DecisionAlwaysProjectPattern:
+		rules, err := projectPatternRules(req.Tool, command)
+		if err != nil {
+			return Result{}, err
+		}
+		path, err := m.projectRulePath(req)
+		if err != nil {
+			return Result{}, err
+		}
+		rawRules := make([]string, 0, len(rules))
+		for _, rule := range rules {
+			rawRules = append(rawRules, rule.Raw)
+		}
+		if err := SaveProjectRules(path, RuleAllow, rawRules); err != nil {
+			return Result{}, err
+		}
+		m.mu.Lock()
+		m.projectRulesPath = path
+		m.allowRules = append(m.allowRules, rules...)
 		m.mu.Unlock()
 		return Result{Decision: decision, Allowed: true, Source: SourceHuman}, nil
 	default:
@@ -180,13 +235,71 @@ func (m *Manager) applyHumanDecision(decision Decision, req Request, command str
 	}
 }
 
+func (m *Manager) projectRulePath(req Request) (string, error) {
+	if m.projectRulesPath != "" {
+		return m.projectRulesPath, nil
+	}
+	return ProjectRulesPath(workspaceFromRequest(req))
+}
+
+func projectPatternRules(toolName, command string) ([]Rule, error) {
+	commands := splitShellCommands(command)
+	if len(commands) == 0 {
+		return nil, fmt.Errorf("permission: project command pattern requires command text")
+	}
+	if len(commands) > 5 {
+		return nil, fmt.Errorf("permission: refusing to save %d command patterns; split the command or edit .ub/permissions.yaml manually", len(commands))
+	}
+	rules := make([]Rule, 0, len(commands))
+	for _, subcommand := range commands {
+		pattern := similarCommandPattern(subcommand)
+		if pattern == "" {
+			return nil, fmt.Errorf("permission: cannot derive command pattern for %q", subcommand)
+		}
+		raw := formatPermissionRule(toolName, pattern)
+		rule, err := parsePermissionRule(raw, RuleAllow)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func similarCommandPattern(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	keep := similarPatternFieldCount(fields)
+	prefix := strings.Join(fields[:keep], " ")
+	return prefix + ":*"
+}
+
+func similarPatternFieldCount(fields []string) int {
+	if len(fields) <= 2 {
+		return len(fields)
+	}
+	switch fields[0] {
+	case "npm", "pnpm", "yarn":
+		if fields[1] == "run" && len(fields) >= 3 {
+			return 3
+		}
+		return 2
+	case "make":
+		return 2
+	default:
+		return 2
+	}
+}
+
 func ruleReason(rule Rule) string {
 	switch {
-	case rule.Command != "":
-		return "matched command rule"
-	case rule.CommandPrefix != "":
-		return "matched command prefix rule"
+	case rule.Pattern != "" && strings.Contains(rule.Pattern, "*"):
+		return fmt.Sprintf("matched %s rule %s", rule.Action, rule.Raw)
+	case rule.Pattern != "":
+		return fmt.Sprintf("matched %s exact command rule %s", rule.Action, rule.Raw)
 	default:
-		return "matched tool rule"
+		return fmt.Sprintf("matched %s tool rule %s", rule.Action, rule.Raw)
 	}
 }

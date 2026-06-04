@@ -123,7 +123,7 @@ func (m *Model) showToastForActivity(event Event) tea.Cmd {
 
 func permissionDecisionAllows(decision permission.Decision) bool {
 	switch decision {
-	case permission.DecisionAllow, permission.DecisionAlwaysCmd, permission.DecisionAlwaysTool, permission.DecisionAlwaysGlobal:
+	case permission.DecisionAllow, permission.DecisionAlwaysCmd, permission.DecisionAlwaysTool, permission.DecisionAlwaysProjectCmd, permission.DecisionAlwaysProjectPattern:
 		return true
 	default:
 		return false

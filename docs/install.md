@@ -347,7 +347,7 @@ ub                    # 进入 TUI
 | 会话数据库（SQLite） | `$XDG_DATA_HOME/ub/ub.db`，回退 `~/.local/share/ub/ub.db` | `XDG_DATA_HOME` |
 | 工具结果溢出文件 | `$XDG_STATE_HOME/ub/`，回退 `~/.local/state/ub/` | `XDG_STATE_HOME` |
 | TUI 日志 | `$XDG_STATE_HOME/ub/ub.log` | `UB_LOG_FILE` 可覆盖 |
-| 全局权限规则 | `~/.config/ub/permissions.yaml` | 由 ub 自动管理 |
+| 项目权限规则 | `<workspace>/.ub/permissions.yaml` | 由 ub 自动管理，保存 Claude-style allow/ask/deny command rules |
 
 启动期自动清理（best-effort）：
 
@@ -398,7 +398,7 @@ rm -f $LOCALAPPDATA/Microsoft/WindowsApps/ub.exe   # Windows
 
 # 删除配置（可选）
 rm -f ~/.config/ub/config.yaml
-rm -f ~/.config/ub/permissions.yaml
+rm -f .ub/permissions.yaml
 
 # 删除会话与状态数据（可选）
 rm -rf ~/.local/share/ub

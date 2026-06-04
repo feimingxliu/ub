@@ -199,15 +199,23 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	perm, err := permission.NewManager(permission.Options{Asker: asker, ApprovalAgent: approvalSetup.Agent})
-	if err != nil {
-		return nil, err
-	}
 	tools, err := newToolRuntime(cmd.Context(), cfg)
 	if err != nil {
 		return nil, err
 	}
 	writeToolWarnings(cmd.ErrOrStderr(), tools.Warnings)
+	projectRulesPath, err := permission.ProjectRulesPath(tools.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	perm, err := permission.NewManager(permission.Options{
+		Asker:            asker,
+		ApprovalAgent:    approvalSetup.Agent,
+		ProjectRulesPath: projectRulesPath,
+	})
+	if err != nil {
+		return nil, err
+	}
 	providerChecks := map[string]providerCheck{}
 	providerChecks[providerCheckKey(providerName, providerCfg)] = providerCheckResult
 	return &tuiAgentRunner{

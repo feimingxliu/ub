@@ -25,7 +25,7 @@ ub is a coding agent that lives entirely in your terminal. It speaks to your fav
 
 - 🧠 **Multi-provider.** Anthropic · OpenAI · OpenAI-compat (DeepSeek / Together / vLLM / LiteLLM / Ollama `/v1`) · plus a script-driven Fake provider that runs CI offline.
 - 🛠️ **Local tools.** Filesystem, search, shell, background jobs, LSP diagnostics, and any MCP server.
-- 🛡️ **Permission-first.** Three execution modes (`work` / `plan` / `auto`), five-way approval modal, persistent allow-rules, hard-coded blocklist for `rm -rf /` and friends.
+- 🛡️ **Permission-first.** Three execution modes (`work` / `plan` / `auto`), six-way approval modal, Claude-style project command rules, hard-coded blocklist for `rm -rf /` and friends.
 - 📜 **Every session replayable.** SQLite-backed append-only rollout log; inspect with `ub rollout show <id>`.
 - 🪶 **Tiny surface area.** Single binary. No daemon. No telemetry. `~26k` lines of Go you can actually read.
 

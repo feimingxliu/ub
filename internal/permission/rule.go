@@ -2,20 +2,36 @@ package permission
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
 )
 
-// Rule is an allow-rule used either for session memory or global YAML.
+type RuleAction string
+
+const (
+	RuleAllow RuleAction = "allow"
+	RuleAsk   RuleAction = "ask"
+	RuleDeny  RuleAction = "deny"
+)
+
+// Rule is a Claude-style permission rule such as "Bash(go test:*)".
 type Rule struct {
-	Tool          string `yaml:"tool,omitempty"           json:"tool,omitempty"`
-	Command       string `yaml:"command,omitempty"        json:"command,omitempty"`
-	CommandPrefix string `yaml:"command_prefix,omitempty" json:"command_prefix,omitempty"`
+	Raw     string
+	Action  RuleAction
+	Tool    string
+	Pattern string
 }
 
 type ruleFile struct {
-	Global []Rule `yaml:"global" json:"global"`
+	Permissions RuleConfig `yaml:"permissions,omitempty" json:"permissions,omitempty"`
+}
+
+type RuleConfig struct {
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
+	Ask   []string `yaml:"ask,omitempty"   json:"ask,omitempty"`
+	Deny  []string `yaml:"deny,omitempty"  json:"deny,omitempty"`
 }
 
 var blacklistPatterns = []*regexp.Regexp{
@@ -56,27 +72,229 @@ func cwdFromRequest(req Request) string {
 	return strings.TrimSpace(body.Cwd)
 }
 
-func (r Rule) matches(req Request, command string) bool {
-	if r.Tool != "" && r.Tool != req.Tool {
-		return false
-	}
-	switch {
-	case r.Command != "":
-		return command == r.Command
-	case r.CommandPrefix != "":
-		return strings.HasPrefix(command, r.CommandPrefix)
-	default:
-		return r.Tool != ""
-	}
+func workspaceFromRequest(req Request) string {
+	return strings.TrimSpace(req.Workspace)
 }
 
-func matchRule(rules []Rule, req Request, command string) (Rule, bool) {
+func (r Rule) matches(req Request, command string) bool {
+	if r.Tool != "" && r.Tool != permissionToolName(req.Tool) {
+		return false
+	}
+	if r.Pattern == "" {
+		return r.Tool != ""
+	}
+	return bashPatternMatch(r.Pattern, command)
+}
+
+func matchAllowRule(rules []Rule, req Request, command string) (Rule, bool) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return Rule{}, false
+	}
+	commands := splitShellCommands(command)
+	if len(commands) <= 1 {
+		return matchSingleRule(rules, req, command)
+	}
+	for _, rule := range rules {
+		if rule.matchesWholeCommand(req, command) {
+			return rule, true
+		}
+	}
+	var first Rule
+	for i, subcommand := range commands {
+		rule, ok := matchSingleRule(rules, req, subcommand)
+		if !ok {
+			return Rule{}, false
+		}
+		if i == 0 {
+			first = rule
+		}
+	}
+	return first, true
+}
+
+func matchAnyRule(rules []Rule, req Request, command string) (Rule, bool) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return Rule{}, false
+	}
+	commands := splitShellCommands(command)
+	for _, rule := range rules {
+		if rule.matches(req, command) {
+			return rule, true
+		}
+		for _, subcommand := range commands {
+			if rule.matches(req, subcommand) {
+				return rule, true
+			}
+		}
+	}
+	return Rule{}, false
+}
+
+func matchSingleRule(rules []Rule, req Request, command string) (Rule, bool) {
 	for _, rule := range rules {
 		if rule.matches(req, command) {
 			return rule, true
 		}
 	}
 	return Rule{}, false
+}
+
+func (r Rule) matchesWholeCommand(req Request, command string) bool {
+	if r.Tool != "" && r.Tool != permissionToolName(req.Tool) {
+		return false
+	}
+	return r.Pattern == command || r.Pattern == ""
+}
+
+func bashPatternMatch(pattern, command string) bool {
+	pattern = strings.TrimSpace(pattern)
+	command = strings.TrimSpace(command)
+	if pattern == "" || command == "" {
+		return false
+	}
+	if strings.HasSuffix(pattern, ":*") {
+		prefix := strings.TrimSuffix(pattern, ":*")
+		return command == prefix || strings.HasPrefix(command, prefix+" ") || strings.HasPrefix(command, prefix+":")
+	}
+	if !strings.Contains(pattern, "*") {
+		return command == pattern
+	}
+	var b strings.Builder
+	b.WriteByte('^')
+	for _, part := range strings.Split(pattern, "*") {
+		b.WriteString(regexp.QuoteMeta(part))
+		b.WriteString(".*")
+	}
+	raw := b.String()
+	if !strings.HasSuffix(pattern, "*") {
+		raw = strings.TrimSuffix(raw, ".*")
+	}
+	raw += "$"
+	re, err := regexp.Compile(raw)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(command)
+}
+
+func parsePermissionRules(cfg RuleConfig) ([]Rule, []Rule, []Rule, error) {
+	allow, err := parseRuleList(cfg.Allow, RuleAllow)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ask, err := parseRuleList(cfg.Ask, RuleAsk)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	deny, err := parseRuleList(cfg.Deny, RuleDeny)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return allow, ask, deny, nil
+}
+
+func parseRuleList(raw []string, action RuleAction) ([]Rule, error) {
+	rules := make([]Rule, 0, len(raw))
+	for _, item := range raw {
+		rule, err := parsePermissionRule(item, action)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func parsePermissionRule(raw string, action RuleAction) (Rule, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return Rule{}, fmt.Errorf("permission rule is empty")
+	}
+	open := strings.IndexByte(raw, '(')
+	if open < 0 {
+		return Rule{Raw: raw, Action: action, Tool: permissionToolName(raw)}, nil
+	}
+	if !strings.HasSuffix(raw, ")") {
+		return Rule{}, fmt.Errorf("permission rule %q missing closing parenthesis", raw)
+	}
+	toolName := strings.TrimSpace(raw[:open])
+	pattern := strings.TrimSpace(raw[open+1 : len(raw)-1])
+	if toolName == "" {
+		return Rule{}, fmt.Errorf("permission rule %q missing tool name", raw)
+	}
+	return Rule{Raw: raw, Action: action, Tool: permissionToolName(toolName), Pattern: pattern}, nil
+}
+
+func permissionToolName(toolName string) string {
+	switch strings.ToLower(strings.TrimSpace(toolName)) {
+	case "bash", "job_run", "jobrun":
+		return "Bash"
+	case "job_kill", "jobkill":
+		return "JobKill"
+	default:
+		return strings.TrimSpace(toolName)
+	}
+}
+
+func formatPermissionRule(toolName, pattern string) string {
+	toolName = permissionToolName(toolName)
+	if strings.TrimSpace(pattern) == "" {
+		return toolName
+	}
+	return fmt.Sprintf("%s(%s)", toolName, strings.TrimSpace(pattern))
+}
+
+func splitShellCommands(command string) []string {
+	var commands []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		part := strings.TrimSpace(b.String())
+		if part != "" {
+			commands = append(commands, part)
+		}
+		b.Reset()
+	}
+	for i, r := range command {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			b.WriteRune(r)
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			b.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+			b.WriteRune(r)
+		case '\n', ';', '&', '|':
+			flush()
+			if (r == '&' || r == '|') && i+1 < len(command) {
+				next := rune(command[i+1])
+				if next == r || (r == '|' && next == '&') {
+					// The next separator rune is skipped naturally by producing
+					// an empty command on the next iteration.
+				}
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	flush()
+	return commands
 }
 
 // isBlacklisted is a defense-in-depth guard against obviously catastrophic

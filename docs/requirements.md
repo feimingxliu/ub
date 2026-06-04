@@ -95,7 +95,7 @@
 ### 4.4 执行模式
 
 - F-MODE-1：每个 session MUST 有一个 `execution_mode`，可选值为 `work`、`plan`、`auto`；启动参数、配置和 TUI slash 命令均可切换（优先级：CLI flag > profile > config 默认值）
-- F-MODE-2：`work` 模式允许 agent 在当前 workspace 内读写文件；执行 `exec` 风险工具（`bash` / `job_run` / `job_kill`）时，若未被 session/global allow-rule 明确放行，MUST 弹出用户审批
+- F-MODE-2：`work` 模式允许 agent 在当前 workspace 内读写文件；执行 `exec` 风险工具（`bash` / `job_run` / `job_kill`）时，若未被 session/project allow-rule 明确放行，MUST 弹出用户审批
 - F-MODE-3：`plan` 模式为只读规划模式；agent 只可使用只读调研工具（`read` / `ls` / `glob` / `grep`）以及计划工具（`plan_write` / `plan_update`）。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具 MUST NOT 在 plan 模式广告；若模型误调，MUST 被拦截并以 tool error 回灌给模型。
 - F-MODE-4：`auto` 模式允许一个额外的 approval agent 自动审批命令；若 approval agent 拒绝、无法判断或调用失败，系统 MUST 回退到用户显式审批，不能静默执行；approval agent 的决策与原因 MUST 写入结构化日志
 - F-MODE-5：危险命令黑名单优先级高于所有模式；即使 allow-rule 或 approval agent 放行，仍 MUST 要求用户显式确认
@@ -105,8 +105,9 @@
 
 - F-PERM-1：每个工具声明 `RiskLevel`：`safe`（read/ls/grep/glob）/ `write`（edit/write）/ `exec`（bash/job_run）
 - F-PERM-2：`safe` 默认自动允许；`write` 与 `exec` 的处理由当前执行模式决定
-- F-PERM-3：审批 UI 选项：`allow once` / `deny` / `always allow this exact command (session)` / `always allow this tool (session)` / `always allow this tool (global, persist to disk)`
-- F-PERM-4：session 级 always-rule 仅内存生效；global 级 always-rule 持久化到 `~/.config/ub/permissions.yaml`，下次启动自动加载
+- F-PERM-3：审批 UI 选项：`allow once` / `deny` / `always allow this exact command (session)` / `always allow this tool (session)` / `always allow this exact command (project, persist to disk)` / `always allow similar command (project, persist to disk)`
+- F-PERM-4：project 级规则持久化到 `<workspace>/.ub/permissions.yaml`，格式为 `permissions.allow` / `permissions.ask` / `permissions.deny` 字符串数组，规则语法为 Claude-style `Tool(pattern)`；`Bash(cmd)` 精确匹配，`Bash(cmd:*)` 匹配命令前缀；session 级 always-rule 仅内存生效
+- F-PERM-4a：命令规则 MUST 拆分 compound command（如 `&&`、`;`、管道、换行）；allow 自动放行要求每个子命令都命中 allow rule，deny 规则命中任意子命令即拒绝，ask 规则命中时必须回退人工确认
 - F-PERM-5：危险命令模式匹配黑名单（`rm -rf /`、`mkfs.*` 等）即使匹配 always-rule 也强制再次确认
 - F-PERM-6：approval agent 与 human approval 的决策、来源和原因 MUST 作为对话活动消息展示，便于用户理解命令为何被放行或回退
 

@@ -13,11 +13,12 @@ import (
 type Decision string
 
 const (
-	DecisionAllow        Decision = "allow"
-	DecisionDeny         Decision = "deny"
-	DecisionAlwaysCmd    Decision = "always_cmd"
-	DecisionAlwaysTool   Decision = "always_tool"
-	DecisionAlwaysGlobal Decision = "always_global"
+	DecisionAllow                Decision = "allow"
+	DecisionDeny                 Decision = "deny"
+	DecisionAlwaysCmd            Decision = "always_cmd"
+	DecisionAlwaysTool           Decision = "always_tool"
+	DecisionAlwaysProjectCmd     Decision = "always_project_cmd"
+	DecisionAlwaysProjectPattern Decision = "always_project_pattern"
 )
 
 // Source identifies where a final permission result came from.
@@ -40,6 +41,7 @@ type Request struct {
 	Preview          *tool.Preview
 	Command          string
 	Cwd              string
+	Workspace        string
 	ContextSummary   string
 	ApprovalReason   string
 	ApprovalObserver func(ApprovalObservation)
