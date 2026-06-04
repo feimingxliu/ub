@@ -26,6 +26,11 @@ import (
 
 const minRecommendedWidth = 80
 
+// escInterruptConfirmWindow is the time window within which a second Esc press
+// interrupts a running model. It matches the visible toast lifetime so the hint
+// stays true while it is on screen.
+const escInterruptConfirmWindow = toastTTL
+
 const initCommandPrompt = `You are running ub /init.
 
 Create or update AGENTS.md in the current workspace root so future AI coding agent sessions have concise, accurate repository guidance.
@@ -133,6 +138,8 @@ type Model struct {
 	clipboard       Clipboard
 	loadMessages    func(context.Context) ([]InitialMessage, error)
 	loadingMessages bool
+	lastEscTime     time.Time
+	lastEscRunID    int
 }
 
 // NewModel creates the root TUI model.
@@ -273,6 +280,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMessagesLoaded(msg)
 	}
 	m.clearToastForInteraction(msg)
+	m.clearEscInterruptConfirmForInteraction(msg)
 
 	if m.pendingLimit != nil {
 		if mouseMsg, ok := msg.(tea.MouseWheelMsg); ok {
@@ -321,9 +329,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Quit
 			case "esc":
-				m.interruptCurrent()
-				return m, waitForPermission(m.permReqs)
+				if m.confirmEscInterrupt(key) {
+					m.interruptCurrent()
+					return m, waitForPermission(m.permReqs)
+				}
+				return m, m.showToast(toastNotice, "press Esc again to interrupt")
 			case "shift+tab":
+				m.clearEscInterruptConfirm()
 				return m.cycleMode()
 			case "ctrl+home":
 				m.scrollToTop()
@@ -488,13 +500,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			if m.files != nil {
 				m.files = nil
+				m.clearEscInterruptConfirm()
 				return m, nil
 			}
 			if !m.running && m.messages.clearFocus() {
+				m.clearEscInterruptConfirm()
 				return m, nil
 			}
 			if m.running {
-				m.interruptCurrent()
+				if m.confirmEscInterrupt(msg) {
+					m.interruptCurrent()
+				} else {
+					return m, m.showToast(toastNotice, "press Esc again to interrupt")
+				}
 			}
 			return m, nil
 		case "pgup":
@@ -639,6 +657,7 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.cancel = nil
 		m.pending = nil
 		m.events = nil
+		m.clearEscInterruptConfirm()
 		return m.startNextQueuedPrompt()
 	}
 	cmd := waitForEventFromUpdate(msg.event, &m)
@@ -1357,6 +1376,7 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		m.running = false
 		m.status.state = statusIdle
 		m.cancel = nil
+		m.clearEscInterruptConfirm()
 		return nil
 	default:
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
@@ -1655,7 +1675,38 @@ func (m Model) cycleMode() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) confirmEscInterrupt(key tea.KeyPressMsg) bool {
+	if key.Key().IsRepeat {
+		return false
+	}
+	now := time.Now()
+	if !m.lastEscTime.IsZero() && m.lastEscRunID == m.runID && now.Sub(m.lastEscTime) <= escInterruptConfirmWindow {
+		m.clearEscInterruptConfirm()
+		return true
+	}
+	m.lastEscTime = now
+	m.lastEscRunID = m.runID
+	return false
+}
+
+func (m *Model) clearEscInterruptConfirmForInteraction(msg tea.Msg) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if msg.String() != "esc" {
+			m.clearEscInterruptConfirm()
+		}
+	case tea.MouseClickMsg:
+		m.clearEscInterruptConfirm()
+	}
+}
+
+func (m *Model) clearEscInterruptConfirm() {
+	m.lastEscTime = time.Time{}
+	m.lastEscRunID = 0
+}
+
 func (m *Model) interruptCurrent() {
+	m.clearEscInterruptConfirm()
 	if m.pending != nil && m.pending.Response != nil {
 		select {
 		case m.pending.Response <- permission.DecisionDeny:
@@ -1987,7 +2038,7 @@ func helpKeyboardLines() []string {
 	return []string{
 		"Enter - send prompt; while running, queue a normal prompt; with a selected candidate, accept it",
 		"Ctrl+C - quit the TUI, cancelling the current run first",
-		"Esc - clear activity focus or cancel an active picker/file search; while running, interrupt the current turn",
+		"Esc - clear activity focus or cancel an active picker/file search; while running, press twice to interrupt the current turn",
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
 		"? - show this cheatsheet",
 		"PgUp/PgDown - scroll the transcript",

@@ -3974,16 +3974,54 @@ func TestEscInterruptsRunningInsteadOfQuitting(t *testing.T) {
 	model.runID = 3
 	model.cancel = func() { cancelled = true }
 
+	// First Esc should NOT interrupt; it should show a toast instead.
 	updated, cmd := model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+	if cancelled {
+		t.Fatalf("first esc should not cancel yet")
+	}
+	if !model.Running() {
+		t.Fatalf("first esc should not stop running")
+	}
+	if model.toast.text == "" || model.toast.tone != toastNotice {
+		t.Fatalf("first esc should show notice toast, got tone=%q text=%q", model.toast.tone, model.toast.text)
+	}
+	model.lastEscTime = time.Now().Add(-time.Second)
+
+	// Second Esc while the hint is still visible should interrupt.
+	updated, cmd = model.Update(keyPress(tea.KeyEsc))
 	if cmd != nil {
-		t.Fatalf("esc returned unexpected command")
+		t.Fatalf("second esc returned unexpected command")
 	}
 	model = assertModel(t, updated)
 	if !cancelled || model.Running() || !strings.Contains(viewString(model), "state: idle") {
-		t.Fatalf("esc did not interrupt: cancelled=%v running=%v view=\n%s", cancelled, model.Running(), viewString(model))
+		t.Fatalf("second esc did not interrupt: cancelled=%v running=%v view=\n%s", cancelled, model.Running(), viewString(model))
 	}
 	if model.runID != 4 {
 		t.Fatalf("runID = %d, want 4", model.runID)
+	}
+}
+
+func TestEscRepeatDoesNotConfirmInterrupt(t *testing.T) {
+	cancelled := false
+	model := NewModel(Options{})
+	model.running = true
+	model.status.state = statusStreaming
+	model.runID = 3
+	model.cancel = func() { cancelled = true }
+
+	updated, _ := model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc, IsRepeat: true}))
+	model = assertModel(t, updated)
+	if cancelled || !model.Running() {
+		t.Fatalf("repeat esc should not interrupt: cancelled=%v running=%v", cancelled, model.Running())
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+	if !cancelled || model.Running() {
+		t.Fatalf("explicit second esc should interrupt: cancelled=%v running=%v", cancelled, model.Running())
 	}
 }
 
@@ -3999,9 +4037,17 @@ func TestEscDuringPermissionDeniesAndInterrupts(t *testing.T) {
 	}, ok: true})
 	model = assertModel(t, updated)
 
+	// First Esc should show a toast, not interrupt.
 	updated, cmd := model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+	if model.pending == nil || !model.Running() {
+		t.Fatalf("first esc should not interrupt yet: pending=%v running=%v", model.pending == nil, model.Running())
+	}
+
+	// Second Esc within the double-tap window should deny and interrupt.
+	updated, cmd = model.Update(keyPress(tea.KeyEsc))
 	if cmd == nil {
-		t.Fatalf("esc returned nil command")
+		t.Fatalf("second esc returned nil command")
 	}
 	model = assertModel(t, updated)
 	if model.pending != nil || model.Running() {
