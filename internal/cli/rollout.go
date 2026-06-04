@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/spf13/cobra"
@@ -282,7 +283,7 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 		if text == "" {
 			text = payload.Message.Text()
 		}
-		return writeIndentedBlock(w, role+":", text, style)
+		return writeRolloutMessage(w, style, role, payload.Message, text)
 	case rollout.TypeUsage:
 		var payload rollout.UsagePayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {
@@ -353,6 +354,91 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 	}
 }
 
+func writeRolloutMessage(w io.Writer, style rolloutStyle, role string, msg message.Message, fallbackText string) error {
+	if len(msg.Content) == 0 {
+		return writeIndentedBlock(w, role+":", fallbackText, style)
+	}
+	if len(msg.Content) == 1 && msg.Content[0].Type == message.BlockText {
+		text := msg.Content[0].Text
+		if text == "" {
+			text = fallbackText
+		}
+		return writeIndentedBlock(w, role+":", text, style)
+	}
+	if _, err := fmt.Fprintf(w, "  %s\n", role+":"); err != nil {
+		return err
+	}
+	for _, block := range msg.Content {
+		if err := writeRolloutMessageBlock(w, style, block); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeRolloutMessageBlock(w io.Writer, style rolloutStyle, block message.ContentBlock) error {
+	switch block.Type {
+	case message.BlockText:
+		return writeIndentedBlockAt(w, "text:", block.Text, style, "    ", "      ")
+	case message.BlockImage:
+		return writeIndentedBlockAt(w, "image:", block.ImageURL, style, "    ", "      ")
+	case message.BlockReasoning:
+		if err := writeIndentedBlockAt(w, "reasoning:", block.Reasoning, style, "    ", "      "); err != nil {
+			return err
+		}
+		if strings.TrimSpace(block.ReasoningSignature) != "" {
+			_, err := fmt.Fprintf(w, "    reasoning_signature: %s\n", style.mutedText(block.ReasoningSignature))
+			return err
+		}
+		return nil
+	case message.BlockToolUse:
+		name := defaultRolloutString(block.ToolName, "(unknown)")
+		id := defaultRolloutString(block.ToolUseID, "(missing)")
+		if _, err := fmt.Fprintf(w, "    tool_use: %s id=%s\n", name, id); err != nil {
+			return err
+		}
+		return writeIndentedBlockAt(w, "input:", formatRolloutJSON(block.Input), style, "    ", "      ")
+	case message.BlockToolResult:
+		status := "ok"
+		if block.IsError {
+			status = style.errorText("error")
+		}
+		id := defaultRolloutString(block.ToolUseID, "(missing)")
+		if _, err := fmt.Fprintf(w, "    tool_result: id=%s status=%s\n", id, status); err != nil {
+			return err
+		}
+		return writeIndentedBlockAt(w, "output:", block.Output, style, "    ", "      ")
+	default:
+		raw, err := json.MarshalIndent(block, "", "  ")
+		if err != nil {
+			return err
+		}
+		return writeIndentedBlockAt(w, string(block.Type)+":", string(raw), style, "    ", "      ")
+	}
+}
+
+func formatRolloutJSON(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return string(raw)
+	}
+	formatted, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return string(raw)
+	}
+	return string(formatted)
+}
+
+func defaultRolloutString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
+}
+
 func formatUsage(payload rollout.UsagePayload) string {
 	var parts []string
 	appendToken := func(name string, value int) {
@@ -372,18 +458,22 @@ func formatUsage(payload rollout.UsagePayload) string {
 }
 
 func writeIndentedBlock(w io.Writer, label, text string, style rolloutStyle) error {
+	return writeIndentedBlockAt(w, label, text, style, "  ", "    ")
+}
+
+func writeIndentedBlockAt(w io.Writer, label, text string, style rolloutStyle, labelPrefix, bodyPrefix string) error {
 	if strings.TrimSpace(text) == "" {
-		_, err := fmt.Fprintf(w, "  %s %s\n", label, style.mutedText("(empty)"))
+		_, err := fmt.Fprintf(w, "%s%s %s\n", labelPrefix, label, style.mutedText("(empty)"))
 		return err
 	}
 	if !strings.Contains(text, "\n") {
-		_, err := fmt.Fprintf(w, "  %s %s\n", label, text)
+		_, err := fmt.Fprintf(w, "%s%s %s\n", labelPrefix, label, text)
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "  %s\n", label); err != nil {
+	if _, err := fmt.Fprintf(w, "%s%s\n", labelPrefix, label); err != nil {
 		return err
 	}
-	return writeIndentedLines(w, text, "    ")
+	return writeIndentedLines(w, text, bodyPrefix)
 }
 
 func writeIndentedLines(w io.Writer, text, prefix string) error {

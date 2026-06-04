@@ -318,7 +318,7 @@ type ModelConfig struct {
 - 读取 rollout 历史时遇到 `Summary` 事件即从该 summary message 重新开始构造上下文，避免恢复 session 后重新带上已压缩旧消息
 
 **重要的内部消息表示**：
-不要直接复用 anthropic / openai 的请求类型。在 `internal/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`、`ToolCalls[]`、`ToolResults[]`），各 provider 各自转换。理由：避免被某家 SDK 锁定。
+不要直接复用 anthropic / openai 的请求类型。在 `internal/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`；content block 包含 text / reasoning / image / tool_use / tool_result），各 provider 各自转换。理由：避免被某家 SDK 锁定。
 
 ## 6. Rollout（事件日志）
 
@@ -329,7 +329,7 @@ type Event struct {
     SessionID string
     Turn      int
     Time      time.Time
-    Type      EventType   // user / assistant / tool_call / tool_result / summary / model_switch / perm / error
+    Type      EventType   // user_message / assistant_message / tool_result / summary / usage / activity / error
     Payload   json.RawMessage
 }
 ```

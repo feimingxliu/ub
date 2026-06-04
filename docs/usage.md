@@ -277,7 +277,7 @@ ub rollout show abc123 --json | jq .    # 机器可读
 ub rollout show abc123 --turns 3..5     # 只看第 3-5 轮
 ```
 
-事件类型：`UserMessage` / `AssistantMessage` / `ToolCall` / `ToolResult` / `Summary` / `PermissionDecision` / `Error`。
+Pretty 输出会展开 `assistant_message` 中的结构化 content block：模型发起工具调用时会显示 `tool_use` 的工具名、调用 id 和 input JSON；工具执行结果继续显示为独立的 `tool_result` 事件。事件类型：`user_message` / `assistant_message` / `tool_result` / `summary` / `usage` / `activity` / `error`。
 
 ## 8. Profiles（开发期切配）
 

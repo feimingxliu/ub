@@ -35,6 +35,8 @@ func TestRolloutShowPrettyPrintsFilteredTurns(t *testing.T) {
 		"session " + sessionID,
 		"title: Rollout Fixture",
 		"turn 2",
+		"tool_use: read id=call_1",
+		`"path": "README.md"`,
 		"tool: read id=call_1 status=ok",
 		"output: file text",
 		"file: main.go modify",
@@ -193,6 +195,8 @@ func createRolloutShowFixture(t *testing.T) string {
 	appendRolloutEventAt(t, ro, now, mustRolloutEvent(rollout.UserMessage(sessionID, 1, message.Text(message.RoleUser, "hello"))))
 	appendRolloutEventAt(t, ro, now.Add(time.Second), mustRolloutEvent(rollout.AssistantMessage(sessionID, 1, message.Text(message.RoleAssistant, "answer"))))
 	appendRolloutEventAt(t, ro, now.Add(2*time.Second), mustRolloutEvent(rollout.Usage(sessionID, 1, 3, 4)))
+	appendRolloutEventAt(t, ro, now.Add(2500*time.Millisecond), mustRolloutEvent(rollout.AssistantMessage(sessionID, 2,
+		message.New(message.RoleAssistant, message.ToolUseBlock("call_1", "read", json.RawMessage(`{"path":"README.md"}`))))))
 	appendRolloutEventAt(t, ro, now.Add(3*time.Second), mustRolloutEvent(rollout.ToolResult(sessionID, 2, "call_1", "read", tool.Result{
 		Content: "file text",
 		Files: []tool.FileChange{{

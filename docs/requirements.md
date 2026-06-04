@@ -116,9 +116,9 @@
 - F-SESS-1：每个工作目录可有多个 session；session 默认按时间命名，可改名
 - F-SESS-2：`ub` 启动时列出最近 session，可继续或新建
 - F-SESS-3：Session 元数据 MUST 持久化当前主对话 provider 与 model；恢复 session 时 MUST 还原二者，避免把旧 session 的 model 发给当前默认 provider
-- F-SESS-4：Rollout 事件类型：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、`Summary`、`ModelSwitch`、`PermissionDecision`、`Error`
+- F-SESS-4：Rollout 事件类型：`user_message`、`assistant_message`（可包含 `tool_use` content block）、`tool_result`、`summary`、`usage`、`activity`、`error`
 - F-SESS-5：Rollout 以 JSONL 写入 SQLite 的 BLOB 列；SQLite 开启 WAL + `synchronous=NORMAL`。**耐久性保证**：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 事件；操作系统断电可能丢最后若干条未刷盘事件——这是可接受的，不为此牺牲性能去逐条 fsync
-- F-SESS-6：CLI 子命令 `ub rollout show <id>` 可漂亮打印一轮事件流
+- F-SESS-6：CLI 子命令 `ub rollout show <id>` 可漂亮打印一轮事件流，并展开 `assistant_message` 中的结构化 content block（包括 `tool_use` 的调用 id、工具名与 input JSON）
 - F-SESS-7：启动时 MAY 执行 best-effort 自动清理：默认删除 30 天未更新且不属于对应 workspace 最近 20 个的 session；events MUST 只随 session 删除级联清理，不做单 session 内局部裁剪
 
 ### 4.7 上下文管理
