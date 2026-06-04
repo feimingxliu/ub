@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.8] - 2026-06-04
+
+
+### Added
+
+- Support line-based edit replacements ([b1d446e](https://github.com/feimingxliu/ub/commit/b1d446e935d229f26cddf40ff5d7dbec98ec6161))
+- Adopt Claude-style command rules ([ffe7e37](https://github.com/feimingxliu/ub/commit/ffe7e376285e762b1f7d736d123b00eee4dc8c38))
+- Add full-access mode ([147bd65](https://github.com/feimingxliu/ub/commit/147bd65266fff7b3cd6ad1169afaf45a3a34f1ab))
+
+
+### Documentation
+
+- Add roadmap entries for web and plan tools ([43a1cf7](https://github.com/feimingxliu/ub/commit/43a1cf700b382a4d4ed2a44b7144b59e74bdddb8))
+
+
+### Fixed
+
+- Title-case permission activity blocks ([0a66f48](https://github.com/feimingxliu/ub/commit/0a66f48c6db34e553f4ea1264955b60b943a0672))
+- Persist permission activities ([23569e6](https://github.com/feimingxliu/ub/commit/23569e675c9c4f80125b501dd8771d64c45c8a51))
+- Show tool use inputs in rollout output ([944a1f4](https://github.com/feimingxliu/ub/commit/944a1f41d5247418d1f1df276582b06e63a5952b))
+
+
+### Refactoring
+
+- Stop persisting execution mode ([72f09ef](https://github.com/feimingxliu/ub/commit/72f09efc3fbf154d46f2fc67eb033373ed6012e1))
+
 ## [0.3.7] - 2026-06-04
 
 
@@ -16,6 +42,11 @@ All notable changes to this project are documented here.
 - Revise plans in place during plan mode ([803f82f](https://github.com/feimingxliu/ub/commit/803f82fefd9fa13e5b3e896bb28fae2274757e4d))
 - Improve tui behavior and adjust tests ([2181139](https://github.com/feimingxliu/ub/commit/21811390c7b1add5544aa4d1a2cdb6352bbfc0f7))
 - Confirm esc before interrupting tui runs ([a84c2ed](https://github.com/feimingxliu/ub/commit/a84c2edb69b599b60ecf6e0bf5fcc414f297ccaa))
+
+
+### Maintenance
+
+- V0.3.7 ([4668f69](https://github.com/feimingxliu/ub/commit/4668f69dc25a2952c19978de6041e882f10b77b5))
 
 ## [0.3.6] - 2026-06-03
 
