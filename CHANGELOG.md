@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.7] - 2026-06-04
+
+
+### Added
+
+- Isolate memory and plan artifacts in state ([5055df5](https://github.com/feimingxliu/ub/commit/5055df58974660dbdb5099a2bb3c1920a5b29f19))
+- Enable parallel tool calls and concurrent tool execution ([845e67f](https://github.com/feimingxliu/ub/commit/845e67fa708c5ff260f7e0ef5bc123c4d66395a3))
+
+
+### Fixed
+
+- Revise plans in place during plan mode ([803f82f](https://github.com/feimingxliu/ub/commit/803f82fefd9fa13e5b3e896bb28fae2274757e4d))
+- Improve tui behavior and adjust tests ([2181139](https://github.com/feimingxliu/ub/commit/21811390c7b1add5544aa4d1a2cdb6352bbfc0f7))
+- Confirm esc before interrupting tui runs ([a84c2ed](https://github.com/feimingxliu/ub/commit/a84c2edb69b599b60ecf6e0bf5fcc414f297ccaa))
+
 ## [0.3.6] - 2026-06-03
 
 
@@ -19,6 +34,11 @@ All notable changes to this project are documented here.
 
 - Apply configured markdown theme ([de3b268](https://github.com/feimingxliu/ub/commit/de3b268f001772202e5549fa683bf0efda76b485))
 - Use styled line count for transcript scroll ([331cd97](https://github.com/feimingxliu/ub/commit/331cd97ac94796d01ae4fe0d876a484e29f0b1e2))
+
+
+### Maintenance
+
+- V0.3.6 ([fae1f5a](https://github.com/feimingxliu/ub/commit/fae1f5a37d6d207edec20af6610811e13075bc4e))
 
 ## [0.3.5] - 2026-06-02
 
