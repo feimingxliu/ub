@@ -296,7 +296,7 @@ loop:
 			for i, call := range consumed.toolCalls {
 				i, call := i, call
 				g.Go(func() error {
-					r := a.runTool(gctx, req.SessionID, call)
+					r := a.runTool(gctx, req.SessionID, req.Turn, call)
 					results[i] = indexedResult{call: call, result: r}
 					return nil
 				})
@@ -571,6 +571,20 @@ func (a *Agent) persistAccumulatedThinking(ctx context.Context, sessionID string
 	})
 }
 
+func (a *Agent) recordPermissionActivity(ctx context.Context, sessionID string, turn int, toolName, source, decision, reason string, allowed bool) {
+	event := a.emitPermissionActivity(toolName, source, decision, reason, allowed)
+	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
+		return rollout.Activity(sessionID, turn, rolloutActivityPayload(event))
+	}); err != nil {
+		a.emit(Event{
+			Type:    EventError,
+			Content: fmt.Sprintf("record permission activity: %v", err),
+			IsError: true,
+			Err:     err,
+		})
+	}
+}
+
 func usagePayload(usage *provider.Usage) rollout.UsagePayload {
 	if usage == nil {
 		return rollout.UsagePayload{}
@@ -584,7 +598,7 @@ func usagePayload(usage *provider.Usage) rollout.UsagePayload {
 	}
 }
 
-func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) tool.Result {
+func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call toolCall) tool.Result {
 	ctx = tool.WithSessionID(ctx, sessionID)
 	if a.subagentRunner != nil {
 		ctx = tool.WithSubagentRunner(ctx, a.subagentRunner)
@@ -641,17 +655,17 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, call toolCall) to
 			Mode:             a.currentMode(),
 			Preview:          preview,
 			Workspace:        a.workspaceRoot,
-			ApprovalObserver: a.permissionObserver(call.Name, &approvalObserved),
+			ApprovalObserver: a.permissionObserver(ctx, sessionID, turn, call.Name, &approvalObserved),
 		})
 		if err != nil {
-			a.emitPermissionActivity(call.Name, "permission", "error", err.Error(), false)
+			a.recordPermissionActivity(ctx, sessionID, turn, call.Name, "permission", "error", err.Error(), false)
 			result := tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
 			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
 			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
 		if (t.Risk() == tool.RiskExec || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
-			a.emitPermissionActivity(call.Name, string(result.Source), string(result.Decision), result.Reason, result.Allowed)
+			a.recordPermissionActivity(ctx, sessionID, turn, call.Name, string(result.Source), string(result.Decision), result.Reason, result.Allowed)
 		}
 		if !result.Allowed {
 			reason := strings.TrimSpace(result.Reason)
@@ -761,7 +775,7 @@ func (a *Agent) limitToolResult(sessionID string, call toolCall, result tool.Res
 	return limited
 }
 
-func (a *Agent) permissionObserver(toolName string, observed *bool) func(permission.ApprovalObservation) {
+func (a *Agent) permissionObserver(ctx context.Context, sessionID string, turn int, toolName string, observed *bool) func(permission.ApprovalObservation) {
 	return func(obs permission.ApprovalObservation) {
 		if observed != nil {
 			*observed = true
@@ -772,7 +786,7 @@ func (a *Agent) permissionObserver(toolName string, observed *bool) func(permiss
 			decision = "error"
 			reason = obs.Err.Error()
 		}
-		a.emitPermissionActivity(toolName, string(permission.SourceApprovalAgent), decision, reason, obs.Err == nil && decision == "allow")
+		a.recordPermissionActivity(ctx, sessionID, turn, toolName, string(permission.SourceApprovalAgent), decision, reason, obs.Err == nil && decision == "allow")
 	}
 }
 

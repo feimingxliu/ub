@@ -104,11 +104,11 @@ func (a *Agent) emitHookOutcomes(dec hook.Decision) {
 	}
 }
 
-func (a *Agent) emitPermissionActivity(toolName, source, decision, reason string, allowed bool) {
+func (a *Agent) emitPermissionActivity(toolName, source, decision, reason string, allowed bool) Event {
 	if strings.TrimSpace(decision) == "" {
 		decision = "unknown"
 	}
-	a.emit(Event{
+	event := Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityPermission,
 		ToolName:     toolName,
@@ -117,7 +117,9 @@ func (a *Agent) emitPermissionActivity(toolName, source, decision, reason string
 		Reason:       truncateActivitySummary(redactText("reason", reason)),
 		Allowed:      allowed,
 		IsError:      decision == "error",
-	})
+	}
+	a.emit(event)
+	return event
 }
 
 func rolloutActivityPayload(event Event) rollout.ActivityPayload {

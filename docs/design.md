@@ -563,7 +563,7 @@ UI 流程：
    - Always allow this tool (session)：本 session 内允许同一 tool 的后续调用
    - Always allow this exact command (project)：向 `permissions.allow` 追加 `Bash(<exact command>)`
    - Always allow this similar command (project)：向 `permissions.allow` 追加 Claude-style `Bash(<prefix>:*)`
-6. 决策写入 rollout（`PermissionDecision` 事件，含 `source=rule|approval_agent|human`）；选 3/4 更新内存 rules；选 5/6 同时追加到项目级磁盘 yaml
+6. 决策写入 rollout（`Activity` 事件，`activity_kind=permission`，含 `source=rule|approval_agent|human`），resume 时恢复到 tool 活动区；选 3/4 更新内存 rules；选 5/6 同时追加到项目级磁盘 yaml
 7. dispatcher 拿到决策继续
 
 `Bash(pattern)` 规则采用 Claude-style prefix/wildcard 语义：无 `*` 时精确匹配；`cmd:*` 匹配该前缀的 shell 命令；compound command 会按 `&&`、`;`、管道、换行等拆分，只有每个子命令都命中 allow rule 才能自动放行，任一子命令命中 deny rule 则整条命令拒绝。

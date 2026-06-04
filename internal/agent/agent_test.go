@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/invopop/jsonschema"
@@ -1189,6 +1190,7 @@ func TestAgentEmitsPermissionDecisionEvent(t *testing.T) {
 	}
 	asker := &recordingAsker{decision: permission.DecisionAllow}
 	perm := newPermissionManager(t, asker)
+	writer := &recordingRollout{}
 	p := &scriptProvider{scripts: []fake.Script{
 		{fake.ToolCall("preview_exec", map[string]any{"value": "x"}), fake.Done()},
 		{fake.TextDelta("done"), fake.Done()},
@@ -1198,6 +1200,7 @@ func TestAgentEmitsPermissionDecisionEvent(t *testing.T) {
 		Provider:   p,
 		Tools:      reg,
 		Permission: perm,
+		Rollout:    writer,
 		Model:      "fake/model",
 		Mode:       execution.ModeWork,
 		Events: func(event Event) {
@@ -1208,7 +1211,7 @@ func TestAgentEmitsPermissionDecisionEvent(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if _, err := a.Run(context.Background(), Request{Prompt: "call preview tool", Turn: 1}); err != nil {
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_perm", Prompt: "call preview tool", Turn: 1}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	var got *Event
@@ -1223,6 +1226,31 @@ func TestAgentEmitsPermissionDecisionEvent(t *testing.T) {
 	}
 	if got.ToolName != "preview_exec" || got.Source != string(permission.SourceHuman) || got.Decision != string(permission.DecisionAllow) || !got.Allowed {
 		t.Fatalf("permission event = %#v", *got)
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	var persisted rollout.ActivityPayload
+	var persistedTurn int
+	for _, event := range writer.events {
+		if event.Type != rollout.TypeActivity {
+			continue
+		}
+		payload, ok, err := rollout.ActivityFromEvent(event)
+		if err != nil {
+			t.Fatalf("ActivityFromEvent: %v", err)
+		}
+		if !ok || payload.ActivityKind != string(ActivityPermission) {
+			continue
+		}
+		persisted = payload
+		persistedTurn = event.Turn
+		break
+	}
+	if persisted.ActivityKind != string(ActivityPermission) || persistedTurn != 1 {
+		t.Fatalf("persisted permission activity = %#v turn=%d, want turn 1", persisted, persistedTurn)
+	}
+	if persisted.ToolName != "preview_exec" || persisted.Source != string(permission.SourceHuman) || persisted.Decision != string(permission.DecisionAllow) || !persisted.Allowed {
+		t.Fatalf("persisted permission activity = %#v", persisted)
 	}
 }
 
@@ -1918,10 +1946,13 @@ func TestAgentUsageCalibratesTokenEstimate(t *testing.T) {
 }
 
 type recordingRollout struct {
+	mu     sync.Mutex
 	events []rollout.Event
 }
 
 func (w *recordingRollout) Append(_ context.Context, event rollout.Event) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.events = append(w.events, event)
 	return nil
 }

@@ -569,6 +569,40 @@ func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
 	}
 }
 
+func TestMessagesForTUIFromRolloutRestoresPermissionActivity(t *testing.T) {
+	userEvent, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "inspect"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	permissionEvent, err := rollout.Activity("sess_1", 1, rollout.ActivityPayload{
+		ActivityKind: "permission",
+		ToolName:     "bash",
+		Source:       "human",
+		Decision:     "allow",
+		Reason:       "approved",
+		Allowed:      true,
+	})
+	if err != nil {
+		t.Fatalf("Activity: %v", err)
+	}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{
+		events: []rollout.Event{userEvent, permissionEvent},
+	}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("messages len = %d, want 2: %#v", len(got), got)
+	}
+	if got[1].Turn != 1 || got[1].ActivityKind != "permission" || got[1].ToolName != "bash" {
+		t.Fatalf("permission activity = %#v", got[1])
+	}
+	if got[1].Source != "human" || got[1].Decision != "allow" || got[1].Reason != "approved" || !got[1].Allowed {
+		t.Fatalf("permission fields = %#v", got[1])
+	}
+}
+
 func TestMessagesForTUIFromRolloutUsesToolResultPayloadDetail(t *testing.T) {
 	assistantEvent, err := rollout.AssistantMessage("sess_1", 1,
 		message.New(message.RoleAssistant, message.ToolUseBlock("call_plan", "plan_write", json.RawMessage(`{"title":"Plan","steps":["inspect"]}`))))
