@@ -231,7 +231,7 @@ prompt:
 
 agent 会：
 1. `read internal/foo/bar.go` 看现状
-2. `edit` 改文件（弹窗预览 diff，按 1 / Enter 允许）
+2. `edit` 改文件（优先精确替换；遇到 tab / 空格难以复原时可按行号替换完整行；弹窗预览 diff，按 1 / Enter 允许）
 3. `bash go test ./internal/foo/...` 跑测试（弹窗审批）
 4. 失败时自己分析输出再改一轮
 

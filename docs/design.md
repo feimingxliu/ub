@@ -236,7 +236,7 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 ```
 
 **关键 tool 实现要点**：
-- `edit` / `write`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘，并在 `FileChange.UnifiedDiff` 中返回实际变更，TUI 默认只展示摘要，按 `Ctrl+O` 展开最近的 tool 区域后先展示工具摘要，再按一次展开最近工具项的着色文件级详情；也可用 `Ctrl+N` / `Ctrl+P` 移动活动焦点并用 `Enter` / `Space` 操作任意活动块或工具项；TUI 默认不启用鼠标追踪，保留终端原生拖拽选择复制。`multiedit`（一次调用跨文件多处编辑）共用 `applyEdit` 与 `udiff`，在内存中按数组顺序对同 path 串行累加，先对所有目标做 TOCTOU 二次读校验再批量写盘，任一步失败即不写盘（写过的文件回滚到 before 快照），从而对调用方提供 all-or-nothing 语义
+- `edit` / `write`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘，并在 `FileChange.UnifiedDiff` 中返回实际变更。`edit` 默认用 `old` / `new` 精确子串替换，`old` 必须逐字节匹配；当模型难以从带行号的 `read` 输出复原 tab、空格或换行时，可用 `start_line` / `end_line` 替换完整行，仍通过同一 preview / permission / TOCTOU 路径。TUI 默认只展示摘要，按 `Ctrl+O` 展开最近的 tool 区域后先展示工具摘要，再按一次展开最近工具项的着色文件级详情；也可用 `Ctrl+N` / `Ctrl+P` 移动活动焦点并用 `Enter` / `Space` 操作任意活动块或工具项；TUI 默认不启用鼠标追踪，保留终端原生拖拽选择复制。`multiedit`（一次调用跨文件多处编辑）共用 `applyEdit` 与 `udiff`，在内存中按数组顺序对同 path 串行累加，先对所有目标做 TOCTOU 二次读校验再批量写盘，任一步失败即不写盘（写过的文件回滚到 before 快照），从而对调用方提供 all-or-nothing 语义
 - `bash`：用 `os/exec` 拉子进程，stdout/stderr 流式回传；超时默认 120s；不实现 Preview（命令是黑盒）
 - `job_run`：返回 `job_id`，进程交给后台 goroutine 管理；`job_output` 读流；`job_kill` SIGTERM/SIGKILL
 - tool 参数解析对模型常见 JSON 标量抖动做窄容错：整数参数接受整数或整数字符串，布尔参数接受布尔值或 `"true"` / `"false"`，但 JSON Schema 仍对外声明真实 integer/boolean 类型

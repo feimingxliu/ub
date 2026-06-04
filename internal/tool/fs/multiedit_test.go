@@ -90,6 +90,24 @@ func TestMultiEdit_OrderDependent(t *testing.T) {
 	}
 }
 
+func TestMultiEdit_LineRangeStep(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "one\n\ttwo\nthree\n")
+
+	me := newMultiEditTool(root)
+	args := multiEditArgs{Edits: []editArgs{
+		{Path: "a.txt", StartLine: 2, New: "\tTWO"},
+		{Path: "a.txt", Old: "three", New: "THREE"},
+	}}
+	if _, err := execTool(t, me, args); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+	if string(got) != "one\n\tTWO\nTHREE\n" {
+		t.Fatalf("file content = %q", got)
+	}
+}
+
 func TestMultiEdit_PreviewDoesNotMutate(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "foo\n")
@@ -166,6 +184,15 @@ func TestMultiEdit_MultiMatchWithoutReplaceAll(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
 	if string(got) != "x\nx\n" {
 		t.Fatalf("disk changed on error: %q", got)
+	}
+}
+
+func TestMultiEdit_DescriptionSteersAwayFromShellEdits(t *testing.T) {
+	desc := newMultiEditTool(t.TempDir()).Description()
+	for _, want := range []string{"tabs", "line endings", "re-read a narrow range", "instead of bash/sed/python"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("description missing %q:\n%s", want, desc)
+		}
 	}
 }
 

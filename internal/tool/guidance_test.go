@@ -30,7 +30,7 @@ func TestCodingAgentToolDescriptionsCarryGuidance(t *testing.T) {
 	}
 
 	checks := map[string][]string{
-		"bash":             {"Prefer cwd", "exit_code=0"},
+		"bash":             {"Prefer cwd", "exit_code=0", "prefer the dedicated", "retry edit/multiedit"},
 		"read":             {"Never use read for directories", "before editing"},
 		"grep":             {"locate symbols", "then read"},
 		"task":             {"self-contained", "independent from the main context"},

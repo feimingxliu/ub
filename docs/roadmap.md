@@ -360,7 +360,7 @@
     - `ls(path)` → 文件 / 目录列表
     - `glob(pattern)` → 匹配的路径（用 `doublestar`）
     - `write(path, content)` → 覆盖写；**实现 Preview**：读现盘 → 算 unified diff 返回 `FileDiff{Kind: create|modify}`
-    - `edit(path, old, new, replace_all?)` → 精确替换；**实现 Preview**：读现盘 + 内存应用 + 用 `go-udiff` 算 unified diff
+    - `edit(path, old?, new, replace_all?, start_line?, end_line?)` → 精确替换，或用 `start_line` / `end_line` 替换完整行；**实现 Preview**：读现盘 + 内存应用 + 用 `go-udiff` 算 unified diff
   - 安全：拒绝绝对路径以外的非法字符；拒绝出当前 workspace 根（V1 严格）
 - **Out of Scope**：bash、grep、job
 - **验证**：

@@ -15,7 +15,7 @@ import (
 )
 
 type multiEditArgs struct {
-	Edits []editArgs `json:"edits" jsonschema:"required,description=Edits applied atomically. Same-path edits are accumulated in array order: edit N sees the result of edits 1..N-1."`
+	Edits []editArgs `json:"edits" jsonschema:"required,description=Edits applied atomically. Same-path edits are accumulated in array order: edit N sees the result of edits 1..N-1. Each step may use exact old/new replacement or start_line/end_line complete-line replacement. Exact old text must match including tabs, spaces, and line endings."`
 }
 
 func (a *multiEditArgs) UnmarshalJSON(raw []byte) error {
@@ -79,7 +79,7 @@ func newMultiEditToolWithNotifier(root string, notifier ChangeNotifier) *multiEd
 
 func (t *multiEditTool) Name() string { return "multiedit" }
 func (t *multiEditTool) Description() string {
-	return "Apply multiple edits across one or more workspace files atomically. Same-path edits accumulate in array order."
+	return "Apply multiple edits across one or more workspace files atomically. Same-path edits accumulate in array order. Each step may use exact old/new replacement or start_line/end_line complete-line replacement. Exact old text must match including tabs, spaces, and line endings; if a step is not found, re-read a narrow range or use line replacement instead of bash/sed/python for file edits."
 }
 func (t *multiEditTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *multiEditTool) Risk() tool.Risk            { return tool.RiskWrite }
@@ -111,8 +111,11 @@ func (t *multiEditTool) plan(raw json.RawMessage) ([]*meFile, error) {
 		if e.Path == "" {
 			return nil, fmt.Errorf("multiedit: edits[%d].path is required", i)
 		}
-		if e.Old == "" {
+		if !e.hasLineRange() && e.Old == "" {
 			return nil, fmt.Errorf("multiedit: edits[%d].old is required", i)
+		}
+		if e.hasLineRange() && bool(e.ReplaceAll) {
+			return nil, fmt.Errorf("multiedit: edits[%d].replace_all cannot be used with start_line", i)
 		}
 		abs, err := resolve(t.root, e.Path)
 		if err != nil {

@@ -79,6 +79,77 @@ func TestEdit_ReplaceAllAcceptsBooleanString(t *testing.T) {
 	}
 }
 
+func TestEdit_LineRangeReplacementAvoidsExactOldWhitespace(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "tabs.go", "if ok {\n\treturn value\n}\n")
+	e := newEditTool(root)
+	res, err := execTool(t, e, editArgs{
+		Path:      "tabs.go",
+		StartLine: 2,
+		New:       "\treturn other",
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "tabs.go"))
+	if string(got) != "if ok {\n\treturn other\n}\n" {
+		t.Fatalf("content mismatch: %q", got)
+	}
+	if len(res.Files) != 1 || !strings.Contains(res.Files[0].UnifiedDiff, "+\treturn other") {
+		t.Fatalf("result diff missing line replacement:\n%+v", res.Files)
+	}
+}
+
+func TestEdit_LineRangeReplacementPreservesCRLF(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "win.txt", "one\r\ntwo\r\nthree\r\n")
+	e := newEditTool(root)
+	if _, err := execTool(t, e, editArgs{Path: "win.txt", StartLine: 2, EndLine: 2, New: "TWO"}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "win.txt"))
+	if string(got) != "one\r\nTWO\r\nthree\r\n" {
+		t.Fatalf("content mismatch: %q", got)
+	}
+}
+
+func TestEdit_LineRangeCanDeleteLines(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "delete.txt", "one\ntwo\nthree\n")
+	e := newEditTool(root)
+	if _, err := execTool(t, e, editArgs{Path: "delete.txt", StartLine: 2, EndLine: 2}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "delete.txt"))
+	if string(got) != "one\nthree\n" {
+		t.Fatalf("content mismatch: %q", got)
+	}
+}
+
+func TestEdit_LineRangeValidation(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "lines.txt", "one\ntwo\n")
+	e := newEditTool(root)
+	cases := []struct {
+		name string
+		args editArgs
+		want string
+	}{
+		{name: "end without start", args: editArgs{Path: "lines.txt", EndLine: 2, New: "x"}, want: "start_line is required"},
+		{name: "reversed", args: editArgs{Path: "lines.txt", StartLine: 2, EndLine: 1, New: "x"}, want: "end_line must be greater"},
+		{name: "outside", args: editArgs{Path: "lines.txt", StartLine: 3, New: "x"}, want: "outside file"},
+		{name: "replace all", args: editArgs{Path: "lines.txt", StartLine: 1, New: "x", ReplaceAll: true}, want: "replace_all cannot be used"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := execTool(t, e, tc.args)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEdit_SchemaKeepsReplaceAllBoolean(t *testing.T) {
 	raw, err := json.Marshal(newEditTool(t.TempDir()).Schema())
 	if err != nil {
@@ -93,6 +164,12 @@ func TestEdit_SchemaKeepsReplaceAllBoolean(t *testing.T) {
 	if replaceAll["type"] != "boolean" {
 		t.Fatalf("replace_all schema type = %#v, want boolean\nschema=%s", replaceAll["type"], raw)
 	}
+	for _, name := range []string{"start_line", "end_line"} {
+		prop := props[name].(map[string]any)
+		if prop["type"] != "integer" {
+			t.Fatalf("%s schema type = %#v, want integer\nschema=%s", name, prop["type"], raw)
+		}
+	}
 }
 
 func TestEdit_OldNotFound(t *testing.T) {
@@ -102,6 +179,36 @@ func TestEdit_OldNotFound(t *testing.T) {
 	_, err := execTool(t, e, editArgs{Path: "d.go", Old: "missing", New: "x"})
 	if err == nil || !strings.Contains(err.Error(), "old string not found") {
 		t.Fatalf("expected not-found error, got: %v", err)
+	}
+}
+
+func TestEdit_OldNotFoundHintsExactWhitespace(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "tabs.go", "if ok {\n\treturn value\n}\n")
+	e := newEditTool(root)
+	_, err := execTool(t, e, editArgs{Path: "tabs.go", Old: "if ok {\n    return value\n}", New: "x"})
+	if err == nil {
+		t.Fatal("expected not-found error")
+	}
+	for _, want := range []string{
+		"whitespace-normalized match exists",
+		"tabs vs spaces",
+		"re-read a narrow range",
+		"retry edit/multiedit",
+		"do not use bash/sed/python",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestEdit_DescriptionSteersAwayFromShellEdits(t *testing.T) {
+	desc := newEditTool(t.TempDir()).Description()
+	for _, want := range []string{"tabs", "line endings", "re-read a narrow range", "Prefer this over bash/sed/python"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("description missing %q:\n%s", want, desc)
+		}
 	}
 }
 
