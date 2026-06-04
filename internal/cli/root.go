@@ -386,7 +386,6 @@ type chatSessionState struct {
 	rollout   *rollout.SQLite
 	session   store.Session
 	history   []message.Message
-	mode      execution.Mode
 	nextTurn  int
 	sessionID string
 }
@@ -803,7 +802,7 @@ func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, op
 			_ = st.Close()
 			return nil, err
 		}
-		history, nextTurn, restoredMode, err := readChatHistory(cmd, ro, sessionID)
+		history, nextTurn, err := readChatHistory(cmd, ro, sessionID)
 		if err != nil {
 			_ = st.Close()
 			return nil, err
@@ -813,7 +812,6 @@ func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, op
 			rollout:   ro,
 			session:   *sess,
 			history:   history,
-			mode:      restoredMode,
 			nextTurn:  nextTurn,
 			sessionID: sessionID,
 		}, nil
@@ -843,23 +841,12 @@ func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, op
 	}, nil
 }
 
-func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, execution.Mode, error) {
+func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, error) {
 	var history []message.Message
 	maxTurn := 0
-	var restoredMode execution.Mode
 	if err := ro.ForEach(cmd.Context(), sessionID, func(event rollout.Event) error {
 		if event.Turn > maxTurn {
 			maxTurn = event.Turn
-		}
-		if mode, ok, err := rollout.ModeFromEvent(event); err != nil {
-			return err
-		} else if ok {
-			parsed, err := execution.ParseMode(mode)
-			if err != nil {
-				return fmt.Errorf("restore mode from rollout event %s: %w", event.ID, err)
-			}
-			restoredMode = parsed
-			return nil
 		}
 		msg, ok, err := rollout.MessageFromEvent(event)
 		if err != nil {
@@ -876,9 +863,9 @@ func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) (
 		}
 		return nil
 	}); err != nil {
-		return nil, 0, "", err
+		return nil, 0, err
 	}
-	return history, maxTurn + 1, restoredMode, nil
+	return history, maxTurn + 1, nil
 }
 
 func finishChatSession(cmd *cobra.Command, state *chatSessionState, prompt, providerName, model string) error {
@@ -1231,12 +1218,6 @@ func rolloutEventSearchText(event rollout.Event) (string, error) {
 			return "", fmt.Errorf("decode rollout activity event %s: %w", event.ID, err)
 		}
 		return strings.Join([]string{payload.ActivityKind, payload.ToolName, payload.Status, payload.Summary, payload.Content, payload.Decision, payload.Source, payload.Reason}, " "), nil
-	case rollout.TypeModeSwitch:
-		var payload rollout.ModeSwitchPayload
-		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			return "", fmt.Errorf("decode rollout mode event %s: %w", event.ID, err)
-		}
-		return payload.Mode, nil
 	default:
 		return "", nil
 	}

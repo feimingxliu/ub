@@ -1967,14 +1967,6 @@ func (m *Model) applySessionState(state SessionState) {
 	} else if strings.TrimSpace(state.Model) != "" {
 		m.refreshEffortFromRunner()
 	}
-	if strings.TrimSpace(state.Mode) != "" {
-		m.status.executionMode = state.Mode
-		if m.pending != nil {
-			mode := execution.Mode(state.Mode)
-			m.pending.Request.Mode = mode
-			m.modal.Request.Mode = mode
-		}
-	}
 	m.status.turn = state.Turn
 	m.status.contextUsedTokens = 0
 	m.status.contextMaxTokens = 0

@@ -94,12 +94,12 @@
 
 ### 4.4 执行模式
 
-- F-MODE-1：每个 session MUST 有一个 `execution_mode`，可选值为 `work`、`plan`、`auto`；启动参数、配置和 TUI slash 命令均可切换（优先级：CLI flag > profile > config 默认值）
+- F-MODE-1：每次运行 MUST 有一个 `execution_mode`，可选值为 `work`、`plan`、`auto`；启动参数、配置和 TUI slash 命令均可切换（优先级：CLI flag > profile > config 默认值）。mode 不随 session 持久化，resume 后使用本次运行的有效 mode
 - F-MODE-2：`work` 模式允许 agent 在当前 workspace 内读写文件；执行 `exec` 风险工具（`bash` / `job_run` / `job_kill`）时，若未被 session/project allow-rule 明确放行，MUST 弹出用户审批
 - F-MODE-3：`plan` 模式为只读规划模式；agent 只可使用只读调研工具（`read` / `ls` / `glob` / `grep`）以及计划工具（`plan_write` / `plan_update`）。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具 MUST NOT 在 plan 模式广告；若模型误调，MUST 被拦截并以 tool error 回灌给模型。
 - F-MODE-4：`auto` 模式允许一个额外的 approval agent 自动审批命令；若 approval agent 拒绝、无法判断或调用失败，系统 MUST 回退到用户显式审批，不能静默执行；approval agent 的决策与原因 MUST 写入结构化日志
 - F-MODE-5：危险命令黑名单优先级高于所有模式；即使 allow-rule 或 approval agent 放行，仍 MUST 要求用户显式确认
-- F-MODE-6：当前执行模式 MUST 显示在 TUI 状态栏，并写入 rollout（含模式切换事件），便于会话恢复和调试
+- F-MODE-6：当前执行模式 MUST 显示在 TUI 状态栏，并用于本次运行的工具权限判断
 
 ### 4.5 权限审批
 
@@ -116,7 +116,7 @@
 - F-SESS-1：每个工作目录可有多个 session；session 默认按时间命名，可改名
 - F-SESS-2：`ub` 启动时列出最近 session，可继续或新建
 - F-SESS-3：Session 元数据 MUST 持久化当前主对话 provider 与 model；恢复 session 时 MUST 还原二者，避免把旧 session 的 model 发给当前默认 provider
-- F-SESS-4：Rollout 事件类型：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、`Summary`、`ModelSwitch`、`ModeSwitch`、`PermissionDecision`、`Error`
+- F-SESS-4：Rollout 事件类型：`UserMessage`、`AssistantMessage`、`ToolCall`、`ToolResult`、`Summary`、`ModelSwitch`、`PermissionDecision`、`Error`
 - F-SESS-5：Rollout 以 JSONL 写入 SQLite 的 BLOB 列；SQLite 开启 WAL + `synchronous=NORMAL`。**耐久性保证**：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 事件；操作系统断电可能丢最后若干条未刷盘事件——这是可接受的，不为此牺牲性能去逐条 fsync
 - F-SESS-6：CLI 子命令 `ub rollout show <id>` 可漂亮打印一轮事件流
 - F-SESS-7：启动时 MAY 执行 best-effort 自动清理：默认删除 30 天未更新且不属于对应 workspace 最近 20 个的 session；events MUST 只随 session 删除级联清理，不做单 session 内局部裁剪

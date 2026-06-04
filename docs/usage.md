@@ -116,7 +116,7 @@
 | **`plan`** | ❌ 拦截（dispatcher 直接返回 tool error） | 需审批 | 探索 / 规划：先让 agent 调研，确认后再切回 work |
 | **`auto`** | ✅ 允许 | 由审批 agent 自动审批，不确定时回退人工 | 受信工作流 / 长任务无人值守；需要先在配置里启用 `approval_agent` |
 
-切换模式立刻生效，并在 rollout 中写一条 `ModeSwitch` 事件。
+切换模式立刻生效，只影响当前进程和后续请求；mode 不随 session 持久化。
 
 `auto` 模式启用步骤：
 
@@ -267,7 +267,7 @@ ub --resume                  # 弹列表选
 ub --resume=abc123           # 直接切到 session abc123
 ```
 
-Resume 时会恢复 session 上次使用的 provider/model，以及最后一次 `ModeSwitch` 设置的 mode；如果该 session 从未切过 mode，使用当前 CLI/config 默认。旧版本 session 没有 provider 元数据时，ub 会按模型配置和远端模型列表尽力推断。
+Resume 时会恢复 session 上次使用的 provider/model。mode 不随 session 恢复，使用当前 CLI/config 默认或本次启动传入的 `--mode`。旧版本 session 没有 provider 元数据时，ub 会按模型配置和远端模型列表尽力推断。
 
 ### 7.5 调试某次会话
 
@@ -277,7 +277,7 @@ ub rollout show abc123 --json | jq .    # 机器可读
 ub rollout show abc123 --turns 3..5     # 只看第 3-5 轮
 ```
 
-事件类型：`UserMessage` / `AssistantMessage` / `ToolCall` / `ToolResult` / `Summary` / `ModeSwitch` / `PermissionDecision` / `Error`。
+事件类型：`UserMessage` / `AssistantMessage` / `ToolCall` / `ToolResult` / `Summary` / `PermissionDecision` / `Error`。
 
 ## 8. Profiles（开发期切配）
 

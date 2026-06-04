@@ -3476,7 +3476,6 @@ func TestSlashSessionsPickerSwitchesSession(t *testing.T) {
 			"s2": {
 				ID:    "s2",
 				Model: "fake/two",
-				Mode:  "auto",
 				Turn:  3,
 				Messages: []InitialMessage{
 					{Role: userRole, Text: "old prompt"},
@@ -3507,7 +3506,7 @@ func TestSlashSessionsPickerSwitchesSession(t *testing.T) {
 	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"old prompt", "old answer", "session set to s2"}) {
 		t.Fatalf("messages = %#v", got)
 	}
-	if !strings.Contains(viewString(model), "model: fake/two") || !strings.Contains(viewString(model), "mode: auto") || !strings.Contains(viewString(model), "turn: 3") {
+	if !strings.Contains(viewString(model), "model: fake/two") || !strings.Contains(viewString(model), "mode: work") || !strings.Contains(viewString(model), "turn: 3") {
 		t.Fatalf("view missing restored state:\n%s", viewString(model))
 	}
 }
@@ -4318,9 +4317,6 @@ func (r *scriptedRunner) NewSession(context.Context) (SessionState, error) {
 	if state.Model != "" {
 		r.model = state.Model
 	}
-	if state.Mode != "" {
-		r.mode = state.Mode
-	}
 	return state, nil
 }
 
@@ -4332,9 +4328,6 @@ func (r *scriptedRunner) SwitchSession(_ context.Context, id string) (SessionSta
 	}
 	if state.Model != "" {
 		r.model = state.Model
-	}
-	if state.Mode != "" {
-		r.mode = state.Mode
 	}
 	return state, nil
 }

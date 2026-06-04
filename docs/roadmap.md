@@ -453,7 +453,7 @@
 - **依赖**：I-07 ~ I-20
 - **In Scope**：
   - `internal/agent/`：`Agent.Run(ctx, sess, userMsg) error`
-  - 从 session/config/CLI 注入 `execution.Mode`；每轮 tool dispatch 都带当前 mode
+  - 从 config/CLI/TUI runtime 注入 `execution.Mode`；每轮 tool dispatch 都带当前 mode
   - 单 session 内顺序处理 turns；`max_turns > 0` 时作为可选 hard guard，默认不按步数截断
   - 把工具 schema 传给 provider；解析模型 tool_use；调 Registry
   - **dispatcher 两阶段调用**：若工具实现 `PreviewableTool` → 先 Preview → 把 Preview 喂 `permission.Manager.Ask(Request)` → Allow 时才 Execute
@@ -634,7 +634,7 @@
   - `ub --resume=<id>` / `ub --resume <id>`
   - TUI 内 `/sessions` 选择或切换历史 session
   - TUI 启动时如果有最近 session 询问是否 resume
-  - 恢复 session 时还原最近一次 `ModeSwitch`，否则使用当前 CLI/config mode
+  - 恢复 session 时还原历史消息和 session provider/model；mode 使用当前 CLI/config
 - **Out of Scope**：跨设备同步
 - **验证**：开一个会话 → 退出 → resume → 历史完整出现
 

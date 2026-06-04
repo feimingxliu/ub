@@ -618,11 +618,6 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 	if err := r.restoreSessionProviderModel(ctx, state.session); err != nil {
 		return tui.SessionState{}, err
 	}
-	if state.mode != "" {
-		r.modeMu.Lock()
-		r.mode = state.mode
-		r.modeMu.Unlock()
-	}
 	return r.sessionState(), nil
 }
 
@@ -720,7 +715,6 @@ func (r *tuiAgentRunner) sessionState() tui.SessionState {
 		Models:    r.Models(),
 		Effort:    r.Effort(),
 		Efforts:   r.Efforts(),
-		Mode:      string(r.currentMode()),
 		Turn:      r.Turn(),
 		Messages:  r.Messages(),
 	}
@@ -905,19 +899,6 @@ func (r *tuiAgentRunner) SetMode(mode string) error {
 	parsed, err := execution.ParseMode(mode)
 	if err != nil {
 		return err
-	}
-	if r != nil && r.state != nil && r.state.rollout != nil {
-		event, err := rollout.ModeSwitch(r.state.sessionID, r.state.nextTurn, string(parsed))
-		if err != nil {
-			return err
-		}
-		if err := r.state.rollout.Append(r.cmd.Context(), event); err != nil {
-			return err
-		}
-		r.state.session.UpdatedAt = time.Now().UTC()
-		if err := r.state.store.UpdateSession(r.cmd.Context(), r.state.session); err != nil {
-			return err
-		}
 	}
 	r.modeMu.Lock()
 	defer r.modeMu.Unlock()

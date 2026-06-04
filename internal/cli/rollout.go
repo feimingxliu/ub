@@ -332,16 +332,6 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 			return err
 		}
 		return writeIndentedBlock(w, "text:", payload.Text, style)
-	case rollout.TypeModeSwitch:
-		mode, ok, err := rollout.ModeFromEvent(event)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			mode = "(empty)"
-		}
-		_, err = fmt.Fprintf(w, "  mode: %s\n", mode)
-		return err
 	case rollout.TypeError:
 		var payload rollout.ErrorPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {

@@ -466,7 +466,7 @@ func TestTUIRunnerSearchSessionsWithoutActiveState(t *testing.T) {
 	}
 }
 
-func TestTUIRunnerModeSwitchPersistsAndRestores(t *testing.T) {
+func TestTUIRunnerModeSwitchStaysRuntimeOnly(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `providers:
   fake:
@@ -487,25 +487,17 @@ func TestTUIRunnerModeSwitchPersistsAndRestores(t *testing.T) {
 		t.Fatalf("SetMode: %v", err)
 	}
 	events := readOnlySessionEvents(t, temp)
-	assertEventTypes(t, events, []rollout.Type{rollout.TypeModeSwitch})
-	mode, ok, err := rollout.ModeFromEvent(events[0])
-	if err != nil {
-		t.Fatalf("ModeFromEvent: %v", err)
-	}
-	if !ok || mode != "plan" {
-		t.Fatalf("persisted mode = %q ok=%v, want plan true", mode, ok)
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want no mode persistence", events)
 	}
 
-	runner.mode = execution.ModeWork
-	restored, err := runner.SwitchSession(context.Background(), state.ID)
+	runner.mode = execution.ModeAuto
+	_, err = runner.SwitchSession(context.Background(), state.ID)
 	if err != nil {
 		t.Fatalf("SwitchSession: %v", err)
 	}
-	if got := runner.currentMode(); got != execution.ModePlan {
-		t.Fatalf("restored mode = %q, want plan", got)
-	}
-	if restored.Mode != "plan" {
-		t.Fatalf("restored state mode = %q, want plan", restored.Mode)
+	if got := runner.currentMode(); got != execution.ModeAuto {
+		t.Fatalf("mode after switch = %q, want current runtime auto", got)
 	}
 }
 
