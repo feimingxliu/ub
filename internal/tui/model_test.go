@@ -627,7 +627,7 @@ func TestModelRendersActivityEvents(t *testing.T) {
 	for _, want := range []string{
 		"checking repository context",
 		"Read path=main.go",
-		"permission",
+		"Permission",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
@@ -637,7 +637,7 @@ func TestModelRendersActivityEvents(t *testing.T) {
 	texts := model.MessageTexts()
 	permFound := false
 	for _, txt := range texts {
-		if strings.Contains(txt, "permission approval_agent allow bash") {
+		if strings.Contains(txt, "Permission approval_agent allow bash") {
 			permFound = true
 		}
 	}
@@ -654,7 +654,7 @@ func TestModelRendersActivityEvents(t *testing.T) {
 	for _, want := range []string{
 		"checking repository context",
 		"Read path=main.go",
-		"permission approval_agent allow bash: read-only command",
+		"Permission approval_agent allow bash: read-only command",
 		"package main",
 	} {
 		if !strings.Contains(view, want) {
@@ -2925,7 +2925,7 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 		t.Fatal("permission event should continue waiting for stream events")
 	}
 	model = assertModel(t, updated)
-	if got := model.MessageTexts(); len(got) != 1 || got[0] != "permission approval_agent allow bash: read-only command" {
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "Permission approval_agent allow bash: read-only command" {
 		t.Fatalf("messages = %#v, want permission item text", got)
 	}
 	updated, cmd = model.Update(mouseClick(0, 0))
@@ -2936,6 +2936,22 @@ func TestPermissionEventRendersInConversation(t *testing.T) {
 	view := viewString(model)
 	if !strings.Contains(view, "approval_agent") || !strings.Contains(view, "read-only command") {
 		t.Fatalf("expanded permission view missing detail:\n%s", view)
+	}
+}
+
+func TestPermissionActivityChipUsesBlockTitleCase(t *testing.T) {
+	item := activityMessage(Event{
+		Type:         EventActivity,
+		ActivityKind: "permission",
+		ToolName:     "bash",
+		Source:       "approval_agent",
+		Decision:     "allow",
+		Allowed:      true,
+		Reason:       "read-only command",
+	})
+	got := activityChipText(item, 80)
+	if !strings.Contains(got, "Permission allow bash") {
+		t.Fatalf("chip title = %q, want Permission allow bash", got)
 	}
 }
 

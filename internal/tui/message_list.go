@@ -1297,14 +1297,11 @@ func activityChipText(item message, width int) string {
 
 func compactPermissionTitle(title string) string {
 	title = strings.TrimSpace(title)
-	if !strings.HasPrefix(title, "permission ") {
+	parts := strings.Fields(title)
+	if len(parts) < 4 || !strings.EqualFold(parts[0], "permission") {
 		return title
 	}
-	parts := strings.Fields(strings.TrimPrefix(title, "permission "))
-	if len(parts) < 3 {
-		return title
-	}
-	return "permission " + parts[1] + " " + strings.TrimSuffix(parts[2], ":")
+	return "Permission " + parts[2] + " " + strings.TrimSuffix(parts[3], ":")
 }
 
 func renderWrappedPrefixed(text, prefix, indent string, width int, styles tuitheme.Styles, prefixStyle, textStyle lipgloss.Style) []string {

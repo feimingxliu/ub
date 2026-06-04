@@ -1407,7 +1407,7 @@ func permissionEventText(event Event) string {
 		}
 	}
 	toolName := defaultString(event.ToolName, "tool")
-	text := fmt.Sprintf("permission %s %s %s", source, decision, toolName)
+	text := fmt.Sprintf("Permission %s %s %s", source, decision, toolName)
 	if reason := strings.TrimSpace(event.Reason); reason != "" {
 		text += ": " + reason
 	}
