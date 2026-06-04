@@ -297,7 +297,7 @@
 - **In Scope**：
   - 配置新增 `profiles:` 节（design §12.2），加载时按 `--profile <name>` / `--dev` / `UB_PROFILE` 选择并叠加
   - 配置新增 `execution_mode` 与 `approval_agent` 字段；`profiles:` 可覆盖 execution mode
-  - CLI：`--profile`、`--dev`（= `--profile dev`）、`--mode work|plan|auto` 全局标志位
+  - CLI：`--profile`、`--dev`（= `--profile dev`）、`--mode work|plan|auto|full-access` 全局标志位
   - `ub doctor` 子命令（design §12.3）：
     - 探测各 provider 的 `base_url` 可达性（GET `${base_url}/models` 或 Anthropic 轻量 ping）
     - 列出可用模型 + 标注哪些声明支持 tool calling
@@ -403,10 +403,10 @@
 
 ### I-20 Permission Manager + 执行模式 + approval agent + 项目规则持久化 + 黑名单
 
-- **目标**：审批回调机制 + 3 种 execution mode + approval agent 命令审批 + 6 种 Decision + project 规则的磁盘持久化
+- **目标**：审批回调机制 + 4 种 execution mode + approval agent 命令审批 + 6 种 Decision + project 规则的磁盘持久化
 - **依赖**：I-13 / I-15 / I-18
 - **In Scope**：
-  - `internal/execution/`：`Mode`（work / plan / auto）、mode 解析、mode policy、mode switch 事件 payload
+  - `internal/execution/`：`Mode`（work / plan / auto / full-access）、mode 解析、mode policy、mode switch 事件 payload
   - `internal/permission/`：`Manager`、`Decision`（Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysProjectCmd / AlwaysProjectPattern）、Claude-style `Rule`
   - `internal/approval/`：approval agent 接口；输入为 command/cwd/risk/mode/context summary/rule match 信息，输出 allow/deny/unsure + reason
   - 两层规则存储：
@@ -415,12 +415,12 @@
     - 手工项目规则支持 `permissions.allow` / `permissions.ask` / `permissions.deny`
   - 黑名单正则（硬编码 `rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）：即便 always-rule match 也强制再问
   - `Manager.Ask(ctx, req)` 按 mode 调用注入的 human `Asker` 或 approval agent
-  - 查询顺序：mode gate → 黑名单 → project deny → project allow → session allow → project ask → approval agent（auto only）→ human Asker
+  - 查询顺序：mode gate → 黑名单 → project deny → project allow → session allow → project ask → full-access mode → approval agent（auto only）→ human Asker
   - Asker 收到的请求包含可选的 `Preview`（来自 PreviewableTool）
 - **Out of Scope**：TUI 弹窗实现（I-24）
 - **关键签名**：
   ```go
-  type Mode string // work / plan / auto
+  type Mode string // work / plan / auto / full-access
   type Asker interface {
       Ask(ctx context.Context, req Request) (Decision, error)
   }

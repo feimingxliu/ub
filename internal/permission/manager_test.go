@@ -185,6 +185,95 @@ func TestManagerDefaultExecUsesHumanAsker(t *testing.T) {
 	}
 }
 
+func TestManagerFullAccessAllowsExecWithoutHumanOrAgent(t *testing.T) {
+	asker := &mockAsker{decision: DecisionDeny}
+	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionDeny}}
+	manager, err := NewManager(Options{
+		Asker:         asker,
+		ApprovalAgent: agent,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeFullAccess, "git status"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if !res.Allowed || res.Source != SourceMode || res.Reason != "allowed by full-access mode" {
+		t.Fatalf("result = %#v, want full-access mode allow", res)
+	}
+	if asker.calls != 0 || agent.calls != 0 {
+		t.Fatalf("asker/agent calls = %d/%d, want 0/0", asker.calls, agent.calls)
+	}
+}
+
+func TestManagerFullAccessStillHonorsDenyAndAskRules(t *testing.T) {
+	t.Run("deny rule", func(t *testing.T) {
+		asker := &mockAsker{decision: DecisionAllow}
+		manager, err := NewManager(Options{
+			Asker:     asker,
+			DenyRules: []Rule{mustRule(t, "Bash(git push:*)", RuleDeny)},
+		})
+		if err != nil {
+			t.Fatalf("NewManager: %v", err)
+		}
+		res, err := manager.Ask(context.Background(), execReq(t, execution.ModeFullAccess, "git push origin main"))
+		if err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+		if res.Allowed || res.Source != SourceRule || res.Decision != DecisionDeny {
+			t.Fatalf("result = %#v, want deny rule", res)
+		}
+		if asker.calls != 0 {
+			t.Fatalf("asker calls = %d, want 0", asker.calls)
+		}
+	})
+
+	t.Run("ask rule", func(t *testing.T) {
+		asker := &mockAsker{decision: DecisionAllow}
+		manager, err := NewManager(Options{
+			Asker:    asker,
+			AskRules: []Rule{mustRule(t, "Bash(git push:*)", RuleAsk)},
+		})
+		if err != nil {
+			t.Fatalf("NewManager: %v", err)
+		}
+		res, err := manager.Ask(context.Background(), execReq(t, execution.ModeFullAccess, "git push origin main"))
+		if err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+		if !res.Allowed || res.Source != SourceHuman {
+			t.Fatalf("result = %#v, want human allow from ask rule", res)
+		}
+		if asker.calls != 1 {
+			t.Fatalf("asker calls = %d, want 1", asker.calls)
+		}
+		if got := asker.requests[0].ApprovalReason; !strings.Contains(got, "matched ask rule") {
+			t.Fatalf("approval reason = %q, want ask rule reason", got)
+		}
+	})
+}
+
+func TestManagerFullAccessDoesNotBypassBlacklist(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	manager, err := NewManager(Options{
+		Asker: asker,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeFullAccess, "rm -rf /"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if !res.Allowed || res.Source != SourceHuman {
+		t.Fatalf("result = %#v, want human allow for blacklisted command", res)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	}
+}
+
 func TestManagerAgentApproveAllowSkipsHuman(t *testing.T) {
 	asker := &mockAsker{decision: DecisionDeny}
 	agent := &mockAgent{result: approval.Result{Decision: approval.DecisionAllow, Reason: "safe command"}}

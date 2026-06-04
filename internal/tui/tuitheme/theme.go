@@ -46,6 +46,7 @@ type StatusStyles struct {
 	ModeWork   lipgloss.Style
 	ModePlan   lipgloss.Style
 	ModeAuto   lipgloss.Style
+	ModeFull   lipgloss.Style
 	StateIdle  lipgloss.Style
 	StateBusy  lipgloss.Style
 	StateError lipgloss.Style
@@ -144,6 +145,7 @@ func Default() Styles {
 	s.Status.ModeWork = teal.Copy().Bold(true)
 	s.Status.ModePlan = violet.Copy().Bold(true)
 	s.Status.ModeAuto = amber.Copy().Bold(true)
+	s.Status.ModeFull = rose.Copy().Bold(true)
 	s.Status.StateIdle = green.Copy().Bold(true)
 	s.Status.StateBusy = orange.Copy().Bold(true)
 	s.Status.StateError = red.Copy().Bold(true)

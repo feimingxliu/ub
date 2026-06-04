@@ -17,6 +17,7 @@ func TestParseMode(t *testing.T) {
 		{name: "work", raw: "work", want: ModeWork},
 		{name: "plan", raw: " plan ", want: ModePlan},
 		{name: "auto", raw: "auto", want: ModeAuto},
+		{name: "full access", raw: "full-access", want: ModeFullAccess},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -53,7 +54,7 @@ func TestGatePlanRejectsExec(t *testing.T) {
 }
 
 func TestGateAllowsExecOutsidePlan(t *testing.T) {
-	for _, mode := range []Mode{ModeWork, ModeAuto} {
+	for _, mode := range []Mode{ModeWork, ModeAuto, ModeFullAccess} {
 		if err := Gate(mode, tool.RiskExec); err != nil {
 			t.Fatalf("Gate(%s, exec): %v", mode, err)
 		}

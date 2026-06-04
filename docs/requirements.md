@@ -36,7 +36,7 @@
 | Provider | Anthropic Claude（官方 SDK）、OpenAI（官方 SDK）、OpenAI 兼容协议（含 Ollama `/v1`） |
 | Tools | read / write / edit（含 diff 预览）、bash（权限审批）、grep / glob / ls、job_run / job_output / job_kill |
 | 权限 | 交互式 allow / deny；支持 always-allow 规则 |
-| 执行模式 | `work` / `plan` / `auto` 三种模式，控制文件写入与命令审批路径 |
+| 执行模式 | `work` / `plan` / `auto` / `full-access` 四种模式，控制文件写入与命令审批路径 |
 | 会话 | SQLite 持久化、可列出 / 切换 / 恢复 |
 | Rollout | 每一轮 user / assistant / tool_call / tool_result 全部 append-only 写入；可重放调试 |
 | 上下文 | 自动 summary / 压缩；接近 context window 极限时触发 |
@@ -94,12 +94,13 @@
 
 ### 4.4 执行模式
 
-- F-MODE-1：每次运行 MUST 有一个 `execution_mode`，可选值为 `work`、`plan`、`auto`；启动参数、配置和 TUI slash 命令均可切换（优先级：CLI flag > profile > config 默认值）。mode 不随 session 持久化，resume 后使用本次运行的有效 mode
+- F-MODE-1：每次运行 MUST 有一个 `execution_mode`，可选值为 `work`、`plan`、`auto`、`full-access`；启动参数、配置和 TUI slash 命令均可切换（优先级：CLI flag > profile > config 默认值）。mode 不随 session 持久化，resume 后使用本次运行的有效 mode
 - F-MODE-2：`work` 模式允许 agent 在当前 workspace 内读写文件；执行 `exec` 风险工具（`bash` / `job_run` / `job_kill`）时，若未被 session/project allow-rule 明确放行，MUST 弹出用户审批
 - F-MODE-3：`plan` 模式为只读规划模式；agent 只可使用只读调研工具（`read` / `ls` / `glob` / `grep`）以及计划工具（`plan_write` / `plan_update`）。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具 MUST NOT 在 plan 模式广告；若模型误调，MUST 被拦截并以 tool error 回灌给模型。
 - F-MODE-4：`auto` 模式允许一个额外的 approval agent 自动审批命令；若 approval agent 拒绝、无法判断或调用失败，系统 MUST 回退到用户显式审批，不能静默执行；approval agent 的决策与原因 MUST 写入结构化日志
-- F-MODE-5：危险命令黑名单优先级高于所有模式；即使 allow-rule 或 approval agent 放行，仍 MUST 要求用户显式确认
-- F-MODE-6：当前执行模式 MUST 显示在 TUI 状态栏，并用于本次运行的工具权限判断
+- F-MODE-5：`full-access` 模式允许 workspace 内文件写入与 `exec` 风险工具默认执行，不调用 human approval 或 approval agent；危险命令黑名单、project deny 规则和 project ask 规则 MUST 仍优先于 full-access 自动放行。当前版本进入 `full-access` 依赖 CLI/config/TUI slash/快捷键的显式切换，不额外要求首次高风险确认 dialog
+- F-MODE-6：危险命令黑名单优先级高于所有模式；即使 allow-rule、approval agent 或 full-access 模式放行，仍 MUST 要求用户显式确认
+- F-MODE-7：当前执行模式 MUST 显示在 TUI 状态栏，并用于本次运行的工具权限判断
 
 ### 4.5 权限审批
 
@@ -109,7 +110,7 @@
 - F-PERM-4：project 级规则持久化到 `<workspace>/.ub/permissions.yaml`，格式为 `permissions.allow` / `permissions.ask` / `permissions.deny` 字符串数组，规则语法为 Claude-style `Tool(pattern)`；`Bash(cmd)` 精确匹配，`Bash(cmd:*)` 匹配命令前缀；session 级 always-rule 仅内存生效
 - F-PERM-4a：命令规则 MUST 拆分 compound command（如 `&&`、`;`、管道、换行）；allow 自动放行要求每个子命令都命中 allow rule，deny 规则命中任意子命令即拒绝，ask 规则命中时必须回退人工确认
 - F-PERM-5：危险命令模式匹配黑名单（`rm -rf /`、`mkfs.*` 等）即使匹配 always-rule 也强制再次确认
-- F-PERM-6：approval agent 与 human approval 的决策、来源和原因 MUST 作为对话活动消息展示，便于用户理解命令为何被放行或回退
+- F-PERM-6：approval agent、human approval 和 full-access mode 的决策、来源和原因 MUST 作为对话活动消息展示，便于用户理解命令为何被放行或回退
 
 ### 4.6 会话与 Rollout
 

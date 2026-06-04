@@ -1057,6 +1057,16 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") {
 		t.Fatalf("auto mode should keep write and exec tools: %#v", tools)
 	}
+	tools, err = toolDefinitions(reg, execution.ModeFullAccess)
+	if err != nil {
+		t.Fatalf("toolDefinitions full-access: %v", err)
+	}
+	if toolNamesContain(tools, "plan_write") || toolNamesContain(tools, "plan_update") {
+		t.Fatalf("full-access mode should not advertise plan tools: %#v", tools)
+	}
+	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") {
+		t.Fatalf("full-access mode should keep write and exec tools: %#v", tools)
+	}
 	tools, err = toolDefinitions(reg, execution.ModePlan)
 	if err != nil {
 		t.Fatalf("toolDefinitions plan: %v", err)

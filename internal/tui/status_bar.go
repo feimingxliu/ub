@@ -292,6 +292,8 @@ func modeStyle(mode string, styles tuitheme.Styles) lipgloss.Style {
 		return styles.Status.ModePlan
 	case stringExecutionModeAuto:
 		return styles.Status.ModeAuto
+	case stringExecutionModeFullAccess:
+		return styles.Status.ModeFull
 	default:
 		return styles.Status.ModeWork
 	}
@@ -309,6 +311,7 @@ func stateStyle(state string, styles tuitheme.Styles) lipgloss.Style {
 }
 
 const (
-	stringExecutionModePlan = "plan"
-	stringExecutionModeAuto = "auto"
+	stringExecutionModePlan       = "plan"
+	stringExecutionModeAuto       = "auto"
+	stringExecutionModeFullAccess = "full-access"
 )

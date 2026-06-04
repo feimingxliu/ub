@@ -12,7 +12,7 @@
 | `ub --resume` | 列出当前工作区历史 session，选一个恢复 |
 | `ub --resume=<id>` | 直接恢复指定 session |
 | `ub --provider <name> --model <id>` | 启动 TUI 时临时覆盖 provider / model |
-| `ub --mode work\|plan\|auto` | 启动时指定执行模式 |
+| `ub --mode work\|plan\|auto\|full-access` | 启动时指定执行模式 |
 | `ub --profile <name>` / `--dev` | 选择 profile（`--dev` 等价 `--profile dev`） |
 | `ub run -p "..."` | 无头模式跑一次 agent loop（CI / 脚本） |
 | `ub chat "..."` | 单轮直接对话，不带工具、不进 rollout（验证 provider 通路用） |
@@ -37,7 +37,7 @@
 |---|---|
 | `Ctrl+C` | 退出 TUI |
 | `Esc` | 关闭弹出层（文件选择 / 选择器） / 中断当前运行中的 agent |
-| `Shift+Tab` | 切换执行模式（work → plan → auto → work） |
+| `Shift+Tab` | 切换执行模式（work → plan → auto → full-access → work） |
 | `Enter` | 发送当前输入；输入为空且有 collapsible 块聚焦时，展开/收起聚焦项 |
 | `Tab` | 触发补全：`/` 后补全 slash 命令、`@` 后补全工作区文件 |
 | `PgUp` / `PgDn` | 消息区翻页 |
@@ -104,7 +104,7 @@
 | `/model` | `[model]` | 无参数列当前 provider 下可用 model；带参数切换 |
 | `/effort` | `[level]` | 切换 reasoning effort（`none` / `minimal` / `low` / `medium` / `high` / `xhigh`），仅对支持 reasoning 的模型生效 |
 | `/approval-model` | `[model]` | 设置 auto 模式下用作审批 agent 的模型，无参数列候选；不影响主对话 model |
-| `/mode` | `<work\|plan\|auto>` | 切换执行模式（也可按 `Shift+Tab` 循环切） |
+| `/mode` | `<work\|plan\|auto\|full-access>` | 切换执行模式（也可按 `Shift+Tab` 循环切） |
 | `/compact` | — | 主动触发上下文压缩（用 `small_model` 生成摘要） |
 | `/profile` | `<name>` | 显示切换 profile 的提示（需要重启 ub 才生效，因为 profile 影响启动期加载） |
 
@@ -113,10 +113,11 @@
 | 模式 | 文件写入 | 命令执行 | 适用场景 |
 |---|---|---|---|
 | **`work`**（默认） | ✅ 允许 | 需审批 | 日常编码：让 agent 真改文件 + 跑命令 |
-| **`plan`** | ❌ 拦截（dispatcher 直接返回 tool error） | 需审批 | 探索 / 规划：先让 agent 调研，确认后再切回 work |
+| **`plan`** | ❌ 拦截（dispatcher 直接返回 tool error） | ❌ 拦截 | 探索 / 规划：先让 agent 调研，确认后再切回 work |
 | **`auto`** | ✅ 允许 | 由审批 agent 自动审批，不确定时回退人工 | 受信工作流 / 长任务无人值守；需要先在配置里启用 `approval_agent` |
+| **`full-access`** | ✅ 允许 | 默认放行，仍遵守黑名单 / deny / ask 规则 | 高信任本地批量修复：跳过常规审批但保留审计 |
 
-切换模式立刻生效，只影响当前进程和后续请求；mode 不随 session 持久化。
+切换模式立刻生效，只影响当前进程和后续请求；mode 不随 session 持久化。当前切换到 `full-access` 不会额外弹首次高风险确认 dialog；请把 CLI/config/TUI 的显式切换视为本次进程内授权。
 
 `auto` 模式启用步骤：
 
@@ -140,8 +141,9 @@ approval_agent:
 4. **项目 allow 规则**：`permissions.allow`
 5. **Session 规则**：内存中，AlwaysCmd / AlwaysTool 选项的范围
 6. **项目 ask 规则**：`permissions.ask`，命中后强制人工弹窗，即使在 auto 模式也不交给 approval agent
-7. **审批 agent**（仅 auto 模式）：模型 allow 时通过；否则回退第 8 步
-8. **人工弹窗**：方向键选 + Enter
+7. **full-access mode**：直接放行并记录 `allowed by full-access mode`
+8. **审批 agent**（仅 auto 模式）：模型 allow 时通过；否则回退第 9 步
+9. **人工弹窗**：方向键选 + Enter
 
 ### 5.2 权限规则文件示例
 

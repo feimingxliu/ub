@@ -1729,6 +1729,7 @@ func nextExecutionMode(current string) string {
 		string(execution.ModeWork),
 		string(execution.ModePlan),
 		string(execution.ModeAuto),
+		string(execution.ModeFullAccess),
 	}
 	for i, mode := range order {
 		if current == mode {

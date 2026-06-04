@@ -224,7 +224,7 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 2. tool := registry.Get(name)
 3. mode gate:
      - plan + write risk: 拒绝，回灌 ToolResult{IsError, Content="plan mode is read-only"}
-     - work / auto + write risk: 继续
+     - work / auto / full-access + write risk: 继续
 4. if pt, ok := tool.(PreviewableTool); ok:
        preview = pt.Preview(ctx, args)
 5. exec risk:
@@ -386,7 +386,7 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 default_provider: anthropic
 default_model: claude-sonnet-4-7   # 可省略；provider 可列模型时自动选第一个
 small_model: openai/gpt-4o-mini   # 用于 summary、生成标题、approval fallback
-execution_mode: work               # work / plan / auto
+execution_mode: work               # work / plan / auto / full-access
 
 prompt:
   workspace_instructions:
@@ -505,6 +505,7 @@ const (
     ModeWork Mode = "work"
     ModePlan Mode = "plan"
     ModeAuto Mode = "auto"
+    ModeFullAccess Mode = "full-access"
 )
 
 type ModePolicy struct {
@@ -513,10 +514,11 @@ type ModePolicy struct {
 }
 ```
 
-**三种模式**：
+**四种模式**：
 - `work`：允许 workspace 内文件读写；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
 - `plan`：只读规划；只广告 `read` / `ls` / `glob` / `grep` / `plan_write` / `plan_update`。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具在 dispatcher 层直接拒绝并把错误回灌给模型。
 - `auto`：文件读写策略同 `work`；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
+- `full-access`：文件读写策略同 `work`；`exec` 风险工具在未命中 deny/ask/黑名单时由 mode 直接放行，不走 approval agent 或用户审批。当前 TUI 切入该模式不弹首次高风险确认 dialog；风险提示依赖状态栏、帮助文案和后续 tool activity 审计。
 
 **approval agent** 是一个受限的二级 agent，只输出 `allow` / `deny` / `unsure` 与一句理由，不执行工具、不修改上下文、不写文件。它的输入只包含命令文本、cwd、风险等级、当前 mode、最近相关上下文摘要和已命中的规则信息；API key 等 secret 不传入。黑名单命令不进入 approval agent，直接走用户确认。
 
@@ -555,7 +557,7 @@ UI 流程：
 1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式拒绝所有 `write` 风险工具
 2. 若工具实现 PreviewableTool，先调 `Preview()`
 3. 对 `exec` 风险工具先查 project `deny` rules → project `allow` rules → session allow rules → project `ask` rules（黑名单除外）；`deny` 直接拒绝，`allow` 直接通过，`ask` 强制人工确认
-4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，并用 `slog` 记录 `allow`/`deny`/`unsure` 或错误原因；返回 `deny`/`unsure`/error 时再向 TUI 发请求
+4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，并用 `slog` 记录 `allow`/`deny`/`unsure` 或错误原因，返回 `deny`/`unsure`/error 时再向 TUI 发请求；`full-access` 直接返回 mode allow
 5. TUI 弹 modal，以候选列表展示 6 个选项（与 F-PERM-3 对齐），每个选项都说明作用范围；上/下方向键移动，Enter 确认，`1`~`6` 仅作为快捷键：
    - Allow once：只允许本次请求，不保存规则
    - Deny：拒绝本次请求，不保存规则
@@ -563,7 +565,7 @@ UI 流程：
    - Always allow this tool (session)：本 session 内允许同一 tool 的后续调用
    - Always allow this exact command (project)：向 `permissions.allow` 追加 `Bash(<exact command>)`
    - Always allow this similar command (project)：向 `permissions.allow` 追加 Claude-style `Bash(<prefix>:*)`
-6. 决策写入 rollout（`Activity` 事件，`activity_kind=permission`，含 `source=rule|approval_agent|human`），resume 时恢复到 tool 活动区；选 3/4 更新内存 rules；选 5/6 同时追加到项目级磁盘 yaml
+6. 决策写入 rollout（`Activity` 事件，`activity_kind=permission`，含 `source=mode|rule|approval_agent|human`），resume 时恢复到 tool 活动区；选 3/4 更新内存 rules；选 5/6 同时追加到项目级磁盘 yaml
 7. dispatcher 拿到决策继续
 
 `Bash(pattern)` 规则采用 Claude-style prefix/wildcard 语义：无 `*` 时精确匹配；`cmd:*` 匹配该前缀的 shell 命令；compound command 会按 `&&`、`;`、管道、换行等拆分，只有每个子命令都命中 allow rule 才能自动放行，任一子命令命中 deny rule 则整条命令拒绝。

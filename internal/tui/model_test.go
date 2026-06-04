@@ -2555,6 +2555,12 @@ func TestSlashModelAndModeUpdateRunner(t *testing.T) {
 	if runner.mode != "plan" || !strings.Contains(viewString(model), "mode: plan") {
 		t.Fatalf("mode update failed: runner=%q view=\n%s", runner.mode, viewString(model))
 	}
+	model = sendText(t, model, "/mode full-access")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.mode != "full-access" || !strings.Contains(viewString(model), "mode: full-access") {
+		t.Fatalf("mode update failed: runner=%q view=\n%s", runner.mode, viewString(model))
+	}
 	if got, want := model.MessageTexts(), []string{"model set to fake/new"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("messages = %#v, want %#v", got, want)
 	}
@@ -2997,6 +3003,23 @@ func TestShiftTabCyclesModeWhileRunning(t *testing.T) {
 	}
 }
 
+func TestNextExecutionModeIncludesFullAccess(t *testing.T) {
+	cases := []struct {
+		current string
+		want    string
+	}{
+		{current: string(execution.ModeWork), want: string(execution.ModePlan)},
+		{current: string(execution.ModePlan), want: string(execution.ModeAuto)},
+		{current: string(execution.ModeAuto), want: string(execution.ModeFullAccess)},
+		{current: string(execution.ModeFullAccess), want: string(execution.ModeWork)},
+	}
+	for _, tc := range cases {
+		if got := nextExecutionMode(tc.current); got != tc.want {
+			t.Fatalf("nextExecutionMode(%q) = %q, want %q", tc.current, got, tc.want)
+		}
+	}
+}
+
 func TestShiftTabCyclesModeDuringPermission(t *testing.T) {
 	response := make(chan permission.Decision, 1)
 	runner := &scriptedRunner{}
@@ -3180,7 +3203,7 @@ func TestArrowSelectsSlashSuggestion(t *testing.T) {
 	model = sendText(t, model, "/m")
 
 	view := viewString(model)
-	if !strings.Contains(view, "> /model [model]") || !strings.Contains(view, "  /mode <work|plan|auto>") {
+	if !strings.Contains(view, "> /model [model]") || !strings.Contains(view, "  /mode <work|plan|auto|full-access>") {
 		t.Fatalf("initial slash selection missing:\n%s", view)
 	}
 	updated, cmd := model.Update(keyPress(tea.KeyDown))
@@ -3189,7 +3212,7 @@ func TestArrowSelectsSlashSuggestion(t *testing.T) {
 	}
 	model = assertModel(t, updated)
 	view = viewString(model)
-	if !strings.Contains(view, "  /model [model]") || !strings.Contains(view, "> /mode <work|plan|auto>") {
+	if !strings.Contains(view, "  /model [model]") || !strings.Contains(view, "> /mode <work|plan|auto|full-access>") {
 		t.Fatalf("down did not move slash selection:\n%s", view)
 	}
 

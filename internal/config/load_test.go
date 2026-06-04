@@ -387,10 +387,18 @@ func TestLoadFromDirsModeOverrideAndValidation(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")
 	globalPath := filepath.Join(xdg, "ub", "config.yaml")
-	mustWriteConfig(t, globalPath, "execution_mode: work\nprofiles:\n  dev:\n    execution_mode: plan\n")
+	mustWriteConfig(t, globalPath, "execution_mode: full-access\nprofiles:\n  dev:\n    execution_mode: plan\n")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
-	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev", ExecutionMode: ModeAuto})
+	cfg, _, err := loadFromDirsWithOptions(temp, LoadOptions{})
+	if err != nil {
+		t.Fatalf("loadFromDirsWithOptions full-access: %v", err)
+	}
+	if cfg.ExecutionMode != ModeFullAccess {
+		t.Fatalf("ExecutionMode = %q, want %q", cfg.ExecutionMode, ModeFullAccess)
+	}
+
+	cfg, _, err = loadFromDirsWithOptions(temp, LoadOptions{Profile: "dev", ExecutionMode: ModeAuto})
 	if err != nil {
 		t.Fatalf("loadFromDirsWithOptions: %v", err)
 	}

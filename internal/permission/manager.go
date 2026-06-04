@@ -110,6 +110,9 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 			}
 			return m.applyHumanDecision(decision, req, command)
 		}
+		if mode == execution.ModeFullAccess {
+			return Result{Decision: DecisionAllow, Allowed: true, Source: SourceMode, Reason: "allowed by full-access mode"}, nil
+		}
 		if mode == execution.ModeAuto {
 			if agent == nil {
 				slog.Info("approval agent unavailable; falling back to human approval", "tool", req.Tool, "risk", req.Risk, "mode", req.Mode)

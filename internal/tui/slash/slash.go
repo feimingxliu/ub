@@ -26,7 +26,7 @@ var specs = []Spec{
 	{Name: "model", Usage: "/model [model]", Description: "show models or switch to a supported model"},
 	{Name: "effort", Usage: "/effort [effort]", Description: "show or switch reasoning effort for the current model"},
 	{Name: "approval-model", Usage: "/approval-model [model]", Description: "show or switch the auto approval model"},
-	{Name: "mode", Usage: "/mode <work|plan|auto>", Description: "switch execution mode"},
+	{Name: "mode", Usage: "/mode <work|plan|auto|full-access>", Description: "switch execution mode"},
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
 	{Name: "init", Usage: "/init [guidance]", Description: "run an agent pass to create or update AGENTS.md"},
 	{Name: "doctor", Usage: "/doctor", Description: "run health checks in the TUI"},

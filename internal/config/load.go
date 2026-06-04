@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	ModeWork = "work"
-	ModePlan = "plan"
-	ModeAuto = "auto"
+	ModeWork       = "work"
+	ModePlan       = "plan"
+	ModeAuto       = "auto"
+	ModeFullAccess = "full-access"
 )
 
 // LoadOptions selects runtime overlays that are not part of config file
@@ -196,7 +197,7 @@ func (p ProfileConfig) toConfig() *Config {
 // ValidateExecutionMode checks the known execution mode strings.
 func ValidateExecutionMode(mode string) error {
 	switch strings.TrimSpace(mode) {
-	case "", ModeWork, ModePlan, ModeAuto:
+	case "", ModeWork, ModePlan, ModeAuto, ModeFullAccess:
 		return nil
 	default:
 		return fmt.Errorf("unknown execution_mode %q", mode)
