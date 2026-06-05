@@ -63,27 +63,6 @@ ub run -p "总结一下这个仓库"          # 无头模式,CI 友好
 ub doctor --plain                   # 体检
 ```
 
-没有 API key？换 [Fake provider](docs/install.md#45-fake-provider-离线测试),整个 agent loop 完全离线跑通。
-
-## 🪞 ub 与同类对比
-
-|                          | **ub**                          | OpenCode                  | Claude Code                              | Codex CLI                |
-|---|---|---|---|---|
-| License                  | **MIT**                         | MIT                       | 闭源                                     | Apache-2.0               |
-| 实现语言                 | **Go**（~26k 行）                | TypeScript                | 闭源                                     | Rust                     |
-| 终端形态                 | TUI + 无头                       | TUI                       | TUI（+ IDE / Web / Desktop / 手机）       | TUI                      |
-| Provider 数              | 4（含 vLLM / Ollama 兼容）        | 75+（via AI SDK）          | Anthropic + Bedrock / Vertex / Foundry   | OpenAI / ChatGPT 限定    |
-| Session 存储             | 本地 SQLite                      | 本地                      | 云同步（与账号绑定）                       | 文档未公开                |
-| 可回放事件日志           | ✅ JSONL + `rollout show`        | `/undo` · `/redo`         | —                                        | 文档未公开                |
-| MCP                      | stdio · http · sse              | ✅                        | ✅                                       | ✅                       |
-| LSP 集成                 | ✅ 可配置                        | ✅                        | —                                        | —                        |
-| 计划 / 只读模式          | ✅                              | ✅                        | ✅                                       | ✅（审批模式）            |
-| LLM 自动审批（auto）     | ✅ 可选                          | —                         | —                                        | —                        |
-
-<sub>资料来源：[OpenCode 文档](https://opencode.ai/docs/providers)、[Claude Code 概览](https://code.claude.com/docs/en/overview) 与 [企业部署](https://code.claude.com/docs/en/third-party-integrations)、[Codex CLI 仓库](https://github.com/openai/codex)。核对时间 2025-11。如有出入欢迎开 issue。</sub>
-
-按需选工具。ub 适合你想要**完整可 `grep` 的事件日志**、**一个能一下午读完的 Go 代码库**,以及**自由更换 provider / 拆掉某个子系统的能力**。它不是 Claude Code 或 OpenCode 那样打磨完整的产品；如果你需要 agent skills、IDE 集成,或者业内最大的 provider 矩阵,先去看它们。
-
 ## 🧱 内部一览
 
 ```

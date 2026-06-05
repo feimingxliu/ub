@@ -65,27 +65,6 @@ ub run -p "summarize this repo"     # headless, CI-friendly
 ub doctor --plain                   # check connectivity
 ```
 
-No API key? Drop in the [Fake provider](docs/install.md#45-fake-provider-离线测试) and the whole agent loop runs offline.
-
-## 🪞 How ub compares
-
-|                          | **ub**                          | OpenCode                  | Claude Code                              | Codex CLI                |
-|---|---|---|---|---|
-| License                  | **MIT**                         | MIT                       | Proprietary                              | Apache-2.0               |
-| Language                 | **Go** (~26k LoC)               | TypeScript                | closed-source                            | Rust                     |
-| Terminal interface       | TUI + headless                  | TUI                       | TUI (+ IDE / Web / Desktop / Mobile)     | TUI                      |
-| Provider count           | 4 (incl. vLLM / Ollama compat)  | 75+ via AI SDK            | Anthropic + Bedrock / Vertex / Foundry   | OpenAI / ChatGPT only    |
-| Session storage          | local SQLite                    | local                     | cloud-synced (account-bound)             | not publicly documented  |
-| Replayable event log     | ✅ JSONL + `rollout show`       | `/undo` · `/redo`         | —                                        | not publicly documented  |
-| MCP                      | stdio · http · sse              | ✅                        | ✅                                       | ✅                       |
-| LSP integration          | ✅ pluggable                    | ✅                        | —                                        | —                        |
-| Plan / read-only mode    | ✅                              | ✅                        | ✅                                       | ✅ (approval modes)      |
-| Approval-by-LLM (auto)   | ✅ optional                     | —                         | —                                        | —                        |
-
-<sub>Sources: [OpenCode docs](https://opencode.ai/docs/providers), [Claude Code overview](https://code.claude.com/docs/en/overview) and [enterprise deployment](https://code.claude.com/docs/en/third-party-integrations), [Codex CLI repo](https://github.com/openai/codex). Verified Nov 2025. Things move fast — if a row is wrong, open an issue.</sub>
-
-Pick the right tool for the job. ub is best when you want **a complete event log you can `grep` through**, **a Go codebase small enough to read in an afternoon**, and **the freedom to swap providers or rip out subsystems**. It is not (yet) the polished product Claude Code or OpenCode are; if you need agent skills, IDE integration, or the world's biggest provider list, look there first.
-
 ## 🧱 Inside
 
 ```
