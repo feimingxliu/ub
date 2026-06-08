@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.9] - 2026-06-08
+
+
+### Added
+
+- Add btw side chat ([31922ea](https://github.com/feimingxliu/ub/commit/31922eae75375b5b65e0a48e3df6975af38188e2))
+
+
+### Documentation
+
+- Plan rewind and btw commands ([fc9f317](https://github.com/feimingxliu/ub/commit/fc9f3173bc842ab1615a0fe8fe57f60905041947))
+- Align roadmap spillover tooling ([c31de01](https://github.com/feimingxliu/ub/commit/c31de018468723fc3dded1768d3f6880543ef7aa))
+
+
+### Other
+
+- Update readme ([e237dba](https://github.com/feimingxliu/ub/commit/e237dba5a7a89d5f7d3a39902042c26d2456b23c))
+
 ## [0.3.8] - 2026-06-04
 
 
@@ -22,6 +40,11 @@ All notable changes to this project are documented here.
 - Title-case permission activity blocks ([0a66f48](https://github.com/feimingxliu/ub/commit/0a66f48c6db34e553f4ea1264955b60b943a0672))
 - Persist permission activities ([23569e6](https://github.com/feimingxliu/ub/commit/23569e675c9c4f80125b501dd8771d64c45c8a51))
 - Show tool use inputs in rollout output ([944a1f4](https://github.com/feimingxliu/ub/commit/944a1f41d5247418d1f1df276582b06e63a5952b))
+
+
+### Maintenance
+
+- V0.3.8 ([1141322](https://github.com/feimingxliu/ub/commit/1141322783f96422ee5f4d59ca2720d04c8144f7))
 
 
 ### Refactoring
