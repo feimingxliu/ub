@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/message"
+	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/feimingxliu/ub/internal/tool"
@@ -266,6 +269,154 @@ func TestTUIRunnerSetProviderKeepsCurrentModelWhenAvailable(t *testing.T) {
 	}
 	if state.Model != "shared/model" || runner.model != "shared/model" {
 		t.Fatalf("model after provider switch = state %q runner %q, want shared/model", state.Model, runner.model)
+	}
+}
+
+func TestTUIRunnerAnswerSideQuestionUsesNoToolsAndDoesNotMutateHistory(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	capture := &recordingSideProvider{events: []provider.Event{
+		{Type: provider.EventTextDelta, Text: "side answer"},
+		{Type: provider.EventDone},
+	}}
+	history := []message.Message{
+		message.Text(message.RoleUser, "main prompt"),
+		message.New(message.RoleAssistant, message.ToolUseBlock("call_read", "read", json.RawMessage(`{"path":"README.md"}`))),
+		message.New(message.RoleTool, message.ToolResultBlock("call_read", "file content", false)),
+		message.Text(message.RoleAssistant, "main answer"),
+	}
+	runner := &tuiAgentRunner{
+		cfg:          &config.Config{},
+		provider:     capture,
+		providerName: "capture",
+		model:        "capture/model",
+		mode:         execution.ModeWork,
+		tools:        &toolRuntime{Workspace: temp},
+		state:        &chatSessionState{history: cloneMessages(history)},
+	}
+	events := make(chan tui.Event, 4)
+
+	req := tui.SideQuestionRequest{
+		Question: "what is side?",
+		History: []tui.SideQuestionMessage{{
+			Question: "previous side",
+			Answer:   "previous answer",
+		}},
+	}
+	if err := runner.AnswerSideQuestion(context.Background(), req, events); err != nil {
+		t.Fatalf("AnswerSideQuestion: %v", err)
+	}
+	if len(capture.requests) != 1 {
+		t.Fatalf("requests len = %d, want 1", len(capture.requests))
+	}
+	providerReq := capture.requests[0]
+	if providerReq.Model != "capture/model" {
+		t.Fatalf("model = %q, want capture/model", providerReq.Model)
+	}
+	if len(providerReq.Tools) != 0 {
+		t.Fatalf("side question tools = %#v, want none", providerReq.Tools)
+	}
+	if len(providerReq.Messages) < 4 {
+		t.Fatalf("messages len = %d, want runtime context + history + side prompt", len(providerReq.Messages))
+	}
+	if got := providerReq.Messages[len(providerReq.Messages)-1]; got.Role != message.RoleUser || got.Text() != "what is side?" {
+		t.Fatalf("last request message = %#v, want side user question", got)
+	}
+	var sawSidePrompt, sawPreviousQuestion, sawPreviousAnswer, sawMainPrompt, sawMainAnswer bool
+	for _, msg := range providerReq.Messages {
+		if msg.Role == message.RoleTool {
+			t.Fatalf("side question request included tool result history: %#v", providerReq.Messages)
+		}
+		for _, block := range msg.Content {
+			if block.Type == message.BlockToolUse || block.Type == message.BlockToolResult {
+				t.Fatalf("side question request included non-text tool block: %#v", providerReq.Messages)
+			}
+		}
+		switch {
+		case msg.Role == message.RoleSystem && strings.Contains(msg.Text(), "BTW side chat"):
+			sawSidePrompt = true
+		case msg.Role == message.RoleSystem && strings.Contains(msg.Text(), "coding_agent_instructions"):
+			t.Fatalf("side question request included coding-agent tool instructions: %#v", providerReq.Messages)
+		case msg.Role == message.RoleSystem && strings.Contains(msg.Text(), "Use read only for regular files"):
+			t.Fatalf("side question request included path tool instructions: %#v", providerReq.Messages)
+		case msg.Role == message.RoleUser && msg.Text() == "main prompt":
+			sawMainPrompt = true
+		case msg.Role == message.RoleAssistant && msg.Text() == "main answer":
+			sawMainAnswer = true
+		case msg.Role == message.RoleUser && msg.Text() == "previous side":
+			sawPreviousQuestion = true
+		case msg.Role == message.RoleAssistant && msg.Text() == "previous answer":
+			sawPreviousAnswer = true
+		}
+	}
+	if !sawSidePrompt || !sawMainPrompt || !sawMainAnswer || !sawPreviousQuestion || !sawPreviousAnswer {
+		t.Fatalf("request missing side prompt/history: prompt=%v mainQ=%v mainA=%v question=%v answer=%v messages=%#v", sawSidePrompt, sawMainPrompt, sawMainAnswer, sawPreviousQuestion, sawPreviousAnswer, providerReq.Messages)
+	}
+	if !reflect.DeepEqual(runner.state.history, history) {
+		t.Fatalf("history mutated = %#v, want %#v", runner.state.history, history)
+	}
+	first := <-events
+	second := <-events
+	if first.Type != tui.EventDeltaText || first.Text != "side answer" || second.Type != tui.EventDone {
+		t.Fatalf("events = %#v %#v, want text then done", first, second)
+	}
+}
+
+func TestTUIRunnerAnswerSideQuestionRejectsToolCall(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	capture := &recordingSideProvider{events: []provider.Event{
+		{Type: provider.EventToolCall, ToolName: "read"},
+		{Type: provider.EventDone},
+	}}
+	runner := &tuiAgentRunner{
+		cfg:          &config.Config{},
+		provider:     capture,
+		providerName: "capture",
+		model:        "capture/model",
+		mode:         execution.ModeWork,
+		tools:        &toolRuntime{Workspace: temp},
+	}
+
+	err := runner.AnswerSideQuestion(context.Background(), tui.SideQuestionRequest{Question: "read a file?"}, make(chan tui.Event, 4))
+	if err == nil || !strings.Contains(err.Error(), "btw cannot use tools") || !strings.Contains(err.Error(), "read") {
+		t.Fatalf("AnswerSideQuestion err = %v, want no-tool error naming read", err)
+	}
+	if len(capture.requests) != 1 || len(capture.requests[0].Tools) != 0 {
+		t.Fatalf("request tools = %#v, want none", capture.requests)
+	}
+}
+
+func TestTUIRunnerAnswerSideQuestionRejectsTextualToolMarkup(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	capture := &recordingSideProvider{events: []provider.Event{
+		{Type: provider.EventTextDelta, Text: "I need to inspect files.\n"},
+		{Type: provider.EventTextDelta, Text: "<tool_use><name>ls</name><input>{\"path\":\".\"}</input></tool_use>"},
+		{Type: provider.EventDone},
+	}}
+	runner := &tuiAgentRunner{
+		cfg:          &config.Config{},
+		provider:     capture,
+		providerName: "capture",
+		model:        "capture/model",
+		mode:         execution.ModeWork,
+		tools:        &toolRuntime{Workspace: temp},
+	}
+
+	events := make(chan tui.Event, 4)
+	err := runner.AnswerSideQuestion(context.Background(), tui.SideQuestionRequest{Question: "inspect this repo"}, events)
+	if err == nil || !strings.Contains(err.Error(), "btw cannot use tools") {
+		t.Fatalf("AnswerSideQuestion err = %v, want textual tool markup rejection", err)
+	}
+	first := <-events
+	if first.Type != tui.EventDeltaText || !strings.Contains(first.Text, "inspect files") {
+		t.Fatalf("first event = %#v, want pre-tool text delta", first)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("tool markup delta should not be forwarded, got %#v", event)
+	default:
 	}
 }
 
@@ -756,6 +907,49 @@ func TestListWorkspaceFilesFiltersAndExcludesHeavyDirs(t *testing.T) {
 			t.Fatalf("excluded path surfaced: %#v", got)
 		}
 	}
+}
+
+type recordingSideProvider struct {
+	requests []provider.Request
+	events   []provider.Event
+}
+
+func (p *recordingSideProvider) Name() string {
+	return "capture"
+}
+
+func (p *recordingSideProvider) Caps() provider.Caps {
+	return provider.Caps{SupportsStreaming: true, SupportsTools: true, MaxContextTokens: 1000000}
+}
+
+func (p *recordingSideProvider) Chat(_ context.Context, req provider.Request) (provider.Stream, error) {
+	p.requests = append(p.requests, provider.Request{
+		Model:     req.Model,
+		Messages:  cloneMessages(req.Messages),
+		Tools:     append([]provider.ToolDefinition(nil), req.Tools...),
+		Reasoning: cloneReasoningConfig(req.Reasoning),
+	})
+	return &recordingSideStream{events: append([]provider.Event(nil), p.events...)}, nil
+}
+
+type recordingSideStream struct {
+	events []provider.Event
+	next   int
+	closed bool
+}
+
+func (s *recordingSideStream) Next(context.Context) (provider.Event, error) {
+	if s.closed || s.next >= len(s.events) {
+		return provider.Event{}, io.EOF
+	}
+	event := s.events[s.next]
+	s.next++
+	return event, nil
+}
+
+func (s *recordingSideStream) Close() error {
+	s.closed = true
+	return nil
 }
 
 type staticRolloutReader struct {

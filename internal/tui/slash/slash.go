@@ -31,6 +31,7 @@ var specs = []Spec{
 	{Name: "init", Usage: "/init [guidance]", Description: "run an agent pass to create or update AGENTS.md"},
 	{Name: "doctor", Usage: "/doctor", Description: "run health checks in the TUI"},
 	{Name: "retry", Usage: "/retry", Description: "rerun the last user turn"},
+	{Name: "btw", Usage: "/btw [question]", Description: "open the BTW side chat or ask without adding it to the main transcript"},
 	{Name: "resume", Usage: "/resume [session-id]", Description: "resume a historical session"},
 	{Name: "copy", Usage: "/copy [N]", Description: "copy last response to clipboard, or message N (shown as [N] in transcript)"},
 	{Name: "clear", Usage: "/clear", Description: "clear the conversation view"},

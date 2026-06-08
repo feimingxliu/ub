@@ -1315,6 +1315,20 @@ func renderWrappedPrefixed(text, prefix, indent string, width int, styles tuithe
 	return out
 }
 
+func renderMarkdownPrefixed(text, prefix, indent string, width int, styles tuitheme.Styles, prefixStyle lipgloss.Style) []string {
+	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
+	lines := markdownLines(text, textWidth, styles)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	out := make([]string, 0, len(lines))
+	out = append(out, renderMaybe(styles, prefixStyle, prefix)+lines[0])
+	for _, line := range lines[1:] {
+		out = append(out, indent+line)
+	}
+	return out
+}
+
 func renderMaybe(styles tuitheme.Styles, style lipgloss.Style, value string) string {
 	if styles.Plain {
 		return value

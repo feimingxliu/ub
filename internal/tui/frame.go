@@ -19,6 +19,9 @@ type footerFrame struct {
 }
 
 func (m Model) renderFrame() tuiFrame {
+	if m.btw.visible && m.pending == nil && m.pendingLimit == nil {
+		return m.renderSideQuestionFrame()
+	}
 	width := contentWidth(m.width)
 	height := frameHeight(m.height)
 	footer := m.footerFrame(width)
@@ -66,7 +69,7 @@ func padFrameLine(line string, width int) string {
 }
 
 func (m Model) frameCursor(inputY int) *tea.Cursor {
-	if m.pending != nil || m.picker != nil || m.sessions != nil {
+	if m.pending != nil || m.picker != nil || m.sessions != nil || m.btw.visible {
 		return nil
 	}
 	cur := m.input.Cursor()

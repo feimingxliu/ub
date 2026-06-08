@@ -33,6 +33,25 @@ type DoctorRunner interface {
 	Doctor(ctx context.Context) (string, error)
 }
 
+// SideQuestionMessage is one completed in-memory BTW exchange.
+type SideQuestionMessage struct {
+	Question string
+	Answer   string
+}
+
+// SideQuestionRequest is one BTW side-chat turn. History contains only the BTW
+// panel's in-memory thread, not the main transcript.
+type SideQuestionRequest struct {
+	Question string
+	History  []SideQuestionMessage
+}
+
+// SideQuestionRunner optionally lets the TUI answer no-tool side-chat turns
+// without recording them in the main conversation history.
+type SideQuestionRunner interface {
+	AnswerSideQuestion(ctx context.Context, req SideQuestionRequest, events chan<- Event) error
+}
+
 // ControlRunner optionally lets slash commands update future runs.
 type ControlRunner interface {
 	SetModel(model string) error
@@ -188,6 +207,12 @@ type streamEventMsg struct {
 	runID int
 }
 
+type sideQuestionEventMsg struct {
+	event Event
+	ok    bool
+	runID int
+}
+
 func waitForEvent(events <-chan Event, runID int) tea.Cmd {
 	return waitForEventWithTimeout(events, runID, 0)
 }
@@ -214,6 +239,13 @@ func waitForEventWithTimeout(events <-chan Event, runID int, timeout time.Durati
 	}
 }
 
+func waitForSideQuestionEvent(events <-chan Event, runID int) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-events
+		return sideQuestionEventMsg{event: event, ok: ok, runID: runID}
+	}
+}
+
 func runPrompt(ctx context.Context, runner Runner, prompt string, events chan<- Event) tea.Cmd {
 	return func() tea.Msg {
 		defer close(events)
@@ -228,6 +260,16 @@ func runShell(ctx context.Context, runner ShellRunner, command string, events ch
 	return func() tea.Msg {
 		defer close(events)
 		if err := runner.RunShell(ctx, command, events); err != nil {
+			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+		}
+		return nil
+	}
+}
+
+func runSideQuestion(ctx context.Context, runner SideQuestionRunner, req SideQuestionRequest, events chan<- Event) tea.Cmd {
+	return func() tea.Msg {
+		defer close(events)
+		if err := runner.AnswerSideQuestion(ctx, req, events); err != nil {
 			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
 		}
 		return nil

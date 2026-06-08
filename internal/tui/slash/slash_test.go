@@ -72,6 +72,16 @@ func TestParseApprovalModel(t *testing.T) {
 	}
 }
 
+func TestParseBtw(t *testing.T) {
+	cmd, err := Parse("/btw what is happening")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "btw" || len(cmd.Args) != 3 || cmd.Args[0] != "what" {
+		t.Fatalf("command = %#v, want btw question args", cmd)
+	}
+}
+
 func TestParseErrors(t *testing.T) {
 	for _, input := range []string{"hello", "/", "/unknown"} {
 		t.Run(input, func(t *testing.T) {
@@ -88,6 +98,16 @@ func TestMatchReturnsUsage(t *testing.T) {
 		t.Fatalf("matches = %#v, want model and mode", matches)
 	}
 	if matches[0].Usage != "/model [model]" || matches[1].Usage != "/mode <work|plan|auto|full-access>" {
+		t.Fatalf("matches = %#v", matches)
+	}
+}
+
+func TestMatchBtw(t *testing.T) {
+	matches := Match("/b")
+	if len(matches) != 1 {
+		t.Fatalf("matches = %#v, want btw", matches)
+	}
+	if matches[0].Name != "btw" || matches[0].Usage != "/btw [question]" {
 		t.Fatalf("matches = %#v", matches)
 	}
 }

@@ -135,6 +135,7 @@ type Model struct {
 	runStartedAt    time.Time
 	activitySummary string
 	toast           toastState
+	btw             sideQuestionState
 	clipboard       Clipboard
 	loadMessages    func(context.Context) ([]InitialMessage, error)
 	loadingMessages bool
@@ -218,6 +219,7 @@ func NewModel(opts Options) Model {
 		loadingMessages: opts.LoadMessages != nil,
 		width:           width,
 		height:          height,
+		btw:             newSideQuestionState(),
 		status: statusBar{
 			provider:      defaultString(providerName, "unknown"),
 			model:         modelName,
@@ -261,6 +263,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case streamEventMsg:
 		return m.handleStreamEvent(msg)
+	case sideQuestionEventMsg:
+		return m.handleSideQuestionEvent(msg)
 	case permissionRequestMsg:
 		return m.handlePermissionRequest(msg)
 	case limitRequestMsg:
@@ -461,6 +465,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.btw.visible {
+		switch msg := msg.(type) {
+		case tea.MouseWheelMsg:
+			switch msg.Mouse().Button {
+			case tea.MouseWheelUp:
+				m.scrollSideQuestion(sideQuestionWheelScrollLines)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollSideQuestion(-sideQuestionWheelScrollLines)
+				return m, nil
+			}
+		case tea.MouseClickMsg, tea.MouseReleaseMsg:
+			return m, nil
+		case tea.KeyPressMsg:
+			if updated, cmd, handled := m.handleSideQuestionKey(msg); handled {
+				return updated, cmd
+			}
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
@@ -603,6 +627,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if m.running {
+				if text := strings.TrimSpace(m.input.Value()); isSideQuestionInput(text) {
+					m.input.SetValue("")
+					m.files = nil
+					m.resetPromptHistoryNavigation()
+					return m.executeSlash(text)
+				}
 				if m.queueInput() {
 					return m, nil
 				}
@@ -1158,6 +1188,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m.runDoctor()
 	case "retry":
 		return m.retryLastTurn()
+	case "btw":
+		return m.startSideQuestion(cmd.Args)
 	case "copy":
 		return m.copyMessage(cmd.Args)
 	case "quit", "exit":

@@ -106,6 +106,7 @@
 | `/approval-model` | `[model]` | 设置 auto 模式下用作审批 agent 的模型，无参数列候选；不影响主对话 model |
 | `/mode` | `<work\|plan\|auto\|full-access>` | 切换执行模式（也可按 `Shift+Tab` 循环切） |
 | `/compact` | — | 主动触发上下文压缩（用 `small_model` 生成摘要） |
+| `/btw` | `[question]` | 打开独立 BTW 视图；带问题时立即旁路询问，不排队、不打断当前 turn、不写入主历史。回答按普通助手消息 Markdown 渲染；视图内直接输入追问并按 `Enter` 继续，底部显示 BTW 专属状态行（`answering` 表示模型回答中，`idle` 表示可继续追问），`PgUp`/`PgDown` 或滚轮只滚动 BTW 输出，`Esc` 返回主对话并清空 BTW 历史，`Ctrl+Y` 复制最新答案，`Ctrl+U` 清空当前记录并留在 BTW |
 | `/profile` | `<name>` | 显示切换 profile 的提示（需要重启 ub 才生效，因为 profile 影响启动期加载） |
 
 ## 4. 执行模式

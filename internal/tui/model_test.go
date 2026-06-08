@@ -2317,6 +2317,346 @@ func TestSlashCopyNoAssistantResponse(t *testing.T) {
 	}
 }
 
+func TestSlashBtwRunsWhileMainTurnIsRunningWithoutTranscriptPollution(t *testing.T) {
+	runner := &scriptedRunner{sideEvents: []Event{
+		{Type: EventDeltaText, Text: "side "},
+		{Type: EventDeltaText, Text: "answer"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner, Model: "fake/test"})
+	model = sendText(t, model, "main task")
+	updated, mainCmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if mainCmd == nil || !model.Running() {
+		t.Fatalf("main prompt should start a running turn")
+	}
+
+	model = sendText(t, model, "/btw what does this mean")
+	updated, sideCmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if sideCmd == nil {
+		t.Fatalf("/btw should start an async side question")
+	}
+	model = drainSideQuestion(t, model, sideCmd)
+
+	if runner.sideCalls != 1 || runner.sideQuestions[0] != "what does this mean" {
+		t.Fatalf("side calls/questions = %d/%#v", runner.sideCalls, runner.sideQuestions)
+	}
+	if !model.Running() {
+		t.Fatalf("main run should remain active after /btw")
+	}
+	if len(model.QueuedPrompts()) != 0 {
+		t.Fatalf("/btw should not queue as a main prompt: %#v", model.QueuedPrompts())
+	}
+	gotMessages := model.MessageTexts()
+	if len(gotMessages) < 1 || gotMessages[0] != "main task" {
+		t.Fatalf("messages = %#v, want main task first", gotMessages)
+	}
+	for _, text := range gotMessages {
+		if strings.Contains(text, "what does this mean") || strings.Contains(text, "side answer") {
+			t.Fatalf("side question polluted transcript messages: %#v", gotMessages)
+		}
+	}
+	view := viewString(model)
+	if !strings.Contains(view, "BTW (1)") ||
+		!strings.Contains(view, "Q1: what does this mean") ||
+		!strings.Contains(view, "A1: side answer") {
+		t.Fatalf("view missing side question view:\n%s", view)
+	}
+}
+
+func TestSlashBtwViewShowsWaitingHintWhileAsking(t *testing.T) {
+	runner := &scriptedRunner{sideEvents: []Event{
+		{Type: EventDeltaText, Text: "slow answer"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner, Model: "fake/test"})
+	model = sendText(t, model, "/btw slow question")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("/btw should return a command")
+	}
+
+	view := viewString(model)
+	if !strings.Contains(view, "waiting for answer...") || strings.Contains(view, "type follow-up...") {
+		t.Fatalf("asking BTW view should show waiting hint, not follow-up hint:\n%s", view)
+	}
+
+	model = sendText(t, model, "next question")
+	if model.btw.draft != "" {
+		t.Fatalf("asking BTW view accepted draft input: %q", model.btw.draft)
+	}
+	if strings.Contains(viewString(model), "next question") {
+		t.Fatalf("asking BTW view should not render draft input:\n%s", viewString(model))
+	}
+}
+
+func TestSlashBtwViewCopyClearAndEscClearsHistory(t *testing.T) {
+	clipboard := &recordingClipboard{}
+	runner := &scriptedRunner{sideEvents: []Event{
+		{Type: EventDeltaText, Text: "detached answer"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{Runner: runner, Model: "fake/test", Clipboard: clipboard})
+	model = sendText(t, model, "/btw quick question")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("/btw should return a command")
+	}
+	assertBTWStatusLine(t, model, "answering")
+	model = drainSideQuestion(t, model, cmd)
+	assertCursorOnBTWLine(t, model)
+	assertBTWStatusLine(t, model, "idle")
+
+	updated, copyCmd := model.Update(keyPress('y', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if copyCmd == nil {
+		t.Fatalf("copying side answer should return clipboard command")
+	}
+	updated, _ = model.Update(copyCmd())
+	model = assertModel(t, updated)
+	if clipboard.calls != 1 || clipboard.text != "detached answer" {
+		t.Fatalf("clipboard calls/text = %d/%q, want 1/detached answer", clipboard.calls, clipboard.text)
+	}
+
+	updated, _ = model.Update(keyPress('u', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if strings.Contains(viewString(model), "detached answer") {
+		t.Fatalf("Ctrl+U should clear BTW view:\n%s", viewString(model))
+	}
+	if !strings.Contains(viewString(model), "BTW") || !strings.Contains(viewString(model), "no BTW questions yet") {
+		t.Fatalf("Ctrl+U should keep an empty BTW view visible:\n%s", viewString(model))
+	}
+	assertCursorOnBTWLine(t, model)
+	assertBTWStatusLine(t, model, "idle")
+
+	model = sendText(t, model, "second question")
+	assertCursorOnBTWLine(t, model)
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("second BTW question should return a command")
+	}
+	model = drainSideQuestion(t, model, cmd)
+	if !strings.Contains(viewString(model), "detached answer") {
+		t.Fatalf("second BTW answer missing:\n%s", viewString(model))
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+	if strings.Contains(viewString(model), "detached answer") {
+		t.Fatalf("Esc should exit BTW view and clear its history:\n%s", viewString(model))
+	}
+	if model.btw.visible || len(model.btw.entries) != 0 || model.btw.draft != "" {
+		t.Fatalf("Esc did not reset BTW state: %#v", model.btw)
+	}
+	model = sendText(t, model, "/btw")
+	updated, reopenCmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if reopenCmd != nil {
+		t.Fatalf("/btw with no args should only open an empty BTW view")
+	}
+	if strings.Contains(viewString(model), "detached answer") || !strings.Contains(viewString(model), "no BTW questions yet") {
+		t.Fatalf("/btw should not reopen an Esc-cleared answer:\n%s", viewString(model))
+	}
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("side question should not create transcript messages: %#v", got)
+	}
+}
+
+func TestSlashBtwViewSupportsFollowUpWithSideHistory(t *testing.T) {
+	runner := &scriptedRunner{sideEventScripts: [][]Event{
+		{
+			{Type: EventDeltaText, Text: "first answer"},
+			{Type: EventDone},
+		},
+		{
+			{Type: EventDeltaText, Text: "second answer"},
+			{Type: EventDone},
+		},
+	}}
+	model := NewModel(Options{Runner: runner, Model: "fake/test"})
+	model = sendText(t, model, "/btw first question")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	model = drainSideQuestion(t, model, cmd)
+
+	model = sendText(t, model, "follow up")
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("follow-up should start a side question request")
+	}
+	model = drainSideQuestion(t, model, cmd)
+
+	if runner.sideCalls != 2 {
+		t.Fatalf("sideCalls = %d, want 2", runner.sideCalls)
+	}
+	if runner.sideQuestions[1] != "follow up" {
+		t.Fatalf("follow-up question = %q, want follow up", runner.sideQuestions[1])
+	}
+	if len(runner.sideRequests) != 2 || len(runner.sideRequests[1].History) != 1 {
+		t.Fatalf("second side request history = %#v", runner.sideRequests)
+	}
+	if got := runner.sideRequests[1].History[0]; got.Question != "first question" || got.Answer != "first answer" {
+		t.Fatalf("history[0] = %#v, want first Q/A", got)
+	}
+	view := viewString(model)
+	for _, want := range []string{"Q1: first question", "A1: first answer", "Q2: follow up", "A2: second answer"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view missing %q:\n%s", want, view)
+		}
+	}
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("btw side chat should not create transcript messages: %#v", got)
+	}
+}
+
+func TestSlashBtwViewRendersAnswerMarkdown(t *testing.T) {
+	runner := &scriptedRunner{sideEvents: []Event{
+		{Type: EventDeltaText, Text: "# BTW Plan\n\n- inspect repository\n- patch renderer\n\n```go\nfmt.Println(\"btw\")\n```"},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{
+		Runner:        runner,
+		Model:         "fake/test",
+		initialWidth:  100,
+		initialHeight: 24,
+	})
+	model = sendText(t, model, "/btw markdown answer")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("/btw should return a command")
+	}
+	model = drainSideQuestion(t, model, cmd)
+
+	view := viewString(model)
+	for _, want := range []string{"BTW Plan", "inspect repository", "patch renderer", `fmt.Println("btw")`} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("BTW markdown view missing %q:\n%s", want, view)
+		}
+	}
+	for _, raw := range []string{"# BTW Plan", "```go"} {
+		if strings.Contains(view, raw) {
+			t.Fatalf("BTW answer should render Markdown, found raw marker %q:\n%s", raw, view)
+		}
+	}
+}
+
+func TestSlashBtwDedicatedViewScrollsIndependently(t *testing.T) {
+	var sideEvents []Event
+	for i := 1; i <= 14; i++ {
+		sideEvents = append(sideEvents, Event{Type: EventDeltaText, Text: fmt.Sprintf("- side-line-%02d\n", i)})
+	}
+	sideEvents = append(sideEvents, Event{Type: EventDone})
+	runner := &scriptedRunner{sideEvents: sideEvents}
+	model := NewModel(Options{
+		Runner:        runner,
+		Model:         "fake/test",
+		Messages:      []InitialMessage{{Role: assistantRole, Text: "main-history-marker"}},
+		initialWidth:  80,
+		initialHeight: 10,
+	})
+
+	model = sendText(t, model, "/btw long answer")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatalf("/btw should return a command")
+	}
+	model = drainSideQuestion(t, model, cmd)
+
+	view := viewString(model)
+	if strings.Contains(view, "main-history-marker") {
+		t.Fatalf("BTW view should replace the main transcript while open:\n%s", view)
+	}
+	if !strings.Contains(view, "side-line-14") {
+		t.Fatalf("BTW view should start at the bottom of the side answer:\n%s", view)
+	}
+	if model.scroll != 0 || model.btw.scroll != 0 {
+		t.Fatalf("initial scrolls = main:%d btw:%d, want 0/0", model.scroll, model.btw.scroll)
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyPgUp))
+	model = assertModel(t, updated)
+	if model.btw.scroll == 0 {
+		t.Fatalf("PgUp should scroll BTW content")
+	}
+	if model.scroll != 0 {
+		t.Fatalf("PgUp in BTW view scrolled main transcript to %d", model.scroll)
+	}
+	view = viewString(model)
+	if strings.Contains(view, "main-history-marker") || strings.Contains(view, "side-line-14") {
+		t.Fatalf("PgUp should reveal older BTW lines, not main transcript or bottom line:\n%s", view)
+	}
+
+	previousBTWScroll := model.btw.scroll
+	updated, _ = model.Update(mouseWheel(tea.MouseWheelDown))
+	model = assertModel(t, updated)
+	if model.btw.scroll >= previousBTWScroll {
+		t.Fatalf("mouse wheel down should scroll BTW content down, got %d from %d", model.btw.scroll, previousBTWScroll)
+	}
+	if model.scroll != 0 {
+		t.Fatalf("mouse wheel in BTW view scrolled main transcript to %d", model.scroll)
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyEnd, tea.ModCtrl))
+	model = assertModel(t, updated)
+	if model.btw.scroll != 0 {
+		t.Fatalf("Ctrl+End should return BTW content to bottom, got scroll %d", model.btw.scroll)
+	}
+	if !strings.Contains(viewString(model), "side-line-14") {
+		t.Fatalf("Ctrl+End should show latest BTW output:\n%s", viewString(model))
+	}
+}
+
+func TestSlashBtwViewCachesRenderedBodyWhileEditingAndScrolling(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 80; i++ {
+		lines = append(lines, fmt.Sprintf("- cached-line-%02d", i))
+	}
+	runner := &scriptedRunner{sideEvents: []Event{
+		{Type: EventDeltaText, Text: "# Cached BTW\n\n" + strings.Join(lines, "\n")},
+		{Type: EventDone},
+	}}
+	model := NewModel(Options{
+		Runner:        runner,
+		Model:         "fake/test",
+		initialWidth:  100,
+		initialHeight: 14,
+	})
+
+	model = sendText(t, model, "/btw long cached answer")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	model = drainSideQuestion(t, model, cmd)
+	_ = model.View()
+	cacheKey := singleSideQuestionCacheKey(t, model)
+	cacheVersion := model.btw.renderVersion
+
+	model = sendText(t, model, "draft follow up")
+	_ = model.View()
+	if model.btw.renderVersion != cacheVersion {
+		t.Fatalf("typing draft invalidated BTW body render cache: %d -> %d", cacheVersion, model.btw.renderVersion)
+	}
+	if _, ok := model.btw.bodyCache[cacheKey]; !ok || len(model.btw.bodyCache) != 1 {
+		t.Fatalf("typing draft changed BTW body cache: key present=%v cache=%#v", ok, model.btw.bodyCache)
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyPgUp))
+	model = assertModel(t, updated)
+	_ = model.View()
+	if model.btw.renderVersion != cacheVersion {
+		t.Fatalf("scrolling invalidated BTW body render cache: %d -> %d", cacheVersion, model.btw.renderVersion)
+	}
+	if _, ok := model.btw.bodyCache[cacheKey]; !ok || len(model.btw.bodyCache) != 1 {
+		t.Fatalf("scrolling changed BTW body cache: key present=%v cache=%#v", ok, model.btw.bodyCache)
+	}
+}
+
 func TestCopyIndexOnlyNumbersTextMessages(t *testing.T) {
 	var list messageList
 	list.append(userRole, "user prompt")
@@ -4181,6 +4521,11 @@ type scriptedRunner struct {
 	doctorReport          string
 	doctorErr             error
 	doctorCalls           int
+	sideEvents            []Event
+	sideEventScripts      [][]Event
+	sideCalls             int
+	sideQuestions         []string
+	sideRequests          []SideQuestionRequest
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -4203,6 +4548,25 @@ func (r *scriptedRunner) Compact(_ context.Context, events chan<- Event) error {
 func (r *scriptedRunner) Doctor(context.Context) (string, error) {
 	r.doctorCalls++
 	return r.doctorReport, r.doctorErr
+}
+
+func (r *scriptedRunner) AnswerSideQuestion(_ context.Context, req SideQuestionRequest, events chan<- Event) error {
+	callIndex := r.sideCalls
+	r.sideCalls++
+	r.sideQuestions = append(r.sideQuestions, req.Question)
+	r.sideRequests = append(r.sideRequests, req)
+	script := r.sideEvents
+	if len(r.sideEventScripts) > 0 {
+		if callIndex < len(r.sideEventScripts) {
+			script = r.sideEventScripts[callIndex]
+		} else {
+			script = r.sideEventScripts[len(r.sideEventScripts)-1]
+		}
+	}
+	for _, event := range script {
+		events <- event
+	}
+	return nil
 }
 
 func (r *scriptedRunner) RunShell(_ context.Context, command string, events chan<- Event) error {
@@ -4442,6 +4806,32 @@ func drainBatch(t *testing.T, model Model, cmd tea.Cmd) Model {
 	return model
 }
 
+func drainSideQuestion(t *testing.T, model Model, cmd tea.Cmd) Model {
+	t.Helper()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("cmd returned %T, want tea.BatchMsg", cmd())
+	}
+	if len(batch) != 2 {
+		t.Fatalf("batch len = %d, want 2", len(batch))
+	}
+	_ = batch[0]()
+	msg := batch[1]()
+	for steps := 0; steps < 32; steps++ {
+		if msg == nil {
+			return model
+		}
+		updated, next := model.Update(msg)
+		model = assertModel(t, updated)
+		if next == nil {
+			return model
+		}
+		msg = next()
+	}
+	t.Fatalf("drainSideQuestion did not settle after 32 stream messages; last message %T", msg)
+	return model
+}
+
 func sendText(t *testing.T, model Model, text string) Model {
 	t.Helper()
 	for _, r := range text {
@@ -4465,6 +4855,49 @@ func assertCursorOnInputLine(t *testing.T, model Model, marker string) {
 	if view.Cursor == nil || view.Cursor.Y != inputLine {
 		t.Fatalf("cursor = %+v, want Y %d\n%s", view.Cursor, inputLine, view.Content)
 	}
+}
+
+func assertCursorOnBTWLine(t *testing.T, model Model) {
+	t.Helper()
+	view := model.View()
+	inputLine := lineContaining(strings.Split(view.Content, "\n"), "BTW>")
+	if inputLine < 0 {
+		t.Fatalf("BTW input line missing:\n%s", view.Content)
+	}
+	if view.Cursor == nil || view.Cursor.Y != inputLine {
+		t.Fatalf("cursor = %+v, want BTW input Y %d\n%s", view.Cursor, inputLine, view.Content)
+	}
+}
+
+func assertBTWStatusLine(t *testing.T, model Model, state string) {
+	t.Helper()
+	lines := strings.Split(viewString(model), "\n")
+	if len(lines) == 0 {
+		t.Fatalf("BTW view is empty")
+	}
+	status := lines[len(lines)-1]
+	for _, want := range []string{"view: btw", "state: " + state, "esc: return & clear"} {
+		if !strings.Contains(status, want) {
+			t.Fatalf("BTW status missing %q:\n%s", want, strings.Join(lines, "\n"))
+		}
+	}
+	for _, unexpected := range []string{"cwd:", "turn:", "?"} {
+		if strings.Contains(status, unexpected) {
+			t.Fatalf("BTW status should not show main status segment %q:\n%s", unexpected, strings.Join(lines, "\n"))
+		}
+	}
+}
+
+func singleSideQuestionCacheKey(t *testing.T, model Model) string {
+	t.Helper()
+	if len(model.btw.bodyCache) != 1 {
+		t.Fatalf("BTW body cache len = %d, want 1: %#v", len(model.btw.bodyCache), model.btw.bodyCache)
+	}
+	for key := range model.btw.bodyCache {
+		return key
+	}
+	t.Fatalf("unreachable empty BTW body cache")
+	return ""
 }
 
 func lineContaining(lines []string, needle string) int {
