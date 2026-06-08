@@ -97,6 +97,59 @@ func TestPlanWrite_HappyPath(t *testing.T) {
 	}
 }
 
+func TestListPlansNewestFirst(t *testing.T) {
+	ws := testWorkspace(t)
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+	first, err := execTool(t, newWriteTool(ws), writeArgs{
+		Title: "First Plan",
+		Steps: []string{"inspect", "patch"},
+	})
+	if err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+	firstID := extractPlanID(t, first.Content)
+	firstPath, err := planPath(ws, firstID)
+	if err != nil {
+		t.Fatalf("first path: %v", err)
+	}
+	firstTime := time.Date(2026, 5, 27, 10, 1, 0, 0, time.UTC)
+	if err := os.Chtimes(firstPath, firstTime, firstTime); err != nil {
+		t.Fatalf("chtimes first: %v", err)
+	}
+
+	freezeTime(t, time.Date(2026, 5, 27, 10, 2, 0, 0, time.UTC))
+	second, err := execTool(t, newWriteTool(ws), writeArgs{
+		Title: "Second Plan",
+		Steps: []string{"test"},
+	})
+	if err != nil {
+		t.Fatalf("write second: %v", err)
+	}
+	secondID := extractPlanID(t, second.Content)
+	secondPath, err := planPath(ws, secondID)
+	if err != nil {
+		t.Fatalf("second path: %v", err)
+	}
+	secondTime := time.Date(2026, 5, 27, 10, 3, 0, 0, time.UTC)
+	if err := os.Chtimes(secondPath, secondTime, secondTime); err != nil {
+		t.Fatalf("chtimes second: %v", err)
+	}
+
+	plans, err := List(ws)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("plans = %#v, want 2", plans)
+	}
+	if plans[0].ID != secondID || plans[0].Title != "Second Plan" || plans[0].Status != statusInProgress || plans[0].StepCount != 1 || plans[0].Path != secondPath {
+		t.Fatalf("newest plan = %#v, want second plan metadata", plans[0])
+	}
+	if plans[1].ID != firstID || plans[1].StepCount != 2 {
+		t.Fatalf("older plan = %#v, want first plan", plans[1])
+	}
+}
+
 func TestPlanWrite_AcceptsJSONEncodedStepsString(t *testing.T) {
 	ws := testWorkspace(t)
 	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))

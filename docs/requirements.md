@@ -34,7 +34,7 @@
 |---|---|
 | 对话 | 多轮、流式输出、可中断 |
 | Provider | Anthropic Claude（官方 SDK）、OpenAI（官方 SDK）、OpenAI 兼容协议（含 Ollama `/v1`） |
-| Tools | read / write / edit（含 diff 预览）、bash（权限审批）、grep / glob / ls、job_run / job_output / job_kill |
+| Tools | read / write / edit（含 diff 预览）、bash（权限审批）、grep / glob / ls、job_run / job_output / job_kill、plan_write / plan_update / plan_update_step、todo_write / todo_update |
 | 权限 | 交互式 allow / deny；支持 always-allow 规则 |
 | 执行模式 | `work` / `plan` / `auto` / `full-access` 四种模式，控制文件写入与命令审批路径 |
 | 会话 | SQLite 持久化、可列出 / 切换 / 恢复 |
@@ -91,6 +91,8 @@
 - F-TOOL-3：MCP 工具与本地工具走同一接口，从 namespace 区分
 - F-TOOL-4：工具结果可以是文本、文件 diff、错误，统一进入消息流
 - F-TOOL-5：Agent loop MUST NOT 使用小的固定默认轮数截断正常工具链路；`max_turns` 未设置时默认不按步数截断，只有 `max_turns > 0` 才启用 hard guard。系统 MUST 对重复相同 tool-call/result 的循环做基础检测，并在命中时发起一次禁用工具的收尾请求，避免无限重复。
+- F-TOOL-6：系统 MUST 提供 `todo_write` / `todo_update` 维护当前 session 的执行清单；todo 状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`，同一清单最多一个 `in_progress`。todo 工具 MUST 与 plan artifact 分离，不直接修改 plan markdown checkbox；其 tool result MUST 进入 rollout，并且 TUI MUST 将其渲染为独立 Todo view 而不是只藏在 tool block 详情中，以便 live view、resume 和调试重建清单。
+- F-TOOL-7：TUI MUST 提供 plan artifact review/edit 入口，允许用户从 plan tool 完成摘要中看到 `plan_id`，也允许通过当前 workspace 的 plan picker 选择 artifact，或按 `plan_id` 打开 state-root 下的 plan markdown 并在外部编辑器中修改，编辑完成后返回 TUI。
 
 ### 4.4 执行模式
 

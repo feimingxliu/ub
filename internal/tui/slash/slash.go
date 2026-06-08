@@ -29,6 +29,8 @@ var specs = []Spec{
 	{Name: "mode", Usage: "/mode <work|plan|auto|full-access>", Description: "switch execution mode"},
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
 	{Name: "init", Usage: "/init [guidance]", Description: "run an agent pass to create or update AGENTS.md"},
+	{Name: "plans", Usage: "/plans [plan-id]", Description: "show plan artifacts or open one in $EDITOR"},
+	{Name: "plan-edit", Usage: "/plan-edit <plan-id>", Description: "open a plan artifact in $EDITOR"},
 	{Name: "doctor", Usage: "/doctor", Description: "run health checks in the TUI"},
 	{Name: "retry", Usage: "/retry", Description: "rerun the last user turn"},
 	{Name: "btw", Usage: "/btw [question]", Description: "open the BTW side chat or ask without adding it to the main transcript"},

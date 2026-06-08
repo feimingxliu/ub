@@ -41,6 +41,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
 	tasktool "github.com/feimingxliu/ub/internal/tool/task"
+	todotool "github.com/feimingxliu/ub/internal/tool/todo"
 	"github.com/feimingxliu/ub/internal/tooloutput"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
@@ -566,6 +567,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		return nil, err
 	}
 	if err := tasktool.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := todotool.Register(reg); err != nil {
 		return nil, err
 	}
 	for _, register := range []func(*tool.Registry, string) error{

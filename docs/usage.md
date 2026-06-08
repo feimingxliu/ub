@@ -100,6 +100,8 @@
 | `/sessions` | `[session-id\|search <query>]` | 列出当前工作区的历史 session，方向键选择 + Enter 切换；带 id 时直接切换 |
 | `/resume` | `[session-id]` | 恢复历史 session：无参数打开选择器，带 id 时直接恢复 |
 | `/init` | `[guidance]` | 启动一轮 agent 调研当前工作区，并创建或改进 `AGENTS.md` |
+| `/plans` | `[plan-id]` | 列出当前工作区的 plan artifact，方向键选择 + Enter 编辑；带 id 时直接打开 |
+| `/plan-edit` | `<plan-id>` | 用 `$VISUAL` / `$EDITOR` 打开 state-root 下的 plan markdown，编辑后回到 TUI |
 | `/provider` | `[provider] [model]` | 无参数列可用 provider；带参数切换 provider（可同时换 model） |
 | `/model` | `[model]` | 无参数列当前 provider 下可用 model；带参数切换 |
 | `/effort` | `[level]` | 切换 reasoning effort（`none` / `minimal` / `low` / `medium` / `high` / `xhigh`），仅对支持 reasoning 的模型生效 |
@@ -351,7 +353,10 @@ ub 在 write / edit 工具执行后会主动给 LSP 发 `didChange`，保证 dia
 
 ## 10. Plan-then-execute
 
-ub 提供三个 plan 工具,工作流是:**plan 模式产出/修订 artifact → work 模式照单施工 → 每完成一步打勾**。
+ub 提供 plan artifact 和 session todo 两层工作流:
+
+- `plan_write` / `plan_update` / `plan_update_step` 管理可 review、可恢复的持久计划 artifact
+- `todo_write` / `todo_update` 管理当前 session 的短生命周期执行清单,用于 TUI 中实时展示正在做什么
 
 1. **进 plan 模式**(`Shift+Tab` 循环模式,或 `--mode plan` 启动),让 agent 把思路 `plan_write` 成一个 markdown:
 
@@ -363,7 +368,7 @@ ub 提供三个 plan 工具,工作流是:**plan 模式产出/修订 artifact →
    )
    ```
 
-   `plan_write` 只在 plan 模式暴露和执行;work/auto 模式不会让模型创建新 plan。plan 模式会给模型注入规划约束,并只暴露 read / ls / glob / grep / plan_write / plan_update。工具会在 `$XDG_STATE_HOME/ub/plans/<project-key>/<时间戳>-<slug>.md` 写一个文件,并把 `plan_id` 和绝对 `path` 返回。
+   `plan_write` 只在 plan 模式暴露和执行;work/auto 模式不会让模型创建新 plan。plan 模式会给模型注入规划约束,并只暴露 read / ls / glob / grep / plan_write / plan_update。工具会在 `$XDG_STATE_HOME/ub/plans/<project-key>/<时间戳>-<slug>.md` 写一个文件,并把 `plan_id` 和绝对 `path` 返回。TUI 完成行会直接显示 `Wrote plan <plan-id>` / `Updated plan <plan-id>`,也可以用 `/plans` 列出当前 workspace 的所有 plan artifact。
 
 2. **修订已有 plan**:如果你在 plan 模式纠正了模型的计划,agent 应使用 `plan_update` 原地更新同一个 `plan_id`,而不是再次调用 `plan_write` 创建新 plan:
 
@@ -375,6 +380,15 @@ ub 提供三个 plan 工具,工作流是:**plan 模式产出/修订 artifact →
    )
    ```
 
+   也可以在 TUI 中直接 review/edit plan artifact:
+
+   ```
+   /plans
+   /plan-edit 20260527T..
+   ```
+
+   `/plans` 会打开可筛选的 plan picker,回车后用 `$VISUAL` / `$EDITOR` 打开所选 markdown;`/plan-edit <plan-id>` 和 `/plans <plan-id>` 则直接打开 `$XDG_STATE_HOME/ub/plans/<project-key>/<plan-id>.md`,编辑器退出后回到 TUI。
+
 3. **切到 work 模式**继续会话。agent 用 `read` 看 plan,按顺序执行;每完成一步调 `plan_update_step`:
 
    ```
@@ -383,7 +397,26 @@ ub 提供三个 plan 工具,工作流是:**plan 模式产出/修订 artifact →
 
    状态机:`in_progress`(`[>]`)/ `done`(`[x]`)/ `skipped`(`[~]`)/ `failed`(`[!]`)/ `pending` 回退(`[ ]`)。当所有步骤都进入终态(`done` / `skipped` / `failed`)时,文件顶部的 `Status:` 自动变 `complete`,并在 `## Log` 末尾追加一条带时间戳的记录。
 
-4. **中断恢复**:下次会话从上次 tool result / rollout 中取回 `path` 后可直接 `read` 这个 state-root 下的 plan,或用 `plan_update_step(plan_id="...")` 继续标记进度。plan artifact 是用户 state 数据,不会写入工作区或参与 git。
+4. **普通多步骤任务用 todo**:不需要持久 plan 的任务可以直接在 work/auto 模式创建执行清单:
+
+   ```
+   todo_write(items=[
+     {"id":"inspect","content":"read existing middleware","status":"in_progress"},
+     {"id":"patch","content":"patch auth middleware"},
+     {"id":"test","content":"run focused tests"}
+   ])
+   ```
+
+   每完成一步更新 todo:
+
+   ```
+   todo_update(id="inspect", status="completed", note="found auth boundary")
+   todo_update(id="patch", status="in_progress")
+   ```
+
+   todo 状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`,同一清单最多一个 `in_progress`。TUI 会把 `todo_*` 的 tool result 抽取成独立 Todo checklist,工具 block 只保留审计行;rollout 也会记录这些 tool result,所以 resume / `ub rollout show` 能看到历史执行清单。todo state 存在 `$XDG_STATE_HOME/ub/todos/<session-id>.json`,不写入工作区、不复用 plan markdown 的 checkbox。
+
+5. **中断恢复**:下次会话从上次 tool result / rollout 中取回 `path` 后可直接 `read` 这个 state-root 下的 plan,或用 `plan_update_step(plan_id="...")` 继续标记进度。plan artifact 是用户 state 数据,不会写入工作区或参与 git。session todo 会随 session id 保存在 state-root 下,可继续用 `todo_update` 更新。
 
 ## 11. Agent loop 上限
 

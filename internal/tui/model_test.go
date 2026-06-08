@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tool/plan"
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
 )
 
@@ -842,6 +844,115 @@ func TestFailedToolCollapsedTitleHidesDetail(t *testing.T) {
 	}
 }
 
+func TestTodoActivityRendersStandaloneChecklist(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 7
+	model.events = make(chan Event)
+	content := "session_id=sess_1\ntodo_count=3\n\n## Todo\n\n- [x] 1. inspect code\n- [>] 2. patch files {id=patch}\n- [!] 3. run tests - validation failed\n"
+
+	updated, cmd := model.Update(streamEventMsg{runID: 7, ok: true, event: Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_todo",
+		ToolName:     "todo_update",
+		Status:       "done",
+		Summary:      "id=patch, status=in_progress",
+		Content:      content,
+	}})
+	if cmd == nil {
+		t.Fatal("activity event should continue waiting for stream events")
+	}
+	model = assertModel(t, updated)
+	if len(model.messages.items) != 2 {
+		t.Fatalf("message item count = %d, want tool audit plus standalone todo", len(model.messages.items))
+	}
+	if model.messages.items[0].kind != toolMessage || model.messages.items[0].detail != "" {
+		t.Fatalf("first item = %#v, want tool audit without todo detail", model.messages.items[0])
+	}
+	if model.messages.items[1].kind != todoMessage {
+		t.Fatalf("second item kind = %s, want todo", model.messages.items[1].kind)
+	}
+
+	view := viewString(model)
+	for _, want := range []string{"Todo: 1 running, 1 done, 1 failed", "[x] inspect code", "[>] patch files {id=patch}", "[!] run tests - validation failed"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("todo view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "session_id=sess_1") || strings.Contains(view, "todo_count=3") {
+		t.Fatalf("todo view should hide metadata:\n%s", view)
+	}
+}
+
+func TestTodoActivityUpdatesStandaloneChecklistInPlace(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 7
+	model.events = make(chan Event)
+	first := "session_id=sess_1\ntodo_count=2\n\n## Todo\n\n- [>] 1. inspect\n- [ ] 2. patch\n"
+	second := "session_id=sess_1\ntodo_count=2\n\n## Todo\n\n- [x] 1. inspect\n- [>] 2. patch\n"
+
+	updated, cmd := model.Update(streamEventMsg{runID: 7, ok: true, event: Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_todo_1",
+		ToolName:     "todo_write",
+		Status:       "done",
+		Summary:      "items=2",
+		Content:      first,
+	}})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("first todo activity should continue waiting")
+	}
+	updated, cmd = model.Update(streamEventMsg{runID: 7, ok: true, event: Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_todo_2",
+		ToolName:     "todo_update",
+		Status:       "done",
+		Summary:      "id=patch, status=in_progress",
+		Content:      second,
+	}})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("second todo activity should continue waiting")
+	}
+
+	todoCount := 0
+	for _, item := range model.messages.items {
+		if item.kind == todoMessage {
+			todoCount++
+			if !strings.Contains(item.detail, "- [>] 2. patch") {
+				t.Fatalf("todo detail not updated in place:\n%s", item.detail)
+			}
+		}
+	}
+	if todoCount != 1 {
+		t.Fatalf("todo block count = %d, want 1; items=%#v", todoCount, model.messages.items)
+	}
+}
+
+func TestTodoActivityRestoresStandaloneChecklistFromHistory(t *testing.T) {
+	content := "session_id=sess_1\ntodo_count=1\n\n## Todo\n\n- [>] 1. patch\n"
+	model := NewModel(Options{Messages: []InitialMessage{{
+		Turn:         1,
+		ActivityKind: "tool",
+		ToolUseID:    "call_todo",
+		ToolName:     "todo_write",
+		Status:       "done",
+		Summary:      "items=1",
+		Content:      content,
+	}}})
+	if len(model.messages.items) != 2 || model.messages.items[1].kind != todoMessage {
+		t.Fatalf("restored items = %#v, want tool audit plus todo", model.messages.items)
+	}
+	if view := viewString(model); !strings.Contains(view, "[>] patch") {
+		t.Fatalf("restored todo missing checklist:\n%s", view)
+	}
+}
+
 func TestToolActivityUpdatesInPlace(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true
@@ -1471,6 +1582,8 @@ func TestBuiltInToolActivitiesUseExplicitLabels(t *testing.T) {
 		{"plan_write", "Writing plan...", "Wrote plan"},
 		{"plan_update", "Updating plan...", "Updated plan"},
 		{"plan_update_step", "Updating plan step...", "Updated plan step"},
+		{"todo_write", "Writing todos...", "Wrote todos"},
+		{"todo_update", "Updating todos...", "Updated todos"},
 		{"tool_result", "Reading tool result...", "Read tool result"},
 		{"diagnostics", "Checking diagnostics...", "Checked diagnostics"},
 		{"references", "Finding references...", "Found references"},
@@ -1491,6 +1604,16 @@ func TestBuiltInToolActivitiesUseExplicitLabels(t *testing.T) {
 		if got := toolTitle(tc.name, ""); got != tc.completed {
 			t.Fatalf("toolTitle(%q) = %q, want %q", tc.name, got, tc.completed)
 		}
+	}
+}
+
+func TestPlanToolActivityShowsPlanID(t *testing.T) {
+	content := "plan_id=20260608T120000Z-fix-login\npath=/tmp/plan.md\n\n# Fix Login\n"
+	if got := toolActivityText(Event{ActivityKind: "tool", ToolName: "plan_write", Status: "done", Summary: "title=Fix Login steps=3", Content: content}); got != "Wrote plan 20260608T120000Z-fix-login" {
+		t.Fatalf("plan_write title = %q, want visible plan id", got)
+	}
+	if got := toolActivityText(Event{ActivityKind: "tool", ToolName: "plan_update", Status: "done", Summary: "title=Fix Login", Content: content}); got != "Updated plan 20260608T120000Z-fix-login" {
+		t.Fatalf("plan_update title = %q, want visible plan id", got)
 	}
 }
 
@@ -2104,6 +2227,113 @@ func TestSlashInitUnavailable(t *testing.T) {
 	model = assertModel(t, updated)
 	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "init is unavailable") {
 		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashPlanEditRequiresPlanID(t *testing.T) {
+	model := NewModel(Options{})
+	model = sendText(t, model, "/plan-edit")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash plan-edit returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "usage: /plan-edit <plan-id>") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashPlanEditOpensExistingPlan(t *testing.T) {
+	stateHome := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("VISUAL", "true")
+	workspace := t.TempDir()
+	path, err := plan.Path(workspace, "plan-1")
+	if err != nil {
+		t.Fatalf("plan path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("# Plan\n"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	model := NewModel(Options{Cwd: workspace})
+	model = sendText(t, model, "/plan-edit plan-1")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("slash plan-edit returned nil command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "editing plan "+path) {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashPlansPickerOpensExistingPlan(t *testing.T) {
+	stateHome := filepath.Join(t.TempDir(), "state")
+	t.Setenv("XDG_STATE_HOME", stateHome)
+	t.Setenv("VISUAL", "true")
+	workspace := t.TempDir()
+	path, err := plan.Path(workspace, "20260608T120000Z-fix")
+	if err != nil {
+		t.Fatalf("plan path: %v", err)
+	}
+	writePlanFile(t, path, "Fix Plan", "in_progress", []string{"inspect", "patch"})
+
+	model := NewModel(Options{Cwd: workspace})
+	model = sendText(t, model, "/plans")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash plans returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "select plan") || !strings.Contains(view, "20260608T120000Z-fix") || !strings.Contains(view, "Fix Plan") {
+		t.Fatalf("plans picker missing plan id/title:\n%s", view)
+	}
+
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("selecting plan returned nil command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "editing plan "+path) {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashPlansReportsEmptyWorkspace(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	model := NewModel(Options{Cwd: t.TempDir()})
+	model = sendText(t, model, "/plans")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash plans returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "no plans in this workspace" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestPlanEditorCommandUsesVisualThenEditor(t *testing.T) {
+	lookup := func(key string) (string, bool) {
+		switch key {
+		case "VISUAL":
+			return "code --wait", true
+		case "EDITOR":
+			return "vim", true
+		default:
+			return "", false
+		}
+	}
+	name, args := planEditorCommandFromEnv(lookup)
+	if name != "code" || len(args) != 1 || args[0] != "--wait" {
+		t.Fatalf("editor command = %q %#v, want code --wait", name, args)
 	}
 }
 
@@ -4843,6 +5073,25 @@ func sendText(t *testing.T, model Model, text string) Model {
 
 func viewString(model Model) string {
 	return xansi.Strip(model.View().Content)
+}
+
+func writePlanFile(t *testing.T, path, title, status string, steps []string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("# " + title + "\n\n")
+	b.WriteString("Created: 2026-06-08T12:00:00Z\n")
+	b.WriteString("Status: " + status + "\n\n")
+	b.WriteString("## Steps\n\n")
+	for i, step := range steps {
+		fmt.Fprintf(&b, "- [ ] %d. %s\n", i+1, step)
+	}
+	b.WriteString("\n## Notes\n\n\n## Log\n\n")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir plan dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
 }
 
 func assertCursorOnInputLine(t *testing.T, model Model, marker string) {

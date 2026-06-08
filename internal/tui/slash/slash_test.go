@@ -42,6 +42,26 @@ func TestParseInit(t *testing.T) {
 	}
 }
 
+func TestParsePlanEdit(t *testing.T) {
+	cmd, err := Parse("/plan-edit 20260608T120000Z-fix")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "plan-edit" || len(cmd.Args) != 1 || cmd.Args[0] != "20260608T120000Z-fix" {
+		t.Fatalf("command = %#v, want plan-edit id", cmd)
+	}
+}
+
+func TestParsePlans(t *testing.T) {
+	cmd, err := Parse("/plans 20260608T120000Z-fix")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "plans" || len(cmd.Args) != 1 || cmd.Args[0] != "20260608T120000Z-fix" {
+		t.Fatalf("command = %#v, want plans id", cmd)
+	}
+}
+
 func TestParseNew(t *testing.T) {
 	cmd, err := Parse("/new")
 	if err != nil {

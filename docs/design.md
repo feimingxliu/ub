@@ -59,6 +59,7 @@ ub/
 │   │   ├── tool.go                    # Tool 接口、Risk、Registry
 │   │   ├── fs/                        # read / write / edit / multiedit / ls / glob / tool_result
 │   │   ├── plan/                      # plan_write / plan_update / plan_update_step
+│   │   ├── todo/                      # todo_write / todo_update
 │   │   ├── search/                    # grep / glob
 │   │   ├── shell/                     # bash
 │   │   ├── job/                       # job_run / job_output / job_kill
@@ -152,7 +153,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **loop detection**：内置基础重复检测；最近窗口内相同 tool-call/result 签名重复超过阈值时，agent 不再继续调用工具，而是发起一次禁用工具的收尾请求。更复杂的跨模式/跨会话策略放到 V2 深化。
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
 - **执行模式**：`mode` 从 CLI / profile / config 注入，影响 write/exec tool 的放行路径；TUI 内模式切换只影响当前进程，不写入 session/rollout
-- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；所有内置工具和 `mcp__<server>__<tool>` 动态工具都必须有稳定可读的 running/done 标签，避免退回不明确的 `Working...`；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit/multiedit 工具项可通过活动焦点展开 colored unified diff；read/ls/glob/bash/task/MCP 等无文件 diff 的工具展开时按普通文本展示限幅后的 tool result 内容，不把 markdown 列表或普通 `+` / `-` 行当作 diff 着色；bash 会把 `<shell_metadata>` 转成普通 metadata 行；streaming partial output 在最终 done/failed 到达时不被空详情或仅 metadata 的详情覆盖；activity 层再次限幅详情时必须显示 `activity detail truncated` 提示，并在存在 tool result truncation footer 时保留 `full_output_path`；展开详情被当前 TUI 视窗裁剪但数据本身未限幅时，消息区底部显示 `[tool detail clipped: ...]` 提示。恢复 session 时，TUI 从 rollout `tool_result` payload 重建相同的摘要和详情，保留 files/truncation metadata，而不是只从 message history 的纯文本 tool_result 回放。
+- **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；`todo_write` / `todo_update` 例外,它们的 tool block 只保留审计摘要,TUI 从稳定 `## Todo` result 抽取并维护一个独立 Todo checklist 区块；所有内置工具和 `mcp__<server>__<tool>` 动态工具都必须有稳定可读的 running/done 标签，避免退回不明确的 `Working...`；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit/multiedit 工具项可通过活动焦点展开 colored unified diff；read/ls/glob/bash/task/MCP 等无文件 diff 的工具展开时按普通文本展示限幅后的 tool result 内容，不把 markdown 列表或普通 `+` / `-` 行当作 diff 着色；bash 会把 `<shell_metadata>` 转成普通 metadata 行；streaming partial output 在最终 done/failed 到达时不被空详情或仅 metadata 的详情覆盖；activity 层再次限幅详情时必须显示 `activity detail truncated` 提示，并在存在 tool result truncation footer 时保留 `full_output_path`；展开详情被当前 TUI 视窗裁剪但数据本身未限幅时，消息区底部显示 `[tool detail clipped: ...]` 提示。恢复 session 时，TUI 从 rollout `tool_result` payload 重建相同的摘要和详情，保留 files/truncation metadata，而不是只从 message history 的纯文本 tool_result 回放。
 - **TUI 消息队列**：同一 session 内 Agent turn 仍保持串行。运行中用户输入普通消息并回车时，TUI 只写入本地 FIFO 队列，不并发调用 Agent；当前 stream 正常关闭后自动取队首启动下一轮。排队消息在真正启动前不写入 rollout，避免被中断或编辑后的草稿污染历史；运行中上下方向键优先进入队列编辑，再退回普通历史输入浏览。`/btw [question]` 是队列例外：TUI 立即启动独立旁路 provider 请求，不取消当前 Agent turn，也不把问题放入主队列。
 - **TUI 启动覆盖**：直接运行 `ub` 打开 TUI 时支持 `--provider <name>` 与 `--model <id>`，走与 `ub chat` 相同的 provider/model 选择规则，只影响本次启动，不写回配置。
 - **TUI provider 切换**：`/provider [provider] [model]` 在当前 TUI session 内切换后续主对话 provider；无参数时展示 provider picker，显式切换后刷新 model/effort 候选与状态栏。切换只写回当前 session 元数据，不写回配置；不指定 model 时优先保留目标 provider 可用的当前 model。
@@ -204,11 +205,13 @@ type FileChange struct {
 ```
 
 **风险等级**：
-- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / remember / recall / task
+- `safe`：read / ls / grep / glob / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / todo_write / todo_update / remember / recall / task
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
 
-`plan_write` / `plan_update` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),用户纠正已有计划时用 `plan_update` 原地更新同一个 artifact,work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` / `plan_update` 只在 plan 模式暴露和执行;`plan_update_step` 只在 work/auto 模式用于执行进度。plan 模式只向 provider 广告 `read` / `ls` / `glob` / `grep` / `plan_write` / `plan_update`,误调用其它工具仍由 mode gate 拦截。三者都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
+`plan_write` / `plan_update` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),TUI 在 `plan_write` / `plan_update` 完成摘要中直接展示 `plan_id`。用户纠正已有计划时用 `plan_update` 原地更新同一个 artifact;也可在 TUI 中通过 `/plans` 打开当前 workspace 的 plan picker,或通过 `/plan-edit <plan-id>` / `/plans <plan-id>` 用 `$VISUAL` / `$EDITOR` 直接打开该 markdown review/edit。work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` / `plan_update` 只在 plan 模式暴露和执行;`plan_update_step` 只在 work/auto 模式用于执行进度。plan 模式只向 provider 广告 `read` / `ls` / `glob` / `grep` / `plan_write` / `plan_update`,误调用其它工具仍由 mode gate 拦截。三者都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
+
+`todo_write` / `todo_update`:维护当前 session 的短生命周期执行清单,不复用 plan markdown checkbox。`todo_write` 创建或替换当前清单,`todo_update` 通过 `id` 或 1-based `item_index` 更新单项状态。状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`,并约束同一清单最多一个 `in_progress`。todo state 存在 `$XDG_STATE_HOME/ub/todos/<session-id>.json`,tool result 同时输出稳定的 `## Todo` 文本;TUI 将该文本抽取成独立 Todo checklist,rollout show 和 resume 也能恢复同一份执行视图。todo 工具只在 work/auto/full-access 执行阶段暴露;plan 模式不广告也不执行。
 
 LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `hover`、`completion`、`document_symbols`、`rename`、`code_action`。其中 `rename` 与 `code_action` **只返回 LSP 的建议**,不直接落盘 —— rename 输出"按文件路径排序的边界列表",model 拿到后用 `multiedit` 自行应用,从而走 ub 的 preview/permission 协议;`code_action` 只列可用 action 的 `title (kind)[ — has_edit]`,不执行任何 action
 

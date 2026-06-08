@@ -10,6 +10,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/search"
 	"github.com/feimingxliu/ub/internal/tool/shell"
 	tasktool "github.com/feimingxliu/ub/internal/tool/task"
+	todotool "github.com/feimingxliu/ub/internal/tool/todo"
 )
 
 func TestCodingAgentToolDescriptionsCarryGuidance(t *testing.T) {
@@ -28,6 +29,9 @@ func TestCodingAgentToolDescriptionsCarryGuidance(t *testing.T) {
 	if err := tasktool.Register(reg); err != nil {
 		t.Fatalf("register task: %v", err)
 	}
+	if err := todotool.Register(reg); err != nil {
+		t.Fatalf("register todo: %v", err)
+	}
 
 	checks := map[string][]string{
 		"bash":             {"Prefer cwd", "exit_code=0", "prefer the dedicated", "retry edit/multiedit"},
@@ -37,6 +41,8 @@ func TestCodingAgentToolDescriptionsCarryGuidance(t *testing.T) {
 		"plan_write":       {"Available only in plan mode", "validation"},
 		"plan_update":      {"Available only in plan mode", "instead of plan_write"},
 		"plan_update_step": {"Mark a step done only after", "verification evidence"},
+		"todo_write":       {"current session execution todo list", "at most one item may be in_progress"},
+		"todo_update":      {"Update one item", "Mark completed only after"},
 	}
 	for name, wants := range checks {
 		t.Run(name, func(t *testing.T) {

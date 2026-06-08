@@ -221,6 +221,14 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 		add("plan_id", "plan_id")
 		add("step", "step_index")
 		add("status", "status")
+	case "todo_write":
+		addCount("items", "items")
+		addCount("items", "todos")
+		addCount("items", "tasks")
+	case "todo_update":
+		add("id", "id")
+		add("item", "item_index")
+		add("status", "status")
 	case "multiedit":
 		addCount("edits", "edits")
 		addUniqueObjectStringCount("files", "edits", "path")

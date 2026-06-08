@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/execution"
 	"github.com/feimingxliu/ub/internal/permission"
+	"github.com/feimingxliu/ub/internal/tool/plan"
 	permissiondialog "github.com/feimingxliu/ub/internal/tui/dialog/permission"
 	"github.com/feimingxliu/ub/internal/tui/slash"
 	"github.com/feimingxliu/ub/internal/tui/tuitheme"
@@ -118,6 +120,7 @@ type Model struct {
 	picker          *modelPicker
 	pickerTarget    string
 	sessions        *sessionPicker
+	plans           *planPicker
 	files           *filePicker
 	slashIdx        int
 	history         []string
@@ -276,6 +279,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case doctorResultMsg:
 		return m.handleDoctorResult(msg)
+	case planEditFinishedMsg:
+		return m.handlePlanEditFinished(msg)
 	case copyResultMsg:
 		return m.handleCopyResult(msg)
 	case modelRefreshResultMsg:
@@ -422,6 +427,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.messages.append(systemRole, "model set to "+selected)
 				return m, nil
+			}
+		}
+		return m, nil
+	}
+
+	if m.plans != nil {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch key.String() {
+			case "ctrl+c":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			case "esc":
+				m.plans = nil
+				return m, nil
+			case "up", "k":
+				m.plans.previous()
+				return m, nil
+			case "down", "j", "tab":
+				m.plans.next()
+				return m, nil
+			case "backspace", "delete":
+				m.plans.backspace()
+				return m, nil
+			case "ctrl+u":
+				m.plans.clearQuery()
+				return m, nil
+			case "enter":
+				selected := m.plans.selected()
+				if selected.ID == "" {
+					return m, nil
+				}
+				m.plans = nil
+				return m.editPlanArtifact([]string{selected.ID})
+			}
+			for _, r := range key.Text {
+				m.plans.appendRune(r)
 			}
 		}
 		return m, nil
@@ -969,6 +1012,11 @@ type doctorResultMsg struct {
 	err    error
 }
 
+type planEditFinishedMsg struct {
+	path string
+	err  error
+}
+
 type copyResultMsg struct {
 	label string
 	err   error
@@ -1000,6 +1048,105 @@ func (m Model) handleDoctorResult(msg doctorResultMsg) (tea.Model, tea.Cmd) {
 		report = "doctor completed with no output"
 	}
 	m.messages.append(systemRole, report)
+	m.scrollToBottom()
+	return m, nil
+}
+
+func (m Model) editPlanArtifact(args []string) (tea.Model, tea.Cmd) {
+	if len(args) != 1 || strings.TrimSpace(args[0]) == "" {
+		m.messages.append(errorRole, "usage: /plan-edit <plan-id>")
+		return m, nil
+	}
+	workspace, err := m.workspace()
+	if err != nil {
+		m.messages.append(errorRole, "plan edit failed: "+err.Error())
+		return m, nil
+	}
+	planID := strings.TrimSpace(args[0])
+	path, err := plan.Path(workspace, planID)
+	if err != nil {
+		m.messages.append(errorRole, "plan edit failed: "+err.Error())
+		return m, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			m.messages.append(errorRole, "plan not found: "+planID)
+			return m, nil
+		}
+		m.messages.append(errorRole, "plan edit failed: "+err.Error())
+		return m, nil
+	}
+	if info.IsDir() {
+		m.messages.append(errorRole, "plan edit failed: path is a directory")
+		return m, nil
+	}
+	name, editorArgs := planEditorCommand()
+	editorArgs = append(append([]string(nil), editorArgs...), path)
+	m.messages.append(systemRole, "editing plan "+path)
+	m.scrollToBottom()
+	return m, tea.ExecProcess(exec.Command(name, editorArgs...), func(err error) tea.Msg {
+		return planEditFinishedMsg{path: path, err: err}
+	})
+}
+
+func (m Model) openPlanPicker() (tea.Model, tea.Cmd) {
+	workspace, err := m.workspace()
+	if err != nil {
+		m.messages.append(errorRole, "plans failed: "+err.Error())
+		return m, nil
+	}
+	plans, err := plan.List(workspace)
+	if err != nil {
+		m.messages.append(errorRole, "plans failed: "+err.Error())
+		return m, nil
+	}
+	if len(plans) == 0 {
+		m.messages.append(systemRole, "no plans in this workspace")
+		return m, nil
+	}
+	m.plans = newPlanPicker(plans)
+	return m, nil
+}
+
+func (m Model) workspace() (string, error) {
+	workspace := strings.TrimSpace(m.status.cwd)
+	if workspace != "" {
+		return workspace, nil
+	}
+	return os.Getwd()
+}
+
+func planEditorCommand() (string, []string) {
+	return planEditorCommandFromEnv(os.LookupEnv)
+}
+
+func planEditorCommandFromEnv(lookup func(string) (string, bool)) (string, []string) {
+	for _, key := range []string{"VISUAL", "EDITOR"} {
+		if value, ok := lookup(key); ok {
+			if name, args := splitEditorCommand(value); name != "" {
+				return name, args
+			}
+		}
+	}
+	return "vi", nil
+}
+
+func splitEditorCommand(value string) (string, []string) {
+	parts := strings.Fields(strings.TrimSpace(value))
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return parts[0], append([]string(nil), parts[1:]...)
+}
+
+func (m Model) handlePlanEditFinished(msg planEditFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.messages.append(errorRole, "plan edit failed: "+msg.err.Error())
+		m.scrollToBottom()
+		return m, nil
+	}
+	m.messages.append(systemRole, "plan edited "+msg.path)
 	m.scrollToBottom()
 	return m, nil
 }
@@ -1184,6 +1331,13 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m.startCompact()
 	case "init":
 		return m.startInitCommand(cmd.Args)
+	case "plan-edit":
+		return m.editPlanArtifact(cmd.Args)
+	case "plans":
+		if len(cmd.Args) > 0 {
+			return m.editPlanArtifact(cmd.Args)
+		}
+		return m.openPlanPicker()
 	case "doctor":
 		return m.runDoctor()
 	case "retry":
@@ -1502,7 +1656,7 @@ func activityGroupNameForEvent(event Event) string {
 
 func toolActivityText(event Event) string {
 	name := strings.TrimSpace(event.ToolName)
-	title := toolTitle(name, event.Summary)
+	title := toolTitle(name, toolTitleSummary(event))
 	switch toolEventStatus(event) {
 	case "queued", "running":
 		action := toolAction(name)
@@ -1515,6 +1669,34 @@ func toolActivityText(event Event) string {
 	default:
 		return title
 	}
+}
+
+func toolTitleSummary(event Event) string {
+	name := strings.TrimSpace(event.ToolName)
+	if isPlanArtifactTool(name) {
+		if planID := planIDFromToolResult(event.Content); planID != "" {
+			return planID
+		}
+	}
+	return event.Summary
+}
+
+func isPlanArtifactTool(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "plan_write", "plan_update":
+		return true
+	default:
+		return false
+	}
+}
+
+func planIDFromToolResult(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if id, ok := strings.CutPrefix(strings.TrimSpace(line), "plan_id="); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
 }
 
 func toolEventStatus(event Event) string {
@@ -1553,6 +1735,10 @@ func toolAction(name string) string {
 		return "Updating plan..."
 	case "plan_update_step":
 		return "Updating plan step..."
+	case "todo_write":
+		return "Writing todos..."
+	case "todo_update":
+		return "Updating todos..."
 	case "tool_result":
 		return "Reading tool result..."
 	case "diagnostics":
@@ -1616,6 +1802,10 @@ func toolTitle(name, summary string) string {
 		verb = "Updated plan"
 	case "plan_update_step":
 		verb = "Updated plan step"
+	case "todo_write":
+		verb = "Wrote todos"
+	case "todo_update":
+		verb = "Updated todos"
 	case "tool_result":
 		verb = "Read tool result"
 	case "diagnostics":
@@ -2132,6 +2322,13 @@ func (m Model) sessionPickerView(width int) string {
 		return ""
 	}
 	return m.sessions.view(width, m.styles)
+}
+
+func (m Model) planPickerView(width int) string {
+	if m.plans == nil {
+		return ""
+	}
+	return m.plans.view(width, m.styles)
 }
 
 func (m Model) filePickerView(width int) string {

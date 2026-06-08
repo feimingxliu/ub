@@ -38,6 +38,7 @@ type messageKind string
 const (
 	textMessage          messageKind = "text"
 	thinkingMessage      messageKind = "thinking"
+	todoMessage          messageKind = "todo"
 	toolMessage          messageKind = "tool"
 	permissionMessage    messageKind = "permission"
 	activityGroupMessage messageKind = "activity_group"
@@ -197,6 +198,7 @@ func (l *messageList) startActivityGroup(key, text string) {
 func (l *messageList) appendOrUpdateActivity(event Event) {
 	block := activityMessage(event)
 	l.appendOrUpdateBlock(block)
+	l.appendOrUpdateTodo(event)
 }
 
 func (l *messageList) appendOrUpdateLiveActivity(event Event, turn int) {
@@ -205,6 +207,7 @@ func (l *messageList) appendOrUpdateLiveActivity(event Event, turn int) {
 		block.key = fmt.Sprintf("live:turn-%d:%s", turn, block.key)
 	}
 	l.appendOrUpdateBlock(block)
+	l.appendOrUpdateTodo(event)
 }
 
 func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
@@ -212,6 +215,15 @@ func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
 	block := activityMessage(event)
 	if turn > 0 && strings.TrimSpace(block.key) != "" {
 		block.key = fmt.Sprintf("history:turn-%d:%s", turn, block.key)
+	}
+	l.appendOrUpdateBlock(block)
+	l.appendOrUpdateTodo(event)
+}
+
+func (l *messageList) appendOrUpdateTodo(event Event) {
+	block, ok := todoMessageFromEvent(event)
+	if !ok {
+		return
 	}
 	l.appendOrUpdateBlock(block)
 }
@@ -958,6 +970,8 @@ func (l messageList) renderItem(item message, focused bool, width int, styles tu
 	switch item.kind {
 	case activityGroupMessage:
 		return renderActivityGroupBlock(item, focused, width, styles)
+	case todoMessage:
+		return renderTodoBlock(item, focused, width, styles)
 	case thinkingMessage:
 		return renderActivityBlock(item, focused, width, styles, styles.Thinking, "thinking")
 	case toolMessage:
@@ -973,6 +987,21 @@ func (l messageList) renderItem(item message, focused bool, width int, styles tu
 	default:
 		return renderTextBlock(item, width, styles)
 	}
+}
+
+func renderTodoBlock(item message, focused bool, width int, styles tuitheme.Styles) []string {
+	icon := activityStatusIcon(item.kind, item.status)
+	title := defaultString(item.title, "Todo")
+	line := truncateText(icon+" "+title, contentWidth(width))
+	style := styles.Tool.Expanded
+	if item.status == "failed" || item.status == "error" {
+		style = styles.Tool.Failed
+	}
+	if focused {
+		style = styles.Focus
+	}
+	out := []string{styles.Render(style, line)}
+	return appendTodoDetailLines(out, item.detail, "  ", width, styles)
 }
 
 func renderTextBlock(item message, width int, styles tuitheme.Styles) []string {
@@ -1129,6 +1158,9 @@ func appendToolDetailLines(out []string, toolName, detail, prefix string, width 
 	if strings.TrimSpace(detail) == "" {
 		return out
 	}
+	if toolDetailUsesTodoStyle(toolName) {
+		return appendTodoDetailLines(out, detail, prefix, width, styles)
+	}
 	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
 	if !toolDetailUsesDiffStyle(toolName) {
 		style := styles.Tool.Detail
@@ -1147,6 +1179,108 @@ func appendToolDetailLines(out []string, toolName, detail, prefix string, width 
 		}
 	}
 	return out
+}
+
+func toolDetailUsesTodoStyle(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case "todo_write", "todo_update":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendTodoDetailLines(out []string, detail, prefix string, width int, styles tuitheme.Styles) []string {
+	textWidth := max(10, contentWidth(width)-runewidth.StringWidth(prefix))
+	items := parseTodoDetailItems(detail)
+	if len(items) > 0 {
+		for _, item := range items {
+			style := styles.Tool.Detail
+			if item.status == "failed" {
+				style = styles.Tool.Failed
+			}
+			for _, wrapped := range wrapLine(item.text, textWidth) {
+				out = append(out, styles.Render(style, prefix+wrapped))
+			}
+		}
+		return out
+	}
+	style := styles.Tool.Detail
+	for _, line := range strings.Split(detail, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "session_id=") || strings.HasPrefix(trimmed, "todo_count=") || trimmed == "## Todo" {
+			continue
+		}
+		for _, wrapped := range wrapLine(trimmed, textWidth) {
+			out = append(out, styles.Render(style, prefix+wrapped))
+		}
+	}
+	return out
+}
+
+type todoDetailItem struct {
+	text   string
+	status string
+}
+
+func parseTodoDetailItems(detail string) []todoDetailItem {
+	var items []todoDetailItem
+	for _, line := range strings.Split(detail, "\n") {
+		text, status, ok := parseTodoDetailLine(line)
+		if !ok {
+			continue
+		}
+		items = append(items, todoDetailItem{text: text, status: status})
+	}
+	return items
+}
+
+func parseTodoDetailLine(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	if !strings.HasPrefix(line, "- [") || len(line) < len("- [ ] ") {
+		return "", "", false
+	}
+	closeIdx := strings.Index(line, "]")
+	if closeIdx < 0 || closeIdx <= 3 {
+		return "", "", false
+	}
+	mark := line[3:closeIdx]
+	rest := strings.TrimSpace(line[closeIdx+1:])
+	if dot := strings.Index(rest, ". "); dot > 0 && allDigits(rest[:dot]) {
+		rest = strings.TrimSpace(rest[dot+2:])
+	}
+	label := "[ ]"
+	status := "pending"
+	switch mark {
+	case ">":
+		label = "[>]"
+		status = "in_progress"
+	case "x", "X":
+		label = "[x]"
+		status = "completed"
+	case "~":
+		label = "[~]"
+		status = "skipped"
+	case "!":
+		label = "[!]"
+		status = "failed"
+	}
+	if rest == "" {
+		return "", "", false
+	}
+	return label + " " + rest, status, true
+}
+
+func allDigits(text string) bool {
+	if text == "" {
+		return false
+	}
+	for _, r := range text {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func toolDetailUsesDiffStyle(toolName string) bool {
@@ -1801,6 +1935,8 @@ func compactToolHighlight(entry message) string {
 	title = strings.TrimPrefix(title, "Writing memory... ")
 	title = strings.TrimPrefix(title, "Writing plan... ")
 	title = strings.TrimPrefix(title, "Updating plan step... ")
+	title = strings.TrimPrefix(title, "Writing todos... ")
+	title = strings.TrimPrefix(title, "Updating todos... ")
 	title = strings.TrimPrefix(title, "Reading tool result... ")
 	title = strings.TrimPrefix(title, "Checking diagnostics... ")
 	title = strings.TrimPrefix(title, "Finding references... ")
@@ -2000,6 +2136,10 @@ func activityMessage(event Event) message {
 		}
 	case "tool":
 		text := toolActivityText(event)
+		detail := event.Content
+		if toolDetailUsesTodoStyle(event.ToolName) {
+			detail = ""
+		}
 		return message{
 			role:      activityRole,
 			text:      text,
@@ -2008,7 +2148,7 @@ func activityMessage(event Event) message {
 			title:     text,
 			name:      defaultString(event.ToolName, "tool"),
 			status:    defaultString(toolEventStatus(event), "done"),
-			detail:    event.Content,
+			detail:    detail,
 			collapsed: true,
 		}
 	case "permission":
@@ -2031,6 +2171,100 @@ func activityMessage(event Event) message {
 		text := activityEventText(event)
 		return message{role: activityRole, text: text, kind: noticeMessage, title: text}
 	}
+}
+
+func todoMessageFromEvent(event Event) (message, bool) {
+	if strings.TrimSpace(event.ActivityKind) != "tool" || !toolDetailUsesTodoStyle(event.ToolName) {
+		return message{}, false
+	}
+	detail := strings.TrimRight(event.Content, " \t\r\n")
+	items := parseTodoDetailItems(detail)
+	if len(items) == 0 {
+		return message{}, false
+	}
+	key := "todo"
+	if sessionID := todoSessionID(detail); sessionID != "" {
+		key += ":" + sessionID
+	}
+	status := todoStatus(items)
+	title := todoTitle(items)
+	return message{
+		role:      activityRole,
+		text:      title,
+		key:       key,
+		kind:      todoMessage,
+		title:     title,
+		status:    status,
+		detail:    detail,
+		collapsed: false,
+	}, true
+}
+
+func todoSessionID(detail string) string {
+	for _, line := range strings.Split(detail, "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "session_id="); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func todoStatus(items []todoDetailItem) string {
+	if len(items) == 0 {
+		return "done"
+	}
+	pending, running, completed, skipped, failed := todoCounts(items)
+	switch {
+	case running > 0:
+		return "running"
+	case pending > 0:
+		return "queued"
+	case failed > 0 && completed+skipped > 0:
+		return activityStatusPartialFailed
+	case failed > 0:
+		return "failed"
+	default:
+		return "done"
+	}
+}
+
+func todoTitle(items []todoDetailItem) string {
+	pending, running, completed, skipped, failed := todoCounts(items)
+	var parts []string
+	for _, count := range []activityCount{
+		{label: "running", value: running},
+		{label: "pending", value: pending},
+		{label: "done", value: completed},
+		{label: "skipped", value: skipped},
+		{label: "failed", value: failed},
+	} {
+		if count.value > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", count.value, count.label))
+		}
+	}
+	if len(parts) == 0 {
+		return "Todo"
+	}
+	return "Todo: " + strings.Join(parts, ", ")
+}
+
+func todoCounts(items []todoDetailItem) (pending, running, completed, skipped, failed int) {
+	for _, item := range items {
+		switch item.status {
+		case "in_progress":
+			running++
+		case "completed":
+			completed++
+		case "skipped":
+			skipped++
+		case "failed":
+			failed++
+		default:
+			pending++
+		}
+	}
+	return pending, running, completed, skipped, failed
 }
 
 func toolStatusFromLegacyState(state string) string {
@@ -2068,6 +2302,19 @@ func activityStatusIcon(kind messageKind, status string) string {
 			return "✓"
 		default:
 			return "?"
+		}
+	case todoMessage:
+		switch status {
+		case "queued":
+			return "•"
+		case "running", "started":
+			return "…"
+		case "failed", "error":
+			return "×"
+		case activityStatusPartialFailed:
+			return "!"
+		default:
+			return "✓"
 		}
 	default:
 		switch status {

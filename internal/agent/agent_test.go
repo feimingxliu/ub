@@ -1023,6 +1023,12 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if err := reg.Register(&namedSafeTool{name: "plan_update_step"}); err != nil {
 		t.Fatalf("register plan_update_step: %v", err)
 	}
+	if err := reg.Register(&namedSafeTool{name: "todo_write"}); err != nil {
+		t.Fatalf("register todo_write: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "todo_update"}); err != nil {
+		t.Fatalf("register todo_update: %v", err)
+	}
 	if err := reg.Register(&namedSafeTool{name: "read"}); err != nil {
 		t.Fatalf("register read: %v", err)
 	}
@@ -1051,6 +1057,9 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "plan_update_step") {
 		t.Fatalf("auto mode should keep plan_update_step for execution progress: %#v", tools)
 	}
+	if !toolNamesContain(tools, "todo_write") || !toolNamesContain(tools, "todo_update") {
+		t.Fatalf("auto mode should keep todo tools for execution progress: %#v", tools)
+	}
 	if !toolNamesContain(tools, "read") {
 		t.Fatalf("auto mode should keep non-plan tools: %#v", tools)
 	}
@@ -1077,7 +1086,7 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "plan_update") {
 		t.Fatalf("plan mode should advertise plan_update: %#v", tools)
 	}
-	for _, hidden := range []string{"plan_update_step", "edit", "bash", "remember"} {
+	for _, hidden := range []string{"plan_update_step", "todo_write", "todo_update", "edit", "bash", "remember"} {
 		if toolNamesContain(tools, hidden) {
 			t.Fatalf("plan mode should not advertise %s: %#v", hidden, tools)
 		}

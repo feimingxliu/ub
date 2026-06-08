@@ -69,7 +69,7 @@ func padFrameLine(line string, width int) string {
 }
 
 func (m Model) frameCursor(inputY int) *tea.Cursor {
-	if m.pending != nil || m.picker != nil || m.sessions != nil || m.btw.visible {
+	if m.pending != nil || m.picker != nil || m.sessions != nil || m.plans != nil || m.btw.visible {
 		return nil
 	}
 	cur := m.input.Cursor()
@@ -99,6 +99,8 @@ func (m Model) footerFrame(width int) footerFrame {
 		lines = append(lines, splitFrameLines(hint)...)
 	}
 	if picker := m.pickerView(width); picker != "" {
+		lines = append(lines, splitFrameLines(picker)...)
+	} else if picker := m.planPickerView(width); picker != "" {
 		lines = append(lines, splitFrameLines(picker)...)
 	} else if picker := m.sessionPickerView(width); picker != "" {
 		lines = append(lines, splitFrameLines(picker)...)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,68 @@ func planPath(workspace, planID string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, planID+".md"), nil
+}
+
+// Path returns the absolute path of one plan markdown file for UI review
+// flows. It does not create the file.
+func Path(workspace, planID string) (string, error) {
+	return planPath(workspace, planID)
+}
+
+// Info describes one persisted plan artifact for UI selection.
+type Info struct {
+	ID        string
+	Title     string
+	Status    string
+	Path      string
+	StepCount int
+	UpdatedAt time.Time
+}
+
+// List returns persisted plan artifacts for a workspace, newest first.
+func List(workspace string) ([]Info, error) {
+	root, err := planRoot(workspace)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var plans []Info
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		stat, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		id := strings.TrimSuffix(entry.Name(), ".md")
+		info := Info{
+			ID:        id,
+			Title:     id,
+			Path:      path,
+			UpdatedAt: stat.ModTime(),
+		}
+		if doc, err := loadPlan(path); err == nil {
+			info.Title = doc.title
+			info.Status = doc.status
+			info.StepCount = len(doc.steps)
+		}
+		plans = append(plans, info)
+	}
+	sort.SliceStable(plans, func(i, j int) bool {
+		if !plans[i].UpdatedAt.Equal(plans[j].UpdatedAt) {
+			return plans[i].UpdatedAt.After(plans[j].UpdatedAt)
+		}
+		return plans[i].ID > plans[j].ID
+	})
+	return plans, nil
 }
 
 var slugReplacer = regexp.MustCompile(`[^A-Za-z0-9-]+`)

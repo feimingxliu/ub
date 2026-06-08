@@ -29,6 +29,9 @@ func TestToolRuntimeKeepsLocalToolsWhenMCPServerFails(t *testing.T) {
 	if _, ok := runtime.Registry.Get("read"); !ok {
 		t.Fatalf("local read tool missing after MCP failure")
 	}
+	if _, ok := runtime.Registry.Get("todo_write"); !ok {
+		t.Fatalf("local todo_write tool missing after MCP failure")
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)
