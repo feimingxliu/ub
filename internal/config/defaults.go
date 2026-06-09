@@ -5,6 +5,9 @@ import "time"
 const (
 	DefaultPromptWorkspaceInstructionsMaxChars = 12000
 	DefaultPromptGitSnapshotMaxChars           = 4000
+	DefaultMemoryMaxChars                      = 4000
+	DefaultMemoryAutoMaxCandidates             = 3
+	DefaultMemoryAutoMaxPromptChars            = 12000
 )
 
 // Defaults returns the built-in configuration used as the lowest-priority
@@ -15,6 +18,7 @@ func Defaults() *Config {
 	toolSpilloverEnabled := true
 	promptWorkspaceInstructionsEnabled := true
 	promptGitSnapshotEnabled := true
+	memoryAutoEnabled := true
 	return &Config{
 		ExecutionMode: ModeWork,
 		Prompt: PromptConfig{
@@ -64,6 +68,14 @@ func Defaults() *Config {
 			Logs: CleanupLogsConfig{
 				MaxSizeMB:  10,
 				MaxBackups: 5,
+			},
+		},
+		Memory: MemoryConfig{
+			MaxChars: DefaultMemoryMaxChars,
+			Auto: MemoryAutoConfig{
+				Enabled:        &memoryAutoEnabled,
+				MaxCandidates:  DefaultMemoryAutoMaxCandidates,
+				MaxPromptChars: DefaultMemoryAutoMaxPromptChars,
 			},
 		},
 	}

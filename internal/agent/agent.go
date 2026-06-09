@@ -73,6 +73,7 @@ type Options struct {
 	Hooks            hook.Runner
 	WorkspaceRoot    string
 	MemoryMaxChars   int
+	Memory           config.MemoryConfig
 	SubagentRunner   tool.SubagentRunner
 }
 
@@ -100,6 +101,7 @@ type Agent struct {
 	hooks            hook.Runner
 	workspaceRoot    string
 	memoryMaxChars   int
+	memoryCfg        config.MemoryConfig
 	subagentRunner   tool.SubagentRunner
 }
 
@@ -191,6 +193,7 @@ func New(opts Options) (*Agent, error) {
 		hooks:            hooks,
 		workspaceRoot:    workspaceRoot,
 		memoryMaxChars:   opts.MemoryMaxChars,
+		memoryCfg:        opts.Memory,
 		subagentRunner:   opts.SubagentRunner,
 	}, nil
 }
@@ -282,7 +285,7 @@ loop:
 				if len(consumed.message.Content) == 0 {
 					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, emptyResponseError(consumed.reasoningLen))
 				}
-				a.emit(Event{Type: EventDone, Text: consumed.text})
+				a.finishSuccessfulTurn(ctx, req.SessionID, req.Turn, messages, consumed.text)
 				return Result{Text: consumed.text, Messages: messages}, nil
 			}
 			// Execute tool calls concurrently, then collect results in order.
@@ -390,7 +393,7 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 	}); err != nil {
 		return Result{}, err
 	}
-	a.emit(Event{Type: EventDone, Text: consumed.text})
+	a.finishSuccessfulTurn(ctx, sessionID, turn, messages, consumed.text)
 	return Result{Text: consumed.text, Messages: messages}, nil
 }
 
@@ -701,6 +704,9 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	}
 	summary, content := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
+	if call.Name == "remember" && !result.IsError {
+		a.recordRememberToolMemoryWrite(ctx, sessionID, turn, result)
+	}
 	return result
 }
 

@@ -73,6 +73,7 @@ type ProfileConfig struct {
 	Tools           ToolsConfig                `yaml:"tools,omitempty"        json:"tools,omitempty"`
 	Context         ContextConfig              `yaml:"context,omitempty"       json:"context,omitempty"`
 	Cleanup         CleanupConfig              `yaml:"cleanup,omitempty"       json:"cleanup,omitempty"`
+	Memory          MemoryConfig               `yaml:"memory,omitempty"        json:"memory,omitempty"`
 }
 
 // ApprovalAgentConfig selects the secondary model used by auto mode.
@@ -203,7 +204,15 @@ type ContextToolResultConfig struct {
 // MemoryConfig controls how much of the persisted memory files agent
 // runtime injects into the system prompt.
 type MemoryConfig struct {
-	MaxChars int `yaml:"max_chars,omitempty" json:"max_chars,omitempty"`
+	MaxChars int              `yaml:"max_chars,omitempty" json:"max_chars,omitempty"`
+	Auto     MemoryAutoConfig `yaml:"auto,omitempty"      json:"auto,omitempty"`
+}
+
+// MemoryAutoConfig controls LLM-assisted post-turn memory extraction.
+type MemoryAutoConfig struct {
+	Enabled        *bool `yaml:"enabled,omitempty"          json:"enabled,omitempty"`
+	MaxCandidates  int   `yaml:"max_candidates,omitempty"   json:"max_candidates,omitempty"`
+	MaxPromptChars int   `yaml:"max_prompt_chars,omitempty" json:"max_prompt_chars,omitempty"`
 }
 
 // HooksConfig holds shell hook lists keyed by trigger kind: pre_tool_call,

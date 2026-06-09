@@ -68,6 +68,7 @@ func TestMergeScalarsMapsAndSlices(t *testing.T) {
 func TestMergeDefaults(t *testing.T) {
 	cleanupEnabled := false
 	promptWorkspaceEnabled := false
+	memoryAutoEnabled := false
 	got := Merge(Defaults(), &Config{
 		TUI:           TUIConfig{Theme: "light"},
 		ExecutionMode: ModePlan,
@@ -89,6 +90,14 @@ func TestMergeDefaults(t *testing.T) {
 		Context: ContextConfig{
 			TriggerRatio:    0.9,
 			KeepRecentTurns: 5,
+		},
+		Memory: MemoryConfig{
+			MaxChars: 9000,
+			Auto: MemoryAutoConfig{
+				Enabled:        &memoryAutoEnabled,
+				MaxCandidates:  2,
+				MaxPromptChars: 4096,
+			},
 		},
 		Tools: ToolsConfig{
 			Job: JobToolConfig{
@@ -137,6 +146,13 @@ func TestMergeDefaults(t *testing.T) {
 	}
 	if got.Context.TriggerRatio != 0.9 || got.Context.KeepRecentTurns != 5 {
 		t.Fatalf("context = %#v", got.Context)
+	}
+	if got.Memory.MaxChars != 9000 ||
+		got.Memory.Auto.Enabled == nil ||
+		*got.Memory.Auto.Enabled ||
+		got.Memory.Auto.MaxCandidates != 2 ||
+		got.Memory.Auto.MaxPromptChars != 4096 {
+		t.Fatalf("memory = %#v", got.Memory)
 	}
 	if got.Tools.Job.MaxConcurrent != 10 ||
 		got.Tools.Job.Retention != 4*time.Hour ||

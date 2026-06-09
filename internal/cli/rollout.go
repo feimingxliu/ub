@@ -333,6 +333,27 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 			return err
 		}
 		return writeIndentedBlock(w, "text:", payload.Text, style)
+	case rollout.TypeMemoryWrite:
+		var payload rollout.MemoryWritePayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode memory_write event %s: %w", event.ID, err)
+		}
+		action := defaultRolloutString(payload.Action, "write")
+		source := defaultRolloutString(payload.Source, "agent")
+		if _, err := fmt.Fprintf(w, "  memory: scope=%s category=%s action=%s source=%s\n", payload.Scope, payload.Category, action, source); err != nil {
+			return err
+		}
+		if payload.Path != "" {
+			if _, err := fmt.Fprintf(w, "  path: %s\n", payload.Path); err != nil {
+				return err
+			}
+		}
+		if payload.DroppedExpired > 0 || payload.DroppedOverflow > 0 {
+			if _, err := fmt.Fprintf(w, "  pruned: expired=%d overflow=%d\n", payload.DroppedExpired, payload.DroppedOverflow); err != nil {
+				return err
+			}
+		}
+		return writeIndentedBlock(w, "text:", payload.Text, style)
 	case rollout.TypeError:
 		var payload rollout.ErrorPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {

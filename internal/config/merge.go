@@ -76,6 +76,16 @@ func mergeMemory(dst *MemoryConfig, src MemoryConfig) {
 	if src.MaxChars != 0 {
 		dst.MaxChars = src.MaxChars
 	}
+	if src.Auto.Enabled != nil {
+		enabled := *src.Auto.Enabled
+		dst.Auto.Enabled = &enabled
+	}
+	if src.Auto.MaxCandidates != 0 {
+		dst.Auto.MaxCandidates = src.Auto.MaxCandidates
+	}
+	if src.Auto.MaxPromptChars != 0 {
+		dst.Auto.MaxPromptChars = src.Auto.MaxPromptChars
+	}
 }
 
 func mergePrompt(dst *PromptConfig, src PromptConfig) {

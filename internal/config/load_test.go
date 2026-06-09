@@ -47,6 +47,13 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Tools.Job.CleanupInterval.String() != "5m0s" {
 		t.Fatalf("job tool defaults not applied: %#v", cfg.Tools.Job)
 	}
+	if cfg.Memory.MaxChars != DefaultMemoryMaxChars ||
+		cfg.Memory.Auto.Enabled == nil ||
+		!*cfg.Memory.Auto.Enabled ||
+		cfg.Memory.Auto.MaxCandidates != DefaultMemoryAutoMaxCandidates ||
+		cfg.Memory.Auto.MaxPromptChars != DefaultMemoryAutoMaxPromptChars {
+		t.Fatalf("memory defaults not applied: %#v", cfg.Memory)
+	}
 	if !cfg.Cleanup.CleanupEnabled() ||
 		cfg.Cleanup.Interval.String() != "24h0m0s" ||
 		cfg.Cleanup.Sessions.MaxAge.String() != "720h0m0s" ||
@@ -54,6 +61,32 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Cleanup.Logs.MaxSizeMB != 10 ||
 		cfg.Cleanup.Logs.MaxBackups != 5 {
 		t.Fatalf("cleanup defaults not applied: %#v", cfg.Cleanup)
+	}
+}
+
+func TestLoadFromDirsParsesMemoryConfig(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `memory:
+  max_chars: 8000
+  auto:
+    enabled: false
+    max_candidates: 2
+    max_prompt_chars: 4096
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Memory.MaxChars != 8000 ||
+		cfg.Memory.Auto.Enabled == nil ||
+		*cfg.Memory.Auto.Enabled ||
+		cfg.Memory.Auto.MaxCandidates != 2 ||
+		cfg.Memory.Auto.MaxPromptChars != 4096 {
+		t.Fatalf("memory = %#v", cfg.Memory)
 	}
 }
 

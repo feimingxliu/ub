@@ -28,6 +28,7 @@ import (
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tool/fs"
+	memorytool "github.com/feimingxliu/ub/internal/tool/memory"
 )
 
 type scriptProvider struct {
@@ -2648,6 +2649,151 @@ func TestAgent_OmitsMemoryWhenAbsent(t *testing.T) {
 		if strings.Contains(m.Text(), "<memory>") {
 			t.Fatalf("memory should not be injected when files absent")
 		}
+	}
+}
+
+func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	writer := &recordingRollout{}
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("Use make build from now on."), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta(`{"memories":[{"category":"project","text":"build command is ` + "`make build`" + `"}]}`), fake.Done()},
+	}}
+	enabled := true
+	a, err := New(Options{
+		Provider:        main,
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		WorkspaceRoot:   ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:       &enabled,
+			MaxCandidates: 3,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_auto_mem", Prompt: "remember build command", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.requests) != 1 || summary.requests[0].Model != "small" {
+		t.Fatalf("summary requests = %#v", summary.requests)
+	}
+	got := memory.Read(ws, 0)
+	if !strings.Contains(got, "build command is `make build`") {
+		t.Fatalf("memory missing auto fact:\n%s", got)
+	}
+	var payload rollout.MemoryWritePayload
+	found := false
+	for _, event := range writer.events {
+		if event.Type != rollout.TypeMemoryWrite {
+			continue
+		}
+		found = true
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode memory_write: %v", err)
+		}
+	}
+	if !found {
+		t.Fatalf("missing memory_write event: %#v", writer.events)
+	}
+	if payload.Source != "auto" || payload.Scope != "auto" || payload.Category != "project" || !strings.Contains(payload.Text, "make build") {
+		t.Fatalf("memory_write payload = %#v", payload)
+	}
+}
+
+func TestAgentAutoMemorySkipsPlanMode(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("plan only"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("memory should not run")},
+	}}
+	enabled := true
+	a, err := New(Options{
+		Provider:        main,
+		Tools:           reg,
+		Model:           "fake/model",
+		Mode:            execution.ModePlan,
+		SummaryProvider: summary,
+		WorkspaceRoot:   ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled: &enabled,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_plan_mem", Prompt: "make a plan", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+	}
+	if got := memory.Read(ws, 0); got != "" {
+		t.Fatalf("plan mode should not write memory:\n%s", got)
+	}
+}
+
+func TestAgentRecordsRememberToolMemoryWrite(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	if err := memorytool.Register(reg, ws); err != nil {
+		t.Fatalf("register memory: %v", err)
+	}
+	perm := newPermissionManager(t, nil)
+	writer := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("remember", map[string]any{"text": "test command is `make test`", "category": "project"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:   p,
+		Tools:      reg,
+		Permission: perm,
+		Rollout:    writer,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_tool_mem", Prompt: "remember this", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	var payload rollout.MemoryWritePayload
+	found := false
+	for _, event := range writer.events {
+		if event.Type != rollout.TypeMemoryWrite {
+			continue
+		}
+		found = true
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode memory_write: %v", err)
+		}
+	}
+	if !found {
+		t.Fatalf("missing memory_write event: %#v", writer.events)
+	}
+	if payload.Source != "tool" || payload.Scope != "auto" || payload.Category != "project" || !strings.Contains(payload.Text, "make test") {
+		t.Fatalf("memory_write payload = %#v", payload)
 	}
 }
 

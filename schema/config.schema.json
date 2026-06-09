@@ -230,10 +230,28 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "MemoryAutoConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_candidates": {
+          "type": "integer"
+        },
+        "max_prompt_chars": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "MemoryConfig": {
       "properties": {
         "max_chars": {
           "type": "integer"
+        },
+        "auto": {
+          "$ref": "#/$defs/MemoryAutoConfig"
         }
       },
       "additionalProperties": false,
@@ -339,6 +357,9 @@
         },
         "cleanup": {
           "$ref": "#/$defs/CleanupConfig"
+        },
+        "memory": {
+          "$ref": "#/$defs/MemoryConfig"
         }
       },
       "additionalProperties": false,

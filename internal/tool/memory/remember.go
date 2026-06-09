@@ -73,13 +73,21 @@ func (t *rememberTool) Execute(_ context.Context, raw json.RawMessage) (tool.Res
 		return tool.Result{}, fmt.Errorf("remember: invalid scope %q (expected auto or global)", scope)
 	}
 
-	path, heading, err := memory.Append(t.workspace, memory.Scope(scope), cat, a.Text)
+	out, err := memory.AppendWithOutcome(t.workspace, memory.Scope(scope), cat, a.Text)
 	if err != nil {
 		return tool.Result{}, fmt.Errorf("remember: %w", err)
 	}
 
 	return tool.Result{
-		Content: fmt.Sprintf("remembered (%s, %s): %s\n%s", scope, cat, path, heading),
-		Files:   []tool.FileChange{{Path: path, Kind: tool.KindModify}},
+		Content: fmt.Sprintf("remembered (%s, %s): %s\n%s", scope, cat, out.Path, out.Heading),
+		Files:   []tool.FileChange{{Path: out.Path, Kind: tool.KindModify}},
+		Metadata: map[string]string{
+			"memory_scope":    string(out.Scope),
+			"memory_category": string(out.Category),
+			"memory_text":     out.Text,
+			"memory_path":     out.Path,
+			"memory_heading":  out.Heading,
+			"memory_action":   string(out.Action),
+		},
 	}, nil
 }

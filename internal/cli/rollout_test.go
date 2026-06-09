@@ -43,6 +43,9 @@ func TestRolloutShowPrettyPrintsFilteredTurns(t *testing.T) {
 		"turn 3",
 		"summary: compressed=4 kept=2 estimated_tokens=120",
 		"text: Earlier summary.",
+		"memory: scope=auto category=project action=merged source=auto",
+		"path: /state/ub/memory/project/memory.md",
+		"text: build command is `make build`",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rollout show output missing %q:\n%s", want, got)
@@ -206,6 +209,14 @@ func createRolloutShowFixture(t *testing.T) string {
 		}},
 	})))
 	appendRolloutEventAt(t, ro, now.Add(4*time.Second), mustRolloutEvent(rollout.Summary(sessionID, 3, "Earlier summary.", 4, 2, 120)))
+	appendRolloutEventAt(t, ro, now.Add(4500*time.Millisecond), mustRolloutEvent(rollout.MemoryWrite(sessionID, 3, rollout.MemoryWritePayload{
+		Scope:    "auto",
+		Category: "project",
+		Text:     "build command is `make build`",
+		Path:     "/state/ub/memory/project/memory.md",
+		Source:   "auto",
+		Action:   "merged",
+	})))
 	appendRolloutEventAt(t, ro, now.Add(5*time.Second), mustRolloutEvent(rollout.Error(sessionID, 4, errors.New("boom"))))
 	return sessionID
 }

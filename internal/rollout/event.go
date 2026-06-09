@@ -25,6 +25,7 @@ const (
 	TypeUsage            Type = "usage"
 	TypeError            Type = "error"
 	TypeActivity         Type = "activity"
+	TypeMemoryWrite      Type = "memory_write"
 )
 
 // Event is the persisted rollout event shape.
@@ -90,6 +91,19 @@ type SummaryPayload struct {
 	CompressedMessages int    `json:"compressed_messages,omitempty"`
 	KeptMessages       int    `json:"kept_messages,omitempty"`
 	EstimatedTokens    int    `json:"estimated_tokens,omitempty"`
+}
+
+// MemoryWritePayload stores one durable memory write for audit/debugging.
+type MemoryWritePayload struct {
+	Scope           string `json:"scope"`
+	Category        string `json:"category"`
+	Text            string `json:"text"`
+	Path            string `json:"path,omitempty"`
+	Heading         string `json:"heading,omitempty"`
+	Source          string `json:"source,omitempty"`
+	Action          string `json:"action,omitempty"`
+	DroppedExpired  int    `json:"dropped_expired,omitempty"`
+	DroppedOverflow int    `json:"dropped_overflow,omitempty"`
 }
 
 // MarshalPayload marshals a typed payload into raw JSON.
@@ -163,6 +177,11 @@ func Summary(sessionID string, turn int, text string, compressedMessages, keptMe
 		KeptMessages:       keptMessages,
 		EstimatedTokens:    estimatedTokens,
 	})
+}
+
+// MemoryWrite creates a durable memory audit event.
+func MemoryWrite(sessionID string, turn int, payload MemoryWritePayload) (Event, error) {
+	return NewEvent(sessionID, turn, TypeMemoryWrite, payload)
 }
 
 // SummaryMessage converts summary text into the system message sent to providers.

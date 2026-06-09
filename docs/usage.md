@@ -477,7 +477,9 @@ ub 维护两类 durable memory,并另外加载工作区指令。每次 agent 开
 
 ### 去重
 
-自动记忆同一 category 下相似条目会自动合并(更新时间戳),不会重复写入。全局指令是 append-only,用于保护手写内容。
+自动记忆同一 category 下相似条目或同主题冲突条目会自动合并(更新时间戳),不会重复写入。`debug` 和 `general` 等低优先级条目会随时间衰减;条目过多时按 category 优先级和新旧裁剪。写入前会拒绝明显 credential/token/private-key 以及临时 debug/stack trace 内容。全局指令是 append-only,用于保护手写内容。
+
+每次成功写入都会记录一个 `memory_write` rollout 事件,便于 `ub rollout show` 和 session 搜索审计来源、scope、category、action 与写入路径。
 
 ### 注入预算
 
@@ -492,9 +494,17 @@ ub 维护两类 durable memory,并另外加载工作区指令。每次 agent 开
 ```yaml
 memory:
   max_chars: 8000
+  auto:
+    enabled: true
+    max_candidates: 3
+    max_prompt_chars: 12000
 ```
 
-自动归纳(每轮判断是否值得 remember)留待后续版本。
+### 自动归纳
+
+默认启用 `memory.auto.enabled`。每个成功完成的 work / auto / full-access turn 结束后,ub 会用 `small_model`(未配置时复用当前模型)判断本轮是否有值得长期保存的事实,并最多写入 `memory.auto.max_candidates` 条项目自动记忆。plan 模式不会自动写 memory。
+
+自动归纳只接受受控 JSON 候选,随后仍会经过 category 校验、隐私过滤、冲突合并和衰减策略;被拒绝的候选不会写入 memory。
 
 ## 14. 长输出落盘(spillover)
 

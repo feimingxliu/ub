@@ -157,6 +157,33 @@ func TestSummaryEventAndMessageFromEvent(t *testing.T) {
 	}
 }
 
+func TestMemoryWriteEvent(t *testing.T) {
+	event, err := MemoryWrite("sess_memory", 5, MemoryWritePayload{
+		Scope:    "auto",
+		Category: "project",
+		Text:     "build is `make build`",
+		Path:     "/state/ub/memory/key/memory.md",
+		Source:   "auto",
+		Action:   "merged",
+	})
+	if err != nil {
+		t.Fatalf("MemoryWrite: %v", err)
+	}
+	if event.Type != TypeMemoryWrite {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeMemoryWrite)
+	}
+	var payload MemoryWritePayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.Scope != "auto" || payload.Category != "project" || payload.Text != "build is `make build`" || payload.Source != "auto" || payload.Action != "merged" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if msg, ok, err := MessageFromEvent(event); err != nil || ok || len(msg.Content) != 0 {
+		t.Fatalf("memory write should not become chat history: msg=%#v ok=%v err=%v", msg, ok, err)
+	}
+}
+
 func TestAppendVisibleAfterReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "ub.db")

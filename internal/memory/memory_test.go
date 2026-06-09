@@ -150,6 +150,34 @@ func TestAppend_DeduplicatesSimilarEntries(t *testing.T) {
 	}
 }
 
+func TestAppend_MergesSameTopicConflicts(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	ws := t.TempDir()
+	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))
+
+	if _, _, err := Append(ws, ScopeAuto, CatProject, "build command is `make build`"); err != nil {
+		t.Fatalf("append 1: %v", err)
+	}
+	freezeTime(t, time.Date(2026, 5, 27, 11, 0, 0, 0, time.UTC))
+	out, err := AppendWithOutcome(ws, ScopeAuto, CatProject, "build uses `npm run build`")
+	if err != nil {
+		t.Fatalf("append 2: %v", err)
+	}
+	if out.Action != AppendActionMerged {
+		t.Fatalf("action = %q, want merged", out.Action)
+	}
+
+	path, _ := Path(ws, ScopeAuto)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	content := string(body)
+	if strings.Contains(content, "make build") || !strings.Contains(content, "npm run build") {
+		t.Fatalf("same-topic conflict should replace old fact:\n%s", content)
+	}
+}
+
 func TestAppend_DoesNotDeduplicateDistinctUnicodeEntries(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	ws := t.TempDir()
@@ -253,6 +281,35 @@ func TestAppend_GlobalPreservesManualInstructions(t *testing.T) {
 	content := string(body)
 	if !strings.Contains(content, manual) || !strings.Contains(content, "prefer pnpm over npm") {
 		t.Fatalf("global append should preserve manual content and add entry:\n%s", content)
+	}
+}
+
+func TestAppend_RejectsCredentialLikeMemory(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	ws := t.TempDir()
+	if _, _, err := Append(ws, ScopeAuto, CatProject, "api_key=sk-test-secret-value"); err == nil || !strings.Contains(err.Error(), "privacy guard") {
+		t.Fatalf("expected privacy rejection, got: %v", err)
+	}
+}
+
+func TestAppend_DecaysOldDebugMemory(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	ws := t.TempDir()
+	freezeTime(t, time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC))
+	if _, _, err := Append(ws, ScopeAuto, CatDebug, "old reusable debug note"); err != nil {
+		t.Fatalf("append debug: %v", err)
+	}
+	freezeTime(t, time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC))
+	out, err := AppendWithOutcome(ws, ScopeAuto, CatProject, "build is `make build`")
+	if err != nil {
+		t.Fatalf("append project: %v", err)
+	}
+	if out.DroppedExpired != 1 {
+		t.Fatalf("DroppedExpired = %d, want 1", out.DroppedExpired)
+	}
+	got := Read(ws, 0)
+	if strings.Contains(got, "old reusable debug note") || !strings.Contains(got, "make build") {
+		t.Fatalf("debug decay result =\n%s", got)
 	}
 }
 

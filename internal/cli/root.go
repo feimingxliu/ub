@@ -488,6 +488,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		Hooks:            hooksRunner,
 		WorkspaceRoot:    tools.Workspace,
 		MemoryMaxChars:   cfg.Memory.MaxChars,
+		Memory:           cfg.Memory,
 		SubagentRunner:   subRunner,
 	})
 	if err != nil {
@@ -1222,6 +1223,12 @@ func rolloutEventSearchText(event rollout.Event) (string, error) {
 			return "", fmt.Errorf("decode rollout activity event %s: %w", event.ID, err)
 		}
 		return strings.Join([]string{payload.ActivityKind, payload.ToolName, payload.Status, payload.Summary, payload.Content, payload.Decision, payload.Source, payload.Reason}, " "), nil
+	case rollout.TypeMemoryWrite:
+		var payload rollout.MemoryWritePayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode rollout memory_write event %s: %w", event.ID, err)
+		}
+		return strings.Join([]string{payload.Scope, payload.Category, payload.Text, payload.Path, payload.Source, payload.Action}, " "), nil
 	default:
 		return "", nil
 	}

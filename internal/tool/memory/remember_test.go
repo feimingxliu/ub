@@ -48,6 +48,13 @@ func TestRemember_AutoScopeDefault(t *testing.T) {
 	if len(res.Files) != 1 {
 		t.Fatalf("Files = %+v", res.Files)
 	}
+	if res.Metadata["memory_scope"] != "auto" ||
+		res.Metadata["memory_category"] != "project" ||
+		res.Metadata["memory_text"] != "build is `make build`" ||
+		res.Metadata["memory_path"] == "" ||
+		res.Metadata["memory_action"] == "" {
+		t.Fatalf("memory metadata = %#v", res.Metadata)
+	}
 }
 
 func TestRemember_WorkspaceBackwardCompat(t *testing.T) {

@@ -103,6 +103,32 @@ type Entry struct {
 	Text      string
 }
 
+// AppendAction describes how an auto-memory write changed the memory file.
+type AppendAction string
+
+const (
+	AppendActionCreated AppendAction = "created"
+	AppendActionMerged  AppendAction = "merged"
+)
+
+const (
+	debugEntryMaxAge   = 14 * 24 * time.Hour
+	generalEntryMaxAge = 180 * 24 * time.Hour
+	maxAutoEntries     = 200
+)
+
+// AppendOutcome reports the durable effect of one memory write.
+type AppendOutcome struct {
+	Path            string
+	Heading         string
+	Scope           Scope
+	Category        Category
+	Text            string
+	Action          AppendAction
+	DroppedExpired  int
+	DroppedOverflow int
+}
+
 // Path returns the absolute path of the memory file for one scope.
 //
 //   - ScopeAuto: $XDG_STATE_HOME/ub/memory/<project-key>/memory.md
@@ -144,55 +170,79 @@ func Path(workspaceRoot string, scope Scope) (string, error) {
 //
 // Returns the absolute path of the file and a human-readable heading string.
 func Append(workspaceRoot string, scope Scope, category Category, text string) (string, string, error) {
+	out, err := AppendWithOutcome(workspaceRoot, scope, category, text)
+	if err != nil {
+		return "", "", err
+	}
+	return out.Path, out.Heading, nil
+}
+
+// AppendWithOutcome writes a new entry and returns structured metadata for
+// audit events. It applies privacy guardrails, conflict merge, and decay to
+// machine-managed auto memory while keeping global instructions append-only.
+func AppendWithOutcome(workspaceRoot string, scope Scope, category Category, text string) (AppendOutcome, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "", "", errors.New("memory: text is required")
+		return AppendOutcome{}, errors.New("memory: text is required")
 	}
 	if _, ok := categoryPriority[category]; !ok {
-		return "", "", fmt.Errorf("memory: invalid category %q", category)
+		return AppendOutcome{}, fmt.Errorf("memory: invalid category %q", category)
+	}
+	if reason := privacyRejectReason(text); reason != "" {
+		return AppendOutcome{}, fmt.Errorf("memory: privacy guard rejected entry: %s", reason)
 	}
 	scope = normalizeScope(scope)
 	path, err := Path(workspaceRoot, scope)
 	if err != nil {
-		return "", "", err
+		return AppendOutcome{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", "", fmt.Errorf("memory: mkdir: %w", err)
+		return AppendOutcome{}, fmt.Errorf("memory: mkdir: %w", err)
 	}
 
 	ts := nowFunc()
 	heading := fmt.Sprintf("## %s", ts.Format(time.RFC3339))
+	out := AppendOutcome{
+		Path:     path,
+		Heading:  heading,
+		Scope:    scope,
+		Category: category,
+		Text:     text,
+		Action:   AppendActionCreated,
+	}
 
 	newEntry := Entry{Category: category, Timestamp: ts, Text: text}
 	if scope == ScopeGlobal {
 		if err := appendGlobalInstruction(path, newEntry); err != nil {
-			return "", "", fmt.Errorf("memory: write: %w", err)
+			return AppendOutcome{}, fmt.Errorf("memory: write: %w", err)
 		}
-		return path, heading, nil
+		return out, nil
 	}
 
 	// Load existing auto-memory entries for dedup check.
 	entries, err := parseFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", "", fmt.Errorf("memory: read: %w", err)
+		return AppendOutcome{}, fmt.Errorf("memory: read: %w", err)
 	}
 
 	deduped := false
 	for i, e := range entries {
-		if e.Category == category && isSimilar(e.Text, text) {
+		if e.Category == category && shouldMerge(e.Text, text) {
 			entries[i] = newEntry
 			deduped = true
+			out.Action = AppendActionMerged
 			break
 		}
 	}
 	if !deduped {
 		entries = append(entries, newEntry)
 	}
+	entries, out.DroppedExpired, out.DroppedOverflow = applyDecay(entries, ts)
 
 	if err := writeFile(path, entries); err != nil {
-		return "", "", fmt.Errorf("memory: write: %w", err)
+		return AppendOutcome{}, fmt.Errorf("memory: write: %w", err)
 	}
-	return path, heading, nil
+	return out, nil
 }
 
 func appendGlobalInstruction(path string, e Entry) error {
@@ -550,6 +600,150 @@ func isSimilar(a, b string) bool {
 		}
 	}
 	return float64(common)/float64(len(shorter)) >= 0.6
+}
+
+func shouldMerge(existing, incoming string) bool {
+	if isSimilar(existing, incoming) {
+		return true
+	}
+	existingTopic := topicKey(existing)
+	incomingTopic := topicKey(incoming)
+	return existingTopic != "" && existingTopic == incomingTopic
+}
+
+func topicKey(text string) string {
+	words := wordSet(normalize(text))
+	hasAny := func(values ...string) bool {
+		for _, value := range values {
+			if words[value] {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case hasAny("build", "compile"):
+		return "project:build"
+	case hasAny("test", "tests", "testing", "validation", "verify"):
+		return "project:test"
+	case hasAny("lint", "linter", "staticcheck", "vet"):
+		return "project:lint"
+	case hasAny("format", "formatter", "gofmt", "prettier"):
+		return "project:format"
+	case hasAny("commit", "commits", "conventional"):
+		return "project:commit"
+	case hasAny("roadmap", "requirements", "design", "docs"):
+		return "project:docs"
+	}
+	return ""
+}
+
+func applyDecay(entries []Entry, now time.Time) ([]Entry, int, int) {
+	if len(entries) == 0 {
+		return nil, 0, 0
+	}
+	kept := entries[:0]
+	expired := 0
+	for _, e := range entries {
+		if entryExpired(e, now) {
+			expired++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if len(kept) <= maxAutoEntries {
+		return kept, expired, 0
+	}
+	sort.SliceStable(kept, func(i, j int) bool {
+		pi, pj := categoryPriority[kept[i].Category], categoryPriority[kept[j].Category]
+		if pi != pj {
+			return pi < pj
+		}
+		return kept[i].Timestamp.After(kept[j].Timestamp)
+	})
+	overflow := len(kept) - maxAutoEntries
+	kept = kept[:maxAutoEntries]
+	return kept, expired, overflow
+}
+
+func entryExpired(e Entry, now time.Time) bool {
+	if e.Timestamp.IsZero() || now.IsZero() || e.Timestamp.After(now) {
+		return false
+	}
+	age := now.Sub(e.Timestamp)
+	switch e.Category {
+	case CatDebug:
+		return age > debugEntryMaxAge
+	case CatGeneral:
+		return age > generalEntryMaxAge
+	default:
+		return false
+	}
+}
+
+func privacyRejectReason(text string) string {
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"authorization:",
+		"bearer ",
+		"api_key",
+		"api key",
+		"access token",
+		"secret key",
+		"client_secret",
+		"private key",
+		"password=",
+		"passwd=",
+		"token=",
+	} {
+		if strings.Contains(lower, marker) {
+			return "looks like credential material"
+		}
+	}
+	for _, marker := range []string{"temporary debug", "temp debug", "stack trace", "stacktrace"} {
+		if strings.Contains(lower, marker) {
+			return "looks like temporary debug state"
+		}
+	}
+	for _, field := range strings.Fields(text) {
+		if looksLikeSecret(field) {
+			return "contains a high-entropy token-like value"
+		}
+	}
+	return ""
+}
+
+func looksLikeSecret(value string) bool {
+	value = strings.Trim(value, "`'\"()[]{}<>,.;:")
+	if len(value) < 32 || len(value) > 256 {
+		return false
+	}
+	alphaNum := 0
+	classes := 0
+	hasLower, hasUpper, hasDigit, hasSymbol := false, false, false, false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			alphaNum++
+			hasLower = true
+		case r >= 'A' && r <= 'Z':
+			alphaNum++
+			hasUpper = true
+		case r >= '0' && r <= '9':
+			alphaNum++
+			hasDigit = true
+		case r == '_' || r == '-' || r == '.' || r == '/':
+			hasSymbol = true
+		default:
+			return false
+		}
+	}
+	for _, ok := range []bool{hasLower, hasUpper, hasDigit, hasSymbol} {
+		if ok {
+			classes++
+		}
+	}
+	return alphaNum >= 24 && classes >= 3
 }
 
 // normalize strips punctuation and collapses whitespace for comparison.

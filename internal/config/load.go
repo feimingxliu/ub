@@ -191,6 +191,7 @@ func (p ProfileConfig) toConfig() *Config {
 		LSPServers:      p.LSPServers,
 		Context:         p.Context,
 		Cleanup:         p.Cleanup,
+		Memory:          p.Memory,
 	}
 }
 
