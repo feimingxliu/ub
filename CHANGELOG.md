@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.10] - 2026-06-09
+
+
+### Added
+
+- Complete plan todo workflow ([2f7b704](https://github.com/feimingxliu/ub/commit/2f7b704e88ec44a4b892d95f142eb6651d868fb8))
+- Add automatic memory lifecycle events ([877152e](https://github.com/feimingxliu/ub/commit/877152e2ae0166fdaadd0b78130d3192190f63ad))
+- Stream job_output follow ([215ea0e](https://github.com/feimingxliu/ub/commit/215ea0ebeb24eae2e53a2aec34a57a81ba0dfd78))
+
 ## [0.3.9] - 2026-06-08
 
 
@@ -14,6 +23,11 @@ All notable changes to this project are documented here.
 
 - Plan rewind and btw commands ([fc9f317](https://github.com/feimingxliu/ub/commit/fc9f3173bc842ab1615a0fe8fe57f60905041947))
 - Align roadmap spillover tooling ([c31de01](https://github.com/feimingxliu/ub/commit/c31de018468723fc3dded1768d3f6880543ef7aa))
+
+
+### Maintenance
+
+- V0.3.9 ([a01f540](https://github.com/feimingxliu/ub/commit/a01f540935ed371e3f69e23d67e7bcc3e9ab3f73))
 
 
 ### Other
