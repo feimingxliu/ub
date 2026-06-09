@@ -94,7 +94,7 @@
 |---|---|---|
 | `/help` | — | 列出所有 slash 命令 |
 | `/quit` / `/exit` | — | 退出 TUI |
-| `/config` | — | 展示当前 model / mode / cwd |
+| `/config` | — | 展示当前 provider / model / approval_model / small_model / mode / cwd |
 | `/clear` | — | 清空当前对话视图（不删 session） |
 | `/new` | — | 在当前工作区新建一个空 session（旧的保留） |
 | `/sessions` | `[session-id\|search <query>]` | 列出当前工作区的历史 session，方向键选择 + Enter 切换；带 id 时直接切换 |
@@ -107,6 +107,7 @@
 | `/model` | `[model]` | 无参数列当前 provider 下可用 model；带参数切换 |
 | `/effort` | `[level]` | 切换 reasoning effort（`none` / `minimal` / `low` / `medium` / `high` / `xhigh`），仅对支持 reasoning 的模型生效 |
 | `/approval-model` | `[model]` | 设置 auto 模式下用作审批 agent 的模型，无参数列候选；不影响主对话 model |
+| `/small-model` | `[model]` | 设置 summary / auto memory 使用的当前 provider 模型，无参数列候选；不影响主对话 model |
 | `/mode` | `<work\|plan\|auto\|full-access>` | 切换执行模式（也可按 `Shift+Tab` 循环切） |
 | `/compact` | — | 主动触发上下文压缩（用 `small_model` 生成摘要） |
 | `/btw` | `[question]` | 打开独立 BTW 视图；带问题时立即旁路询问，不排队、不打断当前 turn、不写入主历史。回答按普通助手消息 Markdown 渲染；视图内直接输入追问并按 `Enter` 继续，底部显示 BTW 专属状态行（`answering` 表示模型回答中，`idle` 表示可继续追问），`PgUp`/`PgDown` 或滚轮只滚动 BTW 输出，`Esc` 返回主对话并清空 BTW 历史，`Ctrl+Y` 复制最新答案，`Ctrl+U` 清空当前记录并留在 BTW |
@@ -184,7 +185,7 @@ permissions:
 
 每次发请求前，agent 会估算 `(input tokens + reserve_output_tokens) / model.max_context`。超过阈值（默认 0.8）触发：
 
-1. 用 `small_model` 跑摘要 prompt 模板，把早期消息总结成一条 system 摘要
+1. 用当前 provider 可用的 `small_model` 跑摘要 prompt 模板；若未配置或该 provider 明确不可用，则复用当前模型
 2. 保留最近 `keep_recent_turns` 个完整 user turn（按 token budget 截断，但按 user turn 边界对齐）
 3. tool result 默认限幅 12 KiB / 400 行，完整输出落到 `$XDG_STATE_HOME/ub/tool-output/`，rollout 里只存 preview + truncation metadata
 4. rollout 写一条 `Summary` 事件
@@ -514,7 +515,7 @@ memory:
 
 ### 自动归纳
 
-默认启用 `memory.auto.enabled`。每个成功完成的 work / auto / full-access turn 结束后,ub 会用 `small_model`(未配置时复用当前模型)判断本轮是否有值得长期保存的事实,并最多写入 `memory.auto.max_candidates` 条项目自动记忆。plan 模式不会自动写 memory。
+默认启用 `memory.auto.enabled`。每个成功完成的 work / auto / full-access turn 结束后,ub 会用当前 provider 可用的 `small_model`(未配置或该 provider 明确不可用时复用当前模型)判断本轮是否有值得长期保存的事实,并最多写入 `memory.auto.max_candidates` 条项目自动记忆。plan 模式不会自动写 memory。
 
 自动归纳只接受受控 JSON 候选,随后仍会经过 category 校验、隐私过滤、冲突合并和衰减策略;被拒绝的候选不会写入 memory。
 

@@ -103,6 +103,20 @@ type ApprovalModelRefreshRunner interface {
 	RefreshApprovalModels(ctx context.Context) ([]string, error)
 }
 
+// SmallModelControlRunner optionally lets slash commands update the small
+// model used by summary and auto memory.
+type SmallModelControlRunner interface {
+	SetSmallModel(model string) error
+	SmallModel() string
+	SmallModels() []string
+}
+
+// SmallModelRefreshRunner optionally lets the TUI load the current provider's
+// complete small-model candidate list on demand.
+type SmallModelRefreshRunner interface {
+	RefreshSmallModels(ctx context.Context) ([]string, error)
+}
+
 // InitialMessage is a persisted message rendered when a TUI session is loaded.
 type InitialMessage struct {
 	Role string

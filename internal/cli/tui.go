@@ -113,6 +113,8 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		Efforts:        runner.Efforts(),
 		ApprovalModel:  runner.ApprovalModel(),
 		ApprovalModels: runner.ApprovalModels(),
+		SmallModel:     runner.SmallModel(),
+		SmallModels:    runner.SmallModels(),
 		Messages:       initialMessages,
 		LoadMessages:   loadMessages,
 		Turn:           runner.Turn(),
@@ -155,6 +157,7 @@ type tuiAgentRunner struct {
 	approvalReasoning    reasoning.Config
 	summaryProvider      provider.Provider
 	summaryModel         string
+	smallModels          []string
 	summaryUsesCurrent   bool
 	contextCfg           config.ContextConfig
 	tools                *toolRuntime
@@ -213,6 +216,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
+	smallModels := mergeModelCandidates(summarySetup.Model, []string{model}, models)
 	tools, err := newToolRuntime(cmd.Context(), cfg)
 	if err != nil {
 		return nil, err
@@ -250,6 +254,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		approvalReasoning:    cfg.ApprovalAgent.Reasoning,
 		summaryProvider:      summarySetup.Provider,
 		summaryModel:         summarySetup.Model,
+		smallModels:          smallModels,
 		summaryUsesCurrent:   summarySetup.UsesCurrentModel,
 		contextCfg:           cfg.Context,
 		tools:                tools,
@@ -919,6 +924,7 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	if r.summaryUsesCurrent {
 		r.summaryModel = model
 	}
+	r.smallModels = mergeModelCandidates(r.summaryModel, []string{r.model}, r.smallModels, r.models)
 	r.refreshReasoning()
 	return r.persistSessionProviderModel(r.cmd.Context())
 }
@@ -996,11 +1002,15 @@ func (r *tuiAgentRunner) setProviderModel(ctx context.Context, providerName, mod
 	r.efforts = modelinfo.EffortOptions(info)
 	r.summaryProvider = summarySetup.Provider
 	r.summaryModel = summarySetup.Model
+	r.smallModels = mergeModelCandidates(summarySetup.Model, []string{selectedModel}, models)
 	r.summaryUsesCurrent = summarySetup.UsesCurrentModel
 	r.approvalProviderName = approvalSetup.ProviderName
 	r.approvalProviderCfg = approvalSetup.ProviderConfig
 	r.approvalModel = approvalSetup.Model
 	r.approvalModels = approvalSetup.Models
+	if r.approvalProviderName != "" {
+		r.approvalModels = r.providerModels(r.cmd.Context(), r.approvalProviderName, r.approvalProviderCfg, r.approvalModel)
+	}
 	r.approvalReasoning = r.cfg.ApprovalAgent.Reasoning
 	if r.permission != nil {
 		r.permission.SetApprovalAgent(approvalSetup.Agent)
@@ -1053,8 +1063,13 @@ func (r *tuiAgentRunner) SetApprovalModel(model string) error {
 	if r.approvalProviderName == "" {
 		return fmt.Errorf("approval provider is not configured")
 	}
+	ctx := context.Background()
+	if r.cmd != nil {
+		ctx = r.cmd.Context()
+	}
+	r.approvalModels = mergeModelCandidates(r.approvalModel, r.approvalModels, r.providerModels(ctx, r.approvalProviderName, r.approvalProviderCfg, ""))
 	if !modelInList(r.approvalModels, model) {
-		r.approvalModels = r.providerModels(r.cmd.Context(), r.approvalProviderName, r.approvalProviderCfg, "")
+		r.approvalModels = r.providerModels(ctx, r.approvalProviderName, r.approvalProviderCfg, "")
 	}
 	if !modelInList(r.approvalModels, model) {
 		return fmt.Errorf("approval model %q is not available for the current approval provider", model)
@@ -1073,7 +1088,38 @@ func (r *tuiAgentRunner) RefreshApprovalModels(ctx context.Context) ([]string, e
 	if r == nil || r.approvalProviderName == "" {
 		return nil, fmt.Errorf("approval provider is not configured")
 	}
-	return r.providerModels(ctx, r.approvalProviderName, r.approvalProviderCfg, r.approvalModel), nil
+	r.approvalModels = r.providerModels(ctx, r.approvalProviderName, r.approvalProviderCfg, r.approvalModel)
+	return append([]string(nil), r.approvalModels...), nil
+}
+
+func (r *tuiAgentRunner) SetSmallModel(model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("small model cannot be empty")
+	}
+	if r == nil || r.providerName == "" {
+		return fmt.Errorf("small model switching is unavailable")
+	}
+	ctx := context.Background()
+	if r.cmd != nil {
+		ctx = r.cmd.Context()
+	}
+	r.smallModels = mergeModelCandidates(r.summaryModel, []string{r.model}, r.smallModels, r.providerModels(ctx, r.providerName, r.providerCfg, ""))
+	if !modelInList(r.smallModels, model) {
+		return fmt.Errorf("small model %q is not available for the current provider", model)
+	}
+	r.summaryModel = model
+	r.summaryUsesCurrent = false
+	r.smallModels = appendModelCandidate(r.smallModels, model)
+	return nil
+}
+
+func (r *tuiAgentRunner) RefreshSmallModels(ctx context.Context) ([]string, error) {
+	if r == nil || r.providerName == "" {
+		return nil, fmt.Errorf("small model switching is unavailable")
+	}
+	r.smallModels = mergeModelCandidates(r.summaryModel, []string{r.model}, r.providerModels(ctx, r.providerName, r.providerCfg, ""))
+	return append([]string(nil), r.smallModels...), nil
 }
 
 func (r *tuiAgentRunner) SetMode(mode string) error {
@@ -1153,6 +1199,20 @@ func (r *tuiAgentRunner) ApprovalModels() []string {
 		return nil
 	}
 	return append([]string(nil), r.approvalModels...)
+}
+
+func (r *tuiAgentRunner) SmallModel() string {
+	if r == nil {
+		return ""
+	}
+	return r.summaryModel
+}
+
+func (r *tuiAgentRunner) SmallModels() []string {
+	if r == nil {
+		return nil
+	}
+	return append([]string(nil), r.smallModels...)
 }
 
 func (r *tuiAgentRunner) newApprovalAgent(model string) (approval.Agent, error) {

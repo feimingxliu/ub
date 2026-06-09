@@ -390,7 +390,7 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 ```yaml
 default_provider: anthropic
 default_model: claude-sonnet-4-7   # 可省略；provider 可列模型时自动选第一个
-small_model: openai/gpt-4o-mini   # 用于 summary、生成标题、approval fallback
+small_model: gpt-4o-mini           # 完整模型名；当前 provider 可用时用于 summary、生成标题、approval fallback
 execution_mode: work               # work / plan / auto / full-access
 
 prompt:
@@ -576,6 +576,8 @@ UI 流程：
 `Bash(pattern)` 规则采用 Claude-style prefix/wildcard 语义：无 `*` 时精确匹配；`cmd:*` 匹配该前缀的 shell 命令；compound command 会按 `&&`、`;`、管道、换行等拆分，只有每个子命令都命中 allow rule 才能自动放行，任一子命令命中 deny rule 则整条命令拒绝。
 
 **approval 模型切换规划**：`/approval-model [model]` 只影响 auto 模式的命令审批模型，不改变主对话模型。无参数时展示 approval provider 的候选模型；显式指定时必须通过候选列表校验；切换成功后重建 `permission.Manager` 内的 approval agent，并仅影响后续 tool approval。
+
+**small 模型切换规划**：`/small-model [model]` 只影响当前进程内 summary / auto memory 使用的模型，不改变主对话模型，也不写回配置文件。候选来自当前 provider 的完整模型字符串列表；显式指定时必须通过候选列表校验；切换成功后后续 compact 与 auto memory 使用该模型。
 
 **黑名单**：硬编码的强制再确认正则（`rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）。即使任意 always-rule match 也再弹一次。
 

@@ -272,6 +272,236 @@ func TestTUIRunnerSetProviderKeepsCurrentModelWhenAvailable(t *testing.T) {
 	}
 }
 
+func TestTUIRunnerSetProviderFallsBackSummaryModelWhenSmallModelUnavailable(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		SmallModel:      "primary/small",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"primary/model": {},
+					"primary/small": {},
+				},
+			},
+			"manual": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"manual/model": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+	if runner.summaryModel != "primary/small" || runner.summaryUsesCurrent {
+		t.Fatalf("initial summary model = %q usesCurrent=%v, want primary/small false", runner.summaryModel, runner.summaryUsesCurrent)
+	}
+	if runner.approvalProviderName != "primary" || runner.approvalModel != "primary/small" {
+		t.Fatalf("initial approval provider/model = %q/%q, want primary/primary/small", runner.approvalProviderName, runner.approvalModel)
+	}
+
+	if _, err := runner.SetProvider("manual", "manual/model"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if runner.summaryModel != "manual/model" || !runner.summaryUsesCurrent {
+		t.Fatalf("summary model after switch = %q usesCurrent=%v, want manual/model true", runner.summaryModel, runner.summaryUsesCurrent)
+	}
+	if got := runner.SmallModels(); !modelInList(got, "manual/model") || modelInList(got, "primary/small") {
+		t.Fatalf("small model candidates after switch = %#v, want manual provider candidates", got)
+	}
+	if runner.approvalProviderName != "manual" || runner.approvalModel != "manual/model" {
+		t.Fatalf("approval provider/model after switch = %q/%q, want manual/manual/model", runner.approvalProviderName, runner.approvalModel)
+	}
+	if got := runner.ApprovalModels(); !modelInList(got, "manual/model") || modelInList(got, "primary/small") {
+		t.Fatalf("approval candidates after switch = %#v, want manual provider candidates", got)
+	}
+}
+
+func TestTUIRunnerSetProviderRefreshesApprovalModelsFromProviderCheck(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"manual/model"},{"id":"manual/review"},{"id":"manual/other"}]}`))
+	}))
+	defer server.Close()
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		SmallModel:      "primary/small",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"primary/model": {},
+					"primary/small": {},
+				},
+			},
+			"manual": {
+				Type:    "openai-compat",
+				BaseURL: server.URL,
+				Models: map[string]config.ModelConfig{
+					"manual/model": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	if _, err := runner.SetProvider("manual", "manual/model"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	if got := runner.ApprovalModels(); !modelInList(got, "manual/review") || !modelInList(got, "manual/other") {
+		t.Fatalf("approval candidates after provider switch = %#v, want provider /models candidates", got)
+	}
+}
+
+func TestTUIRunnerSetSmallModelUpdatesSummaryModel(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"primary/model": {},
+					"primary/other": {},
+					"primary/small": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+	if runner.summaryModel != "primary/model" || !runner.summaryUsesCurrent {
+		t.Fatalf("initial summary model = %q usesCurrent=%v, want primary/model true", runner.summaryModel, runner.summaryUsesCurrent)
+	}
+
+	if err := runner.SetSmallModel("primary/small"); err != nil {
+		t.Fatalf("SetSmallModel: %v", err)
+	}
+	if runner.summaryModel != "primary/small" || runner.summaryUsesCurrent {
+		t.Fatalf("summary model after small switch = %q usesCurrent=%v, want primary/small false", runner.summaryModel, runner.summaryUsesCurrent)
+	}
+	if got := runner.SmallModels(); !modelInList(got, "primary/other") {
+		t.Fatalf("small model candidates = %#v, want full provider candidates", got)
+	}
+
+	if err := runner.SetModel("primary/other"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if runner.summaryModel != "primary/small" || runner.summaryUsesCurrent {
+		t.Fatalf("summary model after main model switch = %q usesCurrent=%v, want primary/small false", runner.summaryModel, runner.summaryUsesCurrent)
+	}
+}
+
+func TestTUIRunnerSetSmallModelRejectsUnavailable(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"primary/model": {},
+					"primary/small": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+
+	err = runner.SetSmallModel("primary/missing")
+	if err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("SetSmallModel error = %v, want not available", err)
+	}
+	if runner.summaryModel != "primary/model" || !runner.summaryUsesCurrent {
+		t.Fatalf("summary model after rejected small switch = %q usesCurrent=%v, want primary/model true", runner.summaryModel, runner.summaryUsesCurrent)
+	}
+}
+
+func TestTUIRunnerSetApprovalModelPreservesProviderCandidates(t *testing.T) {
+	temp := t.TempDir()
+	t.Chdir(temp)
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		DefaultModel:    "primary/model",
+		ExecutionMode:   config.ModeWork,
+		ApprovalAgent: config.ApprovalAgentConfig{
+			Provider: "reviewer",
+			Model:    "fake/review-old",
+		},
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"primary/model": {},
+				},
+			},
+			"reviewer": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"fake/review-old":    {},
+					"fake/review-new":    {},
+					"fake/review-remote": {},
+				},
+			},
+		},
+	}
+	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	if err != nil {
+		t.Fatalf("newTUIAgentRunner: %v", err)
+	}
+	defer runner.Close()
+	runner.approvalModels = []string{"fake/review-old", "fake/review-new"}
+
+	if err := runner.SetApprovalModel("fake/review-new"); err != nil {
+		t.Fatalf("SetApprovalModel: %v", err)
+	}
+	if got := runner.ApprovalModels(); !modelInList(got, "fake/review-remote") {
+		t.Fatalf("approval candidates after switch = %#v, want provider candidates preserved", got)
+	}
+}
+
 func TestTUIRunnerAnswerSideQuestionUsesNoToolsAndDoesNotMutateHistory(t *testing.T) {
 	temp := t.TempDir()
 	t.Chdir(temp)

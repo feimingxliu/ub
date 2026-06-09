@@ -49,6 +49,39 @@ func TestNewApprovalAgentFromConfigUsesSmallModelAndFallbackProvider(t *testing.
 	}
 }
 
+func TestNewApprovalAgentSetupPrefersSelectedProviderOverDefaultProvider(t *testing.T) {
+	cfg := &config.Config{
+		DefaultProvider: "primary",
+		SmallModel:      "primary/small",
+		Providers: map[string]config.ProviderConfig{
+			"primary": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"primary/model": {},
+					"primary/small": {},
+				},
+			},
+			"manual": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"manual/model": {},
+					"manual/small": {},
+				},
+			},
+		},
+	}
+	setup, err := newApprovalAgentSetup(context.Background(), cfg, "manual", "manual/model")
+	if err != nil {
+		t.Fatalf("newApprovalAgentSetup: %v", err)
+	}
+	if setup.ProviderName != "manual" || setup.Model != "manual/model" {
+		t.Fatalf("approval setup provider/model = %q/%q, want manual/manual/model", setup.ProviderName, setup.Model)
+	}
+	if !modelInList(setup.Models, "manual/small") || modelInList(setup.Models, "primary/small") {
+		t.Fatalf("approval candidates = %#v, want manual provider candidates only", setup.Models)
+	}
+}
+
 func TestNewApprovalAgentFromConfigErrorsForExplicitMissingProvider(t *testing.T) {
 	cfg := &config.Config{
 		ApprovalAgent: config.ApprovalAgentConfig{

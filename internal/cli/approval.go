@@ -36,18 +36,13 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 	providerName := strings.TrimSpace(cfg.ApprovalAgent.Provider)
 	model := strings.TrimSpace(cfg.ApprovalAgent.Model)
 	explicitProvider := providerName != ""
+	explicitModel := model != ""
 
-	if providerName == "" {
-		providerName = strings.TrimSpace(cfg.DefaultProvider)
-	}
 	if providerName == "" {
 		providerName = strings.TrimSpace(fallbackProvider)
 	}
-	if model == "" {
-		model = strings.TrimSpace(cfg.SmallModel)
-	}
-	if model == "" && providerName == strings.TrimSpace(fallbackProvider) {
-		model = strings.TrimSpace(fallbackModel)
+	if providerName == "" {
+		providerName = strings.TrimSpace(cfg.DefaultProvider)
 	}
 	if providerName == "" {
 		return approvalAgentSetup{}, nil
@@ -59,6 +54,15 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 			return approvalAgentSetup{}, fmt.Errorf("approval_agent provider %q not configured; check `ub config show`", providerName)
 		}
 		return approvalAgentSetup{}, nil
+	}
+	if model == "" {
+		smallModel := strings.TrimSpace(cfg.SmallModel)
+		if smallModel != "" && summaryModelAvailable(ctx, providerName, providerCfg, smallModel) {
+			model = smallModel
+		}
+	}
+	if !explicitModel && model == "" && providerName == strings.TrimSpace(fallbackProvider) {
+		model = strings.TrimSpace(fallbackModel)
 	}
 	var err error
 	model, err = selectProviderModel(ctx, providerName, providerCfg, model)

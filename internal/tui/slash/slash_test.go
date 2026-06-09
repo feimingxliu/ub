@@ -92,6 +92,16 @@ func TestParseApprovalModel(t *testing.T) {
 	}
 }
 
+func TestParseSmallModel(t *testing.T) {
+	cmd, err := Parse("/small-model fake/summarizer")
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cmd.Name != "small-model" || len(cmd.Args) != 1 || cmd.Args[0] != "fake/summarizer" {
+		t.Fatalf("command = %#v, want small-model fake/summarizer", cmd)
+	}
+}
+
 func TestParseBtw(t *testing.T) {
 	cmd, err := Parse("/btw what is happening")
 	if err != nil {

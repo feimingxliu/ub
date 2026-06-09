@@ -62,6 +62,8 @@ type Options struct {
 	Efforts        []string
 	ApprovalModel  string
 	ApprovalModels []string
+	SmallModel     string
+	SmallModels    []string
 	Messages       []InitialMessage
 	Turn           int
 	ExecutionMode  string
@@ -117,6 +119,8 @@ type Model struct {
 	efforts         []string
 	approvalModel   string
 	approvalModels  []string
+	smallModel      string
+	smallModels     []string
 	picker          *modelPicker
 	pickerTarget    string
 	sessions        *sessionPicker
@@ -200,6 +204,16 @@ func NewModel(opts Options) Model {
 			approvalModels = approvalRunner.ApprovalModels()
 		}
 	}
+	smallModel := strings.TrimSpace(opts.SmallModel)
+	smallModels := opts.SmallModels
+	if smallRunner, ok := opts.Runner.(SmallModelControlRunner); ok {
+		if smallModel == "" {
+			smallModel = smallRunner.SmallModel()
+		}
+		if len(smallModels) == 0 {
+			smallModels = smallRunner.SmallModels()
+		}
+	}
 
 	m := Model{
 		input:           input,
@@ -215,6 +229,8 @@ func NewModel(opts Options) Model {
 		efforts:         normalizeOptions(efforts, effort),
 		approvalModel:   approvalModel,
 		approvalModels:  normalizeModels(approvalModels, approvalModel),
+		smallModel:      smallModel,
+		smallModels:     normalizeModels(smallModels, smallModel),
 		history:         promptHistoryFromMessages(opts.Messages),
 		histIdx:         -1,
 		queueIdx:        -1,
@@ -404,6 +420,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					m.messages.append(systemRole, "approval model set to "+selected)
+					return m, nil
+				}
+				if target == "small" {
+					if err := m.setSmallModel(selected); err != nil {
+						m.messages.append(systemRole, err.Error())
+						return m, nil
+					}
+					m.messages.append(systemRole, "small model set to "+selected)
 					return m, nil
 				}
 				if target == "effort" {
@@ -1257,6 +1281,9 @@ type modelRefreshResultMsg struct {
 	approvalModels   []string
 	approvalErr      error
 	approvalModelsOK bool
+	smallModels      []string
+	smallErr         error
+	smallModelsOK    bool
 }
 
 type messagesLoadedMsg struct {
@@ -1267,7 +1294,8 @@ type messagesLoadedMsg struct {
 func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
 	modelRunner, hasModels := runner.(ModelRefreshRunner)
 	approvalRunner, hasApprovalModels := runner.(ApprovalModelRefreshRunner)
-	if !hasModels && !hasApprovalModels {
+	smallRunner, hasSmallModels := runner.(SmallModelRefreshRunner)
+	if !hasModels && !hasApprovalModels && !hasSmallModels {
 		return nil
 	}
 	return func() tea.Msg {
@@ -1279,6 +1307,10 @@ func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
 		if hasApprovalModels {
 			msg.approvalModels, msg.approvalErr = approvalRunner.RefreshApprovalModels(ctx)
 			msg.approvalModelsOK = true
+		}
+		if hasSmallModels {
+			msg.smallModels, msg.smallErr = smallRunner.RefreshSmallModels(ctx)
+			msg.smallModelsOK = true
 		}
 		return msg
 	}
@@ -1321,6 +1353,20 @@ func (m Model) handleModelRefreshResult(msg modelRefreshResultMsg) (tea.Model, t
 				current = selected
 			}
 			m.picker = newModelPicker(m.approvalModels, current)
+		}
+	}
+	if msg.smallModelsOK && msg.smallErr == nil {
+		selected := ""
+		if m.picker != nil && m.pickerTarget == "small" {
+			selected = m.picker.selected()
+		}
+		m.smallModels = normalizeModels(msg.smallModels, m.smallModel)
+		if m.picker != nil && m.pickerTarget == "small" {
+			current := m.smallModel
+			if modelAllowed(m.smallModels, selected) {
+				current = selected
+			}
+			m.picker = newModelPicker(m.smallModels, current)
 		}
 	}
 	return m, nil
@@ -1404,7 +1450,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "config":
 		approvalModel := defaultString(m.approvalModel, "none")
-		m.messages.append(systemRole, fmt.Sprintf("provider=%s model=%s effort=%s approval_model=%s mode=%s cwd=%s", m.status.provider, m.status.model, m.status.effort, approvalModel, m.status.executionMode, m.status.cwd))
+		smallModel := defaultString(m.smallModel, "none")
+		m.messages.append(systemRole, fmt.Sprintf("provider=%s model=%s effort=%s approval_model=%s small_model=%s mode=%s cwd=%s", m.status.provider, m.status.model, m.status.effort, approvalModel, smallModel, m.status.executionMode, m.status.cwd))
 		return m, nil
 	case "sessions":
 		if len(cmd.Args) >= 1 && cmd.Args[0] == "search" {
@@ -1495,6 +1542,23 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.messages.append(systemRole, "approval model set to "+model)
+		return m, nil
+	case "small-model":
+		if len(cmd.Args) == 0 {
+			if len(m.smallModels) == 0 {
+				m.messages.append(systemRole, "no small models available")
+				return m, nil
+			}
+			m.picker = newModelPicker(m.smallModels, m.smallModel)
+			m.pickerTarget = "small"
+			return m, nil
+		}
+		model := strings.Join(cmd.Args, " ")
+		if err := m.setSmallModel(model); err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		m.messages.append(systemRole, "small model set to "+model)
 		return m, nil
 	case "mode":
 		if len(cmd.Args) == 0 {
@@ -2083,6 +2147,8 @@ func (m *Model) setProvider(providerName, model string) error {
 	} else {
 		m.refreshEffortFromRunner()
 	}
+	m.refreshApprovalModelFromRunner()
+	m.refreshSmallModelFromRunner()
 	return nil
 }
 
@@ -2116,6 +2182,26 @@ func (m *Model) refreshEffortFromRunner() {
 	m.efforts = normalizeOptions(runner.Efforts(), effort)
 }
 
+func (m *Model) refreshApprovalModelFromRunner() {
+	runner, ok := m.runner.(ApprovalControlRunner)
+	if !ok {
+		return
+	}
+	model := strings.TrimSpace(runner.ApprovalModel())
+	m.approvalModel = model
+	m.approvalModels = normalizeModels(runner.ApprovalModels(), model)
+}
+
+func (m *Model) refreshSmallModelFromRunner() {
+	runner, ok := m.runner.(SmallModelControlRunner)
+	if !ok {
+		return
+	}
+	model := strings.TrimSpace(runner.SmallModel())
+	m.smallModel = model
+	m.smallModels = normalizeModels(runner.SmallModels(), model)
+}
+
 func (m *Model) setApprovalModel(model string) error {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -2130,6 +2216,23 @@ func (m *Model) setApprovalModel(model string) error {
 		return fmt.Errorf("approval model %q is not available for the current approval provider; use /approval-model to list candidates", model)
 	}
 	m.approvalModel = model
+	return nil
+}
+
+func (m *Model) setSmallModel(model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("small model cannot be empty")
+	}
+	if runner, ok := m.runner.(SmallModelControlRunner); ok {
+		if err := runner.SetSmallModel(model); err != nil {
+			return err
+		}
+		m.smallModels = normalizeModels(runner.SmallModels(), model)
+	} else if !modelAllowed(m.smallModels, model) {
+		return fmt.Errorf("small model %q is not available for the current provider; use /small-model to list candidates", model)
+	}
+	m.smallModel = model
 	return nil
 }
 
@@ -2773,6 +2876,9 @@ func (m Model) slashValueSource() (slashValueSource, bool) {
 	}
 	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "approval-model"); ok {
 		return slashValueSource{command: "approval-model", label: "approval model", prefix: prefix, values: m.approvalModels}, true
+	}
+	if prefix, ok := slashCommandArgPrefix(m.input.Value(), "small-model"); ok {
+		return slashValueSource{command: "small-model", label: "small model", prefix: prefix, values: m.smallModels}, true
 	}
 	return slashValueSource{}, false
 }

@@ -3613,6 +3613,180 @@ func TestAsyncApprovalModelRefreshUpdatesOpenPicker(t *testing.T) {
 	}
 }
 
+func TestSlashSmallModelUpdatesRunner(t *testing.T) {
+	runner := &scriptedRunner{
+		smallModel:  "fake/small-old",
+		smallModels: []string{"fake/small-old", "fake/small-new"},
+	}
+	model := NewModel(Options{
+		Runner:      runner,
+		SmallModel:  runner.smallModel,
+		SmallModels: runner.smallModels,
+	})
+	model = sendText(t, model, "/small-model fake/small-new")
+
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.smallModel != "fake/small-new" {
+		t.Fatalf("small model = %q, want fake/small-new", runner.smallModel)
+	}
+	if got := model.MessageTexts(); len(got) != 1 || got[0] != "small model set to fake/small-new" {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestSlashSmallModelWithoutArgsListsCandidates(t *testing.T) {
+	runner := &scriptedRunner{
+		smallModel:  "fake/small-old",
+		smallModels: []string{"fake/small-old", "fake/small-new"},
+	}
+	model := NewModel(Options{
+		Runner:      runner,
+		SmallModel:  runner.smallModel,
+		SmallModels: runner.smallModels,
+	})
+	model = sendText(t, model, "/small-model")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash small-model returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view := viewString(model)
+	for _, want := range []string{"select model", "> fake/small-old", "  fake/small-new"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("small model picker missing %q:\n%s", want, view)
+		}
+	}
+	updated, _ = model.Update(keyPress(tea.KeyDown))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.smallModel != "fake/small-new" {
+		t.Fatalf("small model = %q, want fake/small-new", runner.smallModel)
+	}
+}
+
+func TestAsyncSmallModelRefreshUpdatesOpenPicker(t *testing.T) {
+	runner := &scriptedRunner{
+		smallModel:         "fake/small-current",
+		smallModels:        []string{"fake/small-current"},
+		refreshSmallModels: []string{"fake/small-current", "fake/small-remote"},
+	}
+	model := NewModel(Options{
+		Runner:      runner,
+		SmallModel:  runner.smallModel,
+		SmallModels: runner.smallModels,
+	})
+	refreshMsg := initModelRefreshMsg(t, model)
+	if runner.refreshSmallCalls != 1 {
+		t.Fatalf("refresh small calls = %d, want 1", runner.refreshSmallCalls)
+	}
+
+	model = sendText(t, model, "/small-model")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash small-model returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if runner.refreshSmallCalls != 1 {
+		t.Fatalf("slash small-model triggered refresh calls = %d, want 1", runner.refreshSmallCalls)
+	}
+	view := viewString(model)
+	if strings.Contains(view, "fake/small-remote") {
+		t.Fatalf("small model picker included async candidate before refresh msg:\n%s", view)
+	}
+
+	updated, cmd = model.Update(refreshMsg)
+	if cmd != nil {
+		t.Fatalf("refresh returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	view = viewString(model)
+	for _, want := range []string{"> fake/small-current", "  fake/small-remote"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("small model picker missing refreshed candidate %q:\n%s", want, view)
+		}
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyDown))
+	model = assertModel(t, updated)
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if runner.smallModel != "fake/small-remote" {
+		t.Fatalf("small model = %q, want fake/small-remote", runner.smallModel)
+	}
+}
+
+func TestSlashProviderSyncsApprovalAndSmallModelState(t *testing.T) {
+	runner := &scriptedRunner{
+		provider: "old",
+		providers: []string{
+			"old",
+			"new",
+		},
+		providerModels: map[string][]string{
+			"old": {"old/main"},
+			"new": {"new/main"},
+		},
+		providerApprovalModels: map[string][]string{
+			"old": {"old/review"},
+			"new": {"new/review", "new/review-plus"},
+		},
+		providerSmallModels: map[string][]string{
+			"old": {"old/small"},
+			"new": {"new/small"},
+		},
+		model:          "old/main",
+		models:         []string{"old/main"},
+		approvalModel:  "old/review",
+		approvalModels: []string{"old/review"},
+		smallModel:     "old/small",
+		smallModels:    []string{"old/small"},
+	}
+	model := NewModel(Options{
+		Runner:         runner,
+		Provider:       runner.provider,
+		Providers:      runner.providers,
+		Model:          runner.model,
+		Models:         runner.models,
+		ApprovalModel:  runner.approvalModel,
+		ApprovalModels: runner.approvalModels,
+		SmallModel:     runner.smallModel,
+		SmallModels:    runner.smallModels,
+	})
+
+	model = sendText(t, model, "/provider new")
+	updated, _ := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	model = sendText(t, model, "/config")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	texts := model.MessageTexts()
+	if len(texts) < 2 || !strings.Contains(texts[len(texts)-1], "approval_model=new/review small_model=new/small") {
+		t.Fatalf("config did not sync approval/small models: %#v", texts)
+	}
+
+	model = sendText(t, model, "/approval-model")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "> new/review") || !strings.Contains(view, "  new/review-plus") || strings.Contains(view, "old/review") {
+		t.Fatalf("approval picker not synced to new provider:\n%s", view)
+	}
+	updated, _ = model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+
+	model = sendText(t, model, "/small-model")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	view = viewString(model)
+	if !strings.Contains(view, "> new/small") || strings.Contains(view, "old/small") {
+		t.Fatalf("small picker not synced to new provider:\n%s", view)
+	}
+}
+
 func TestSlashModelRejectsUnsupportedCandidate(t *testing.T) {
 	runner := &scriptedRunner{models: []string{"fake/old", "fake/new"}}
 	model := NewModel(Options{Runner: runner, Model: "fake/old", Models: runner.models})
@@ -4870,49 +5044,56 @@ func TestStreamWaitTimeoutCancelsRun(t *testing.T) {
 }
 
 type scriptedRunner struct {
-	events                []Event
-	compactEvents         []Event
-	calls                 int
-	compactCalls          int
-	prompts               []string
-	provider              string
-	providers             []string
-	providerModels        map[string][]string
-	model                 string
-	models                []string
-	refreshModels         []string
-	refreshModelErr       error
-	refreshModelCalls     int
-	effort                string
-	efforts               []string
-	approvalModel         string
-	approvalModels        []string
-	refreshApprovalModels []string
-	refreshApprovalErr    error
-	refreshApprovalCalls  int
-	mode                  string
-	sessions              []SessionInfo
-	sessionStates         map[string]SessionState
-	currentSessionID      string
-	newSessionState       SessionState
-	newSessionCalls       int
-	shellEvents           []Event
-	shellCalls            int
-	shellCommands         []string
-	workspaceFiles        []string
-	doctorReport          string
-	doctorErr             error
-	doctorCalls           int
-	sideEvents            []Event
-	sideEventScripts      [][]Event
-	sideCalls             int
-	sideQuestions         []string
-	sideRequests          []SideQuestionRequest
-	rewindTargets         []RewindTarget
-	rewindRequests        []RewindRequest
-	rewindState           SessionState
-	rewindResult          RewindResult
-	rewindErr             error
+	events                 []Event
+	compactEvents          []Event
+	calls                  int
+	compactCalls           int
+	prompts                []string
+	provider               string
+	providers              []string
+	providerModels         map[string][]string
+	providerApprovalModels map[string][]string
+	providerSmallModels    map[string][]string
+	model                  string
+	models                 []string
+	refreshModels          []string
+	refreshModelErr        error
+	refreshModelCalls      int
+	effort                 string
+	efforts                []string
+	approvalModel          string
+	approvalModels         []string
+	refreshApprovalModels  []string
+	refreshApprovalErr     error
+	refreshApprovalCalls   int
+	smallModel             string
+	smallModels            []string
+	refreshSmallModels     []string
+	refreshSmallErr        error
+	refreshSmallCalls      int
+	mode                   string
+	sessions               []SessionInfo
+	sessionStates          map[string]SessionState
+	currentSessionID       string
+	newSessionState        SessionState
+	newSessionCalls        int
+	shellEvents            []Event
+	shellCalls             int
+	shellCommands          []string
+	workspaceFiles         []string
+	doctorReport           string
+	doctorErr              error
+	doctorCalls            int
+	sideEvents             []Event
+	sideEventScripts       [][]Event
+	sideCalls              int
+	sideQuestions          []string
+	sideRequests           []SideQuestionRequest
+	rewindTargets          []RewindTarget
+	rewindRequests         []RewindRequest
+	rewindState            SessionState
+	rewindResult           RewindResult
+	rewindErr              error
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -5007,6 +5188,20 @@ func (r *scriptedRunner) SetProvider(providerName, model string) (ProviderSelect
 	}
 	r.model = model
 	r.models = models
+	if candidates, ok := r.providerApprovalModels[providerName]; ok {
+		r.approvalModels = append([]string(nil), candidates...)
+		r.approvalModel = ""
+		if len(r.approvalModels) > 0 {
+			r.approvalModel = r.approvalModels[0]
+		}
+	}
+	if candidates, ok := r.providerSmallModels[providerName]; ok {
+		r.smallModels = append([]string(nil), candidates...)
+		r.smallModel = ""
+		if len(r.smallModels) > 0 {
+			r.smallModel = r.smallModels[0]
+		}
+	}
 	return ProviderSelection{
 		Provider:  r.provider,
 		Providers: r.Providers(),
@@ -5088,6 +5283,33 @@ func (r *scriptedRunner) RefreshApprovalModels(context.Context) ([]string, error
 		r.approvalModels = append([]string(nil), r.refreshApprovalModels...)
 	}
 	return r.ApprovalModels(), nil
+}
+
+func (r *scriptedRunner) SetSmallModel(model string) error {
+	if len(r.smallModels) > 0 && !modelAllowed(r.smallModels, model) {
+		return fmt.Errorf("small model %q is not available", model)
+	}
+	r.smallModel = model
+	return nil
+}
+
+func (r *scriptedRunner) SmallModel() string {
+	return r.smallModel
+}
+
+func (r *scriptedRunner) SmallModels() []string {
+	return append([]string(nil), r.smallModels...)
+}
+
+func (r *scriptedRunner) RefreshSmallModels(context.Context) ([]string, error) {
+	r.refreshSmallCalls++
+	if r.refreshSmallErr != nil {
+		return nil, r.refreshSmallErr
+	}
+	if r.refreshSmallModels != nil {
+		r.smallModels = append([]string(nil), r.refreshSmallModels...)
+	}
+	return r.SmallModels(), nil
 }
 
 func (r *scriptedRunner) ListSessions(context.Context) ([]SessionInfo, error) {
