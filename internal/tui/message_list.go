@@ -225,7 +225,14 @@ func (l *messageList) appendOrUpdateTodo(event Event) {
 	if !ok {
 		return
 	}
+	if todoEventStartsNewList(event) {
+		l.removeKey(block.role, block.key)
+	}
 	l.appendOrUpdateBlock(block)
+}
+
+func todoEventStartsNewList(event Event) bool {
+	return strings.TrimSpace(event.ToolName) == "todo_write"
 }
 
 func normalizeLoadedActivityEvent(event Event) Event {

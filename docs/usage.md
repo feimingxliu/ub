@@ -426,7 +426,7 @@ ub 提供 plan artifact 和 session todo 两层工作流:
    todo_update(id="patch", status="in_progress")
    ```
 
-   todo 状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`,同一清单最多一个 `in_progress`。TUI 会把 `todo_*` 的 tool result 抽取成独立 Todo checklist,工具 block 只保留审计行;rollout 也会记录这些 tool result,所以 resume / `ub rollout show` 能看到历史执行清单。todo state 存在 `$XDG_STATE_HOME/ub/todos/<session-id>.json`,不写入工作区、不复用 plan markdown 的 checkbox。
+   todo 状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`,同一清单最多一个 `in_progress`。TUI 会把 `todo_*` 的 tool result 抽取成独立 Todo checklist,工具 block 只保留审计行;`todo_update` 原地刷新当前 checklist,新的 `todo_write` 会把 checklist 移到最新工具事件附近。rollout 也会记录这些 tool result,所以 resume / `ub rollout show` 能看到历史执行清单。todo state 存在 `$XDG_STATE_HOME/ub/todos/<session-id>.json`,不写入工作区、不复用 plan markdown 的 checkbox。
 
 5. **中断恢复**:下次会话从上次 tool result / rollout 中取回 `path` 后可直接 `read` 这个 state-root 下的 plan,或用 `plan_update_step(plan_id="...")` 继续标记进度。plan artifact 是用户 state 数据,不会写入工作区或参与 git。session todo 会随 session id 保存在 state-root 下,可继续用 `todo_update` 更新。
 

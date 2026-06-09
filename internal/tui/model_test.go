@@ -934,6 +934,63 @@ func TestTodoActivityUpdatesStandaloneChecklistInPlace(t *testing.T) {
 	}
 }
 
+func TestTodoWriteMovesStandaloneChecklistToLatestPosition(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 7
+	model.events = make(chan Event)
+	first := "session_id=sess_1\ntodo_count=1\n\n## Todo\n\n- [>] 1. inspect\n"
+	second := "session_id=sess_1\ntodo_count=2\n\n## Todo\n\n- [>] 1. patch\n- [ ] 2. test\n"
+
+	updated, cmd := model.Update(streamEventMsg{runID: 7, ok: true, event: Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_todo_1",
+		ToolName:     "todo_write",
+		Status:       "done",
+		Summary:      "items=1",
+		Content:      first,
+	}})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("first todo activity should continue waiting")
+	}
+	model.messages.append(userRole, "later prompt")
+	model.messages.append(assistantRole, "later answer")
+
+	updated, cmd = model.Update(streamEventMsg{runID: 7, ok: true, event: Event{
+		Type:         EventActivity,
+		ActivityKind: "tool",
+		ToolUseID:    "call_todo_2",
+		ToolName:     "todo_write",
+		Status:       "done",
+		Summary:      "items=2",
+		Content:      second,
+	}})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("second todo activity should continue waiting")
+	}
+
+	todoCount := 0
+	for _, item := range model.messages.items {
+		if item.kind != todoMessage {
+			continue
+		}
+		todoCount++
+		if strings.Contains(item.detail, "inspect") || !strings.Contains(item.detail, "- [>] 1. patch") {
+			t.Fatalf("todo detail = %q, want latest list only", item.detail)
+		}
+	}
+	if todoCount != 1 {
+		t.Fatalf("todo block count = %d, want 1; items=%#v", todoCount, model.messages.items)
+	}
+	last := model.messages.items[len(model.messages.items)-1]
+	if last.kind != todoMessage {
+		t.Fatalf("last item = %#v, want latest todo block at current position", last)
+	}
+}
+
 func TestTodoActivityRestoresStandaloneChecklistFromHistory(t *testing.T) {
 	content := "session_id=sess_1\ntodo_count=1\n\n## Todo\n\n- [>] 1. patch\n"
 	model := NewModel(Options{Messages: []InitialMessage{{
