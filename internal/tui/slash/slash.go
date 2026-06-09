@@ -33,6 +33,7 @@ var specs = []Spec{
 	{Name: "plan-edit", Usage: "/plan-edit <plan-id>", Description: "open a plan artifact in $EDITOR"},
 	{Name: "doctor", Usage: "/doctor", Description: "run health checks in the TUI"},
 	{Name: "retry", Usage: "/retry", Description: "rerun the last user turn"},
+	{Name: "rewind", Usage: "/rewind [turn]", Description: "choose a prior user turn, rewind to before it, and restore it in the input"},
 	{Name: "btw", Usage: "/btw [question]", Description: "open the BTW side chat or ask without adding it to the main transcript"},
 	{Name: "resume", Usage: "/resume [session-id]", Description: "resume a historical session"},
 	{Name: "copy", Usage: "/copy [N]", Description: "copy last response to clipboard, or message N (shown as [N] in transcript)"},

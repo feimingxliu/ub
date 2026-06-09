@@ -452,6 +452,10 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		return err
 	}
 	defer state.store.Close()
+	fileHistory, err := newFileHistoryManager(cmd.Context(), tools.Workspace, state.sessionID, state.rollout)
+	if err != nil {
+		return err
+	}
 
 	hooksRunner := hook.New(cfg.Hooks)
 	subRunner := &cliSubagentRunner{
@@ -469,6 +473,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		defaultMaxTurns:  cfg.MaxTurns,
 		workspaceRoot:    tools.Workspace,
 		memoryMaxChars:   cfg.Memory.MaxChars,
+		fileHistory:      fileHistory,
 	}
 	a, err := agent.New(agent.Options{
 		Provider:         p,
@@ -490,6 +495,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		MemoryMaxChars:   cfg.Memory.MaxChars,
 		Memory:           cfg.Memory,
 		SubagentRunner:   subRunner,
+		FileHistory:      fileHistory,
 	})
 	if err != nil {
 		return err
@@ -849,7 +855,11 @@ func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, op
 func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, error) {
 	var history []message.Message
 	maxTurn := 0
-	if err := ro.ForEach(cmd.Context(), sessionID, func(event rollout.Event) error {
+	ctx := context.Background()
+	if cmd != nil && cmd.Context() != nil {
+		ctx = cmd.Context()
+	}
+	if err := ro.ForEach(ctx, sessionID, func(event rollout.Event) error {
 		if event.Turn > maxTurn {
 			maxTurn = event.Turn
 		}

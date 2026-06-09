@@ -14,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/filehistory"
 	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/permission"
@@ -52,57 +53,61 @@ const outputTokensRecoveryInstruction = "Output token limit hit. Resume directly
 
 // Options configures an Agent.
 type Options struct {
-	Provider         provider.Provider
-	Tools            *tool.Registry
-	Permission       *permission.Manager
-	Rollout          rollout.Writer
-	Model            string
-	Mode             execution.Mode
-	ModeFunc         func() execution.Mode
-	MaxTurns         int
-	LimitAsker       LimitAsker
-	Events           EventSink
-	Reasoning        *reasoning.Config
-	MaxContextTokens int
-	SummaryProvider  provider.Provider
-	SummaryModel     string
-	Context          config.ContextConfig
-	Prompt           config.PromptConfig
-	Runtime          RuntimeContext
-	ToolOutputState  string
-	Hooks            hook.Runner
-	WorkspaceRoot    string
-	MemoryMaxChars   int
-	Memory           config.MemoryConfig
-	SubagentRunner   tool.SubagentRunner
+	Provider             provider.Provider
+	Tools                *tool.Registry
+	Permission           *permission.Manager
+	Rollout              rollout.Writer
+	Model                string
+	Mode                 execution.Mode
+	ModeFunc             func() execution.Mode
+	MaxTurns             int
+	LimitAsker           LimitAsker
+	Events               EventSink
+	Reasoning            *reasoning.Config
+	MaxContextTokens     int
+	SummaryProvider      provider.Provider
+	SummaryModel         string
+	Context              config.ContextConfig
+	Prompt               config.PromptConfig
+	Runtime              RuntimeContext
+	ToolOutputState      string
+	Hooks                hook.Runner
+	WorkspaceRoot        string
+	MemoryMaxChars       int
+	Memory               config.MemoryConfig
+	SubagentRunner       tool.SubagentRunner
+	FileHistory          *filehistory.Manager
+	FileHistoryToolsOnly bool
 }
 
 // Agent runs a single headless agent loop.
 type Agent struct {
-	provider         provider.Provider
-	tools            *tool.Registry
-	permission       *permission.Manager
-	rollout          rollout.Writer
-	model            string
-	mode             execution.Mode
-	modeFunc         func() execution.Mode
-	maxTurns         int
-	limitAsker       LimitAsker
-	events           EventSink
-	reasoning        *reasoning.Config
-	maxContextTokens int
-	summaryProvider  provider.Provider
-	summaryModel     string
-	contextCfg       config.ContextConfig
-	promptCfg        config.PromptConfig
-	runtime          RuntimeContext
-	startupPrompt    []message.Message
-	toolOutputState  string
-	hooks            hook.Runner
-	workspaceRoot    string
-	memoryMaxChars   int
-	memoryCfg        config.MemoryConfig
-	subagentRunner   tool.SubagentRunner
+	provider             provider.Provider
+	tools                *tool.Registry
+	permission           *permission.Manager
+	rollout              rollout.Writer
+	model                string
+	mode                 execution.Mode
+	modeFunc             func() execution.Mode
+	maxTurns             int
+	limitAsker           LimitAsker
+	events               EventSink
+	reasoning            *reasoning.Config
+	maxContextTokens     int
+	summaryProvider      provider.Provider
+	summaryModel         string
+	contextCfg           config.ContextConfig
+	promptCfg            config.PromptConfig
+	runtime              RuntimeContext
+	startupPrompt        []message.Message
+	toolOutputState      string
+	hooks                hook.Runner
+	workspaceRoot        string
+	memoryMaxChars       int
+	memoryCfg            config.MemoryConfig
+	subagentRunner       tool.SubagentRunner
+	fileHistory          *filehistory.Manager
+	fileHistoryToolsOnly bool
 }
 
 // Request is one Agent run input.
@@ -171,30 +176,32 @@ func New(opts Options) (*Agent, error) {
 	}
 	promptCfg := effectivePromptConfig(opts.Prompt)
 	return &Agent{
-		provider:         opts.Provider,
-		tools:            opts.Tools,
-		permission:       opts.Permission,
-		rollout:          opts.Rollout,
-		model:            strings.TrimSpace(opts.Model),
-		mode:             mode,
-		modeFunc:         opts.ModeFunc,
-		maxTurns:         maxTurns,
-		limitAsker:       opts.LimitAsker,
-		events:           opts.Events,
-		reasoning:        cloneReasoning(opts.Reasoning),
-		maxContextTokens: opts.MaxContextTokens,
-		summaryProvider:  opts.SummaryProvider,
-		summaryModel:     strings.TrimSpace(opts.SummaryModel),
-		contextCfg:       opts.Context,
-		promptCfg:        promptCfg,
-		runtime:          runtime,
-		startupPrompt:    buildStartupPromptMessages(runtime, workspaceRoot, promptCfg),
-		toolOutputState:  toolOutputState,
-		hooks:            hooks,
-		workspaceRoot:    workspaceRoot,
-		memoryMaxChars:   opts.MemoryMaxChars,
-		memoryCfg:        opts.Memory,
-		subagentRunner:   opts.SubagentRunner,
+		provider:             opts.Provider,
+		tools:                opts.Tools,
+		permission:           opts.Permission,
+		rollout:              opts.Rollout,
+		model:                strings.TrimSpace(opts.Model),
+		mode:                 mode,
+		modeFunc:             opts.ModeFunc,
+		maxTurns:             maxTurns,
+		limitAsker:           opts.LimitAsker,
+		events:               opts.Events,
+		reasoning:            cloneReasoning(opts.Reasoning),
+		maxContextTokens:     opts.MaxContextTokens,
+		summaryProvider:      opts.SummaryProvider,
+		summaryModel:         strings.TrimSpace(opts.SummaryModel),
+		contextCfg:           opts.Context,
+		promptCfg:            promptCfg,
+		runtime:              runtime,
+		startupPrompt:        buildStartupPromptMessages(runtime, workspaceRoot, promptCfg),
+		toolOutputState:      toolOutputState,
+		hooks:                hooks,
+		workspaceRoot:        workspaceRoot,
+		memoryMaxChars:       opts.MemoryMaxChars,
+		memoryCfg:            opts.Memory,
+		subagentRunner:       opts.SubagentRunner,
+		fileHistory:          opts.FileHistory,
+		fileHistoryToolsOnly: opts.FileHistoryToolsOnly,
 	}, nil
 }
 
@@ -222,6 +229,11 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	userMsg := message.Text(message.RoleUser, req.Prompt)
 	messages := cloneMessages(req.History)
 	messages = append(messages, userMsg)
+	if a.fileHistory != nil && !a.fileHistoryToolsOnly {
+		if err := a.fileHistory.MakeSnapshot(ctx, req.Turn); err != nil {
+			a.emit(Event{Type: EventError, Content: fmt.Sprintf("file history snapshot: %v", err), IsError: true, Err: err})
+		}
+	}
 	if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 		return rollout.UserMessage(req.SessionID, req.Turn, userMsg)
 	}); err != nil {
@@ -679,6 +691,11 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
 			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
+		}
+	}
+	if a.fileHistory != nil {
+		if err := a.fileHistory.TrackTool(ctx, call.Name, call.Input); err != nil {
+			a.emit(Event{Type: EventError, Content: fmt.Sprintf("file history track %s: %v", call.Name, err), IsError: true, Err: err})
 		}
 	}
 	result, err := a.executeToolCall(ctx, t, call)

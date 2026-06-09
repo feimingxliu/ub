@@ -161,6 +161,44 @@ type SessionSearchRunner interface {
 	SearchSessions(ctx context.Context, query string, limit int) (string, error)
 }
 
+// RewindFileChange summarizes one checkpointed workspace file that would
+// change when the target rewind is applied.
+type RewindFileChange struct {
+	Path string
+	Kind string
+}
+
+// RewindTarget is one historical user turn the TUI can rewind to. Rewinding
+// target turn N removes turn N and later from the session, then restores Text
+// into the input box so the user can edit and resubmit it.
+type RewindTarget struct {
+	Turn          int
+	Text          string
+	Time          time.Time
+	AffectedFiles []RewindFileChange
+}
+
+// RewindRequest is one explicit rewind action.
+type RewindRequest struct {
+	Turn        int
+	RevertFiles bool
+}
+
+// RewindResult describes what happened while applying a rewind.
+type RewindResult struct {
+	Target        RewindTarget
+	DeletedEvents int
+	RevertedFiles []string
+	SkippedFiles  []string
+}
+
+// RewindRunner optionally lets slash commands rewind the current session to
+// before a selected historical user turn.
+type RewindRunner interface {
+	ListRewindTargets(ctx context.Context) ([]RewindTarget, error)
+	Rewind(ctx context.Context, req RewindRequest) (SessionState, RewindResult, error)
+}
+
 // EventType identifies a TUI stream event.
 type EventType string
 

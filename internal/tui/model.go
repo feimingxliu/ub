@@ -121,6 +121,7 @@ type Model struct {
 	pickerTarget    string
 	sessions        *sessionPicker
 	plans           *planPicker
+	rewind          *rewindPicker
 	files           *filePicker
 	slashIdx        int
 	history         []string
@@ -465,6 +466,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			for _, r := range key.Text {
 				m.plans.appendRune(r)
+			}
+		}
+		return m, nil
+	}
+
+	if m.rewind != nil {
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch key.String() {
+			case "ctrl+c":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			case "esc":
+				m.rewind = nil
+				return m, nil
+			case "up", "k":
+				m.rewind.previous()
+				return m, nil
+			case "down", "j", "tab":
+				m.rewind.next()
+				return m, nil
+			case "backspace", "delete":
+				m.rewind.backspace()
+				return m, nil
+			case "ctrl+u":
+				m.rewind.clearQuery()
+				return m, nil
+			case "enter":
+				if m.rewind.phase == rewindPickerMode {
+					target := m.rewind.chosen
+					mode := m.rewind.selectedMode()
+					m.rewind = nil
+					return m.applyRewind(target, mode.revertFiles)
+				}
+				target := m.rewind.selectedTarget()
+				if target.Turn <= 0 {
+					return m, nil
+				}
+				if len(target.AffectedFiles) > 0 {
+					m.rewind.chooseTarget(target)
+					return m, nil
+				}
+				m.rewind = nil
+				return m.applyRewind(target, false)
+			}
+			for _, r := range key.Text {
+				m.rewind.appendRune(r)
 			}
 		}
 		return m, nil
@@ -1342,6 +1391,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m.runDoctor()
 	case "retry":
 		return m.retryLastTurn()
+	case "rewind":
+		return m.openRewindPicker(cmd.Args)
 	case "btw":
 		return m.startSideQuestion(cmd.Args)
 	case "copy":
@@ -2140,6 +2191,98 @@ func (m Model) newSession() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) openRewindPicker(args []string) (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(RewindRunner)
+	if !ok {
+		m.messages.append(systemRole, "rewind is unavailable in this runner")
+		return m, nil
+	}
+	targets, err := runner.ListRewindTargets(m.ctx)
+	if err != nil {
+		m.messages.append(systemRole, "rewind failed: "+err.Error())
+		return m, nil
+	}
+	if len(targets) == 0 {
+		m.messages.append(systemRole, "no user turns to rewind")
+		return m, nil
+	}
+	if len(args) > 1 {
+		m.messages.append(systemRole, "usage: /rewind [turn]")
+		return m, nil
+	}
+	if len(args) == 1 {
+		turn, err := strconv.Atoi(args[0])
+		if err != nil || turn <= 0 {
+			m.messages.append(systemRole, "usage: /rewind [turn]")
+			return m, nil
+		}
+		for _, target := range targets {
+			if target.Turn != turn {
+				continue
+			}
+			if len(target.AffectedFiles) > 0 {
+				m.rewind = newRewindPicker(targets)
+				m.rewind.chooseTarget(target)
+				return m, nil
+			}
+			return m.applyRewind(target, false)
+		}
+		m.messages.append(systemRole, fmt.Sprintf("rewind target turn %d not found", turn))
+		return m, nil
+	}
+	m.rewind = newRewindPicker(targets)
+	return m, nil
+}
+
+func (m Model) applyRewind(target RewindTarget, revertFiles bool) (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(RewindRunner)
+	if !ok {
+		m.messages.append(systemRole, "rewind is unavailable in this runner")
+		return m, nil
+	}
+	state, result, err := runner.Rewind(m.ctx, RewindRequest{
+		Turn:        target.Turn,
+		RevertFiles: revertFiles,
+	})
+	if err != nil {
+		m.messages.append(systemRole, "rewind failed: "+err.Error())
+		return m, nil
+	}
+	m.applySessionState(state)
+	prompt := strings.TrimSpace(result.Target.Text)
+	if prompt == "" {
+		prompt = strings.TrimSpace(target.Text)
+	}
+	m.input.SetValue(prompt)
+	m.input.CursorEnd()
+	m.messages.append(systemRole, rewindNotice(result, revertFiles))
+	m.scrollToBottom()
+	return m, nil
+}
+
+func rewindNotice(result RewindResult, requestedFiles bool) string {
+	turn := result.Target.Turn
+	if turn <= 0 {
+		turn = 0
+	}
+	var parts []string
+	parts = append(parts, fmt.Sprintf("rewound to before turn %d; prompt restored in input", turn))
+	if requestedFiles {
+		if len(result.RevertedFiles) > 0 {
+			parts = append(parts, "reverted files: "+strings.Join(result.RevertedFiles, ", "))
+		}
+		if len(result.SkippedFiles) > 0 {
+			parts = append(parts, "could not safely revert files: "+strings.Join(result.SkippedFiles, ", "))
+		}
+		if len(result.RevertedFiles) == 0 && len(result.SkippedFiles) == 0 {
+			parts = append(parts, "no file changes needed reverting")
+		}
+	} else if len(result.Target.AffectedFiles) > 0 {
+		parts = append(parts, "workspace files were left unchanged")
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (m Model) searchSessions(queryParts []string) (tea.Model, tea.Cmd) {
 	query := strings.Join(queryParts, " ")
 	if strings.TrimSpace(query) == "" {
@@ -2329,6 +2472,13 @@ func (m Model) planPickerView(width int) string {
 		return ""
 	}
 	return m.plans.view(width, m.styles)
+}
+
+func (m Model) rewindPickerView(width int) string {
+	if m.rewind == nil {
+		return ""
+	}
+	return m.rewind.view(width, m.styles)
 }
 
 func (m Model) filePickerView(width int) string {

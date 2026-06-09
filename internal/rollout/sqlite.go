@@ -87,6 +87,62 @@ func (s *SQLite) ForEach(ctx context.Context, sessionID string, fn func(Event) e
 	return nil
 }
 
+// ForEachFromTurn reads events for one session at or after startTurn in stable
+// order.
+func (s *SQLite) ForEachFromTurn(ctx context.Context, sessionID string, startTurn int, fn func(Event) error) error {
+	if sessionID == "" {
+		return errors.New("rollout session id is empty")
+	}
+	if startTurn <= 0 {
+		return errors.New("rollout start turn must be positive")
+	}
+	if fn == nil {
+		return errors.New("rollout reader callback is nil")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_id, turn, time, type, payload
+		FROM events
+		WHERE session_id = ? AND turn >= ?
+		ORDER BY turn ASC, time ASC, rowid ASC`, sessionID, startTurn)
+	if err != nil {
+		return fmt.Errorf("read rollout events: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		event, err := scanEvent(rows)
+		if err != nil {
+			return err
+		}
+		if err := fn(event); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate rollout events: %w", err)
+	}
+	return nil
+}
+
+// DeleteFromTurn deletes events for one session at or after startTurn and
+// returns the number of deleted rows.
+func (s *SQLite) DeleteFromTurn(ctx context.Context, sessionID string, startTurn int) (int, error) {
+	if sessionID == "" {
+		return 0, errors.New("rollout session id is empty")
+	}
+	if startTurn <= 0 {
+		return 0, errors.New("rollout start turn must be positive")
+	}
+	result, err := s.db.ExecContext(ctx, `DELETE FROM events WHERE session_id = ? AND turn >= ?`, sessionID, startTurn)
+	if err != nil {
+		return 0, fmt.Errorf("delete rollout events from turn %d: %w", startTurn, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count deleted rollout events: %w", err)
+	}
+	return int(count), nil
+}
+
 // Close is present to satisfy Writer. The underlying store owns the DB handle.
 func (s *SQLite) Close() error {
 	return nil

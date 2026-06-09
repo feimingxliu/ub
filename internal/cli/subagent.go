@@ -9,6 +9,7 @@ import (
 	"github.com/feimingxliu/ub/internal/agent"
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/filehistory"
 	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/permission"
 	"github.com/feimingxliu/ub/internal/provider"
@@ -46,6 +47,7 @@ type cliSubagentRunner struct {
 	defaultMaxTurns  int
 	workspaceRoot    string
 	memoryMaxChars   int
+	fileHistory      *filehistory.Manager
 }
 
 func (r *cliSubagentRunner) RunSubagent(ctx context.Context, prompt string, maxTurns int) (string, error) {
@@ -56,22 +58,24 @@ func (r *cliSubagentRunner) RunSubagent(ctx context.Context, prompt string, maxT
 		maxTurns = r.defaultMaxTurns
 	}
 	child, err := agent.New(agent.Options{
-		Provider:         r.provider,
-		Tools:            r.tools,
-		Permission:       r.permission,
-		Model:            r.model,
-		Mode:             r.currentMode(),
-		ModeFunc:         r.modeFunc,
-		MaxTurns:         maxTurns,
-		Reasoning:        r.reasoningCfg,
-		MaxContextTokens: r.maxContextTokens,
-		Context:          r.contextCfg,
-		Prompt:           r.promptCfg,
-		Runtime:          r.runtime,
-		Hooks:            subagentHookRunner{inner: r.hooks},
-		WorkspaceRoot:    r.workspaceRoot,
-		MemoryMaxChars:   r.memoryMaxChars,
-		SubagentRunner:   r,
+		Provider:             r.provider,
+		Tools:                r.tools,
+		Permission:           r.permission,
+		Model:                r.model,
+		Mode:                 r.currentMode(),
+		ModeFunc:             r.modeFunc,
+		MaxTurns:             maxTurns,
+		Reasoning:            r.reasoningCfg,
+		MaxContextTokens:     r.maxContextTokens,
+		Context:              r.contextCfg,
+		Prompt:               r.promptCfg,
+		Runtime:              r.runtime,
+		Hooks:                subagentHookRunner{inner: r.hooks},
+		WorkspaceRoot:        r.workspaceRoot,
+		MemoryMaxChars:       r.memoryMaxChars,
+		SubagentRunner:       r,
+		FileHistory:          r.fileHistory,
+		FileHistoryToolsOnly: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("subagent: build child: %w", err)

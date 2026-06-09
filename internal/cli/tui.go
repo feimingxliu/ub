@@ -598,6 +598,10 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 	maxContext := modelinfo.Resolve(r.providerName, r.providerCfg, r.model).MaxContextTokens
 	runtime := agentRuntimeContext(r.tools.Workspace)
 	hooksRunner := hook.New(r.cfg.Hooks)
+	fileHistory, err := newFileHistoryManager(ctx, r.tools.Workspace, r.state.sessionID, r.state.rollout)
+	if err != nil {
+		return nil, err
+	}
 	subRunner := &cliSubagentRunner{
 		provider:         r.provider,
 		tools:            r.tools.Registry,
@@ -614,6 +618,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		defaultMaxTurns:  r.maxTurns,
 		workspaceRoot:    r.tools.Workspace,
 		memoryMaxChars:   r.cfg.Memory.MaxChars,
+		fileHistory:      fileHistory,
 	}
 	a, err := agent.New(agent.Options{
 		Provider:         r.provider,
@@ -637,6 +642,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		MemoryMaxChars:   r.cfg.Memory.MaxChars,
 		Memory:           r.cfg.Memory,
 		SubagentRunner:   subRunner,
+		FileHistory:      fileHistory,
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},

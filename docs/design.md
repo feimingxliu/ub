@@ -158,6 +158,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 - **TUI 启动覆盖**：直接运行 `ub` 打开 TUI 时支持 `--provider <name>` 与 `--model <id>`，走与 `ub chat` 相同的 provider/model 选择规则，只影响本次启动，不写回配置。
 - **TUI provider 切换**：`/provider [provider] [model]` 在当前 TUI session 内切换后续主对话 provider；无参数时展示 provider picker，显式切换后刷新 model/effort 候选与状态栏。切换只写回当前 session 元数据，不写回配置；不指定 model 时优先保留目标 provider 可用的当前 model。
 - **TUI session 恢复**：`ub --resume` 不再静默选择最近 session，而是在启动后打开当前 workspace 的历史 session picker；`ub --resume=<id>` / `ub --resume <id>` 仍在进入 TUI 前直接恢复指定 session。TUI 内 `/resume` 对齐 CLI resume 语义：无参数打开 session picker，带 session id 时直接恢复；`/sessions` 继续负责 session picker、直接切换和 `search <query>` 历史事件搜索。恢复时同时还原 session 元数据中的 provider 与 model；旧 session 若缺少 provider，会先按配置/远端模型列表尽力推断。
+- **TUI rewind**：`/rewind` 从当前 session 的 rollout events 中列出历史 `user_message`，打开可筛选 picker；选中某条后删除该 turn 及之后的 events，重建 runner history、TUI transcript、下一 turn 和 context 状态，并把该 user message 放回输入框。`/rewind <turn>` 可直接定位目标 turn。文件回退采用 Claude-style checkpoint：Agent 在每个 user turn 开始前写入 `file_history_snapshot` event，并把已跟踪文件的旧内容备份到 state root；`write` / `edit` / `multiedit` 和可安全解析为字面路径的 `bash` 删除（`rm` / `git rm`）会在真正执行前补齐当前 turn 的文件旧状态。picker 根据当前 workspace 与目标 checkpoint 做 dry-run：默认只回退对话并保留 workspace 文件，也可选择同时把已跟踪文件恢复到目标 user message 之前的状态。变量、通配符、命令内 `cd` 等不可靠 shell 路径不会进入文件历史；checkpoint 中没有可靠旧状态的文件会跳过并在 TUI 提示。
 - **TUI 本地输入增强**：首个非空字符为 `!` 的输入绕过 Agent，输入区显示 shell 模式提示，直接复用本地 `bash` 工具执行并只在当前 TUI 以本地输出展示结果，不写入 rollout/history、不走权限审批、也不渲染为模型 tool 调用；`/btw [question]` 切换到独立的内存 BTW 视图，带问题时复用当前 provider/model/reasoning 与无工具 runtime context，追加当前 session text-only history、旁路系统提示和 BTW 视图内已完成 Q/A 后发起一次 `Tools=nil` 的 provider 请求，流式答案只写入 BTW 视图内存并复用普通助手消息的 Markdown renderer，任何 provider tool call 或伪工具调用标记都按错误处理；BTW 视图内输入文字并回车会继续追问，只把视图内 Q/A 作为临时 side history，不写入主 rollout/history；BTW 长输出使用独立滚动状态，不滚动主聊天区；底部状态行显示 BTW 视图、模型、状态（`answering` / `idle`）和退出提示，不展示主对话的 context/cwd/help 状态栏；`Esc` 退出 BTW 视图并清空该视图的临时 Q/A、草稿和滚动位置；普通输入中的 `@prefix` 触发 workspace 文件候选，选择后插入 `@relative/path` 文本引用，不自动读取文件内容；输入组件关闭 virtual cursor，由每帧 `tea.View.Cursor` 暴露输入框真实光标，保证 IME 预编辑绘制在当前输入行。
 
 ## 4. Tool 系统
@@ -339,15 +340,16 @@ type Event struct {
 
 **存储**：SQLite 表 `events(id, session_id, turn, time, type, payload BLOB)`，按 `(session_id, turn, time)` 建索引。写入策略：单条 `INSERT` 即 commit；DB 启用 `PRAGMA journal_mode=WAL` + `PRAGMA synchronous=NORMAL`。
 
-**清理**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不单独按条数/大小裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。tool-output spillover 文件按 `context.tool_results.spillover_max_age` 清理，失败只 warning。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
+**清理与截断**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不做自动单 session 内局部裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。唯一的单 session 局部截断入口是用户显式 `/rewind`：删除目标 turn 及之后 events 后立即重建内存 history 与 TUI 显示。tool-output spillover 文件按 `context.tool_results.spillover_max_age` 清理，失败只 warning。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
 
 **耐久性目标**（与 requirements F-SESS-4 对齐）：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 的事件；操作系统断电可能丢最后若干条尚未刷盘的事件。**不**为此牺牲性能逐条 fsync——agent 一轮会写数十条事件，每条 fsync 在 SSD 上也要几毫秒，TUI 流畅度会肉眼可见地下降。
 
 **用途**：
 1. **会话恢复**：重启后 reader 把事件还原为内存中的 `[]Message`
 2. **调试**：`ub rollout show <session>` 漂亮打印整轮 trace
-3. **vcr 替代品**：录制真实跑过的 session 后，可在测试里重放（结合 §10）
-4. **未来 audit/导出**
+3. **Rewind**：TUI 可基于 events 选择历史 user turn，并截断到该 turn 之前
+4. **vcr 替代品**：录制真实跑过的 session 后，可在测试里重放（结合 §10）
+5. **未来 audit/导出**
 
 ## 7. 会话存储
 

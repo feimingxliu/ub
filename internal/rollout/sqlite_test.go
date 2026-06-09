@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -89,6 +90,62 @@ func TestReaderFiltersSession(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].SessionID != first {
 		t.Fatalf("filtered events = %#v", got)
+	}
+}
+
+func TestForEachFromTurnAndDeleteFromTurn(t *testing.T) {
+	ctx := context.Background()
+	st, ro := openStoreRollout(t)
+	sessionID := createSession(t, st, "rewind")
+	otherID := createSession(t, st, "rewind_other")
+	for turn := 1; turn <= 3; turn++ {
+		event, err := UserMessage(sessionID, turn, message.Text(message.RoleUser, "turn "+strconv.Itoa(turn)))
+		if err != nil {
+			t.Fatalf("UserMessage %d: %v", turn, err)
+		}
+		if err := ro.Append(ctx, event); err != nil {
+			t.Fatalf("Append %d: %v", turn, err)
+		}
+	}
+	appendMessage(t, ro, otherID, "other")
+
+	var fromTwo []int
+	if err := ro.ForEachFromTurn(ctx, sessionID, 2, func(event Event) error {
+		fromTwo = append(fromTwo, event.Turn)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEachFromTurn: %v", err)
+	}
+	if got, want := fromTwo, []int{2, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("turns from two = %#v, want %#v", got, want)
+	}
+
+	deleted, err := ro.DeleteFromTurn(ctx, sessionID, 2)
+	if err != nil {
+		t.Fatalf("DeleteFromTurn: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+	var remaining []int
+	if err := ro.ForEach(ctx, sessionID, func(event Event) error {
+		remaining = append(remaining, event.Turn)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach remaining: %v", err)
+	}
+	if got, want := remaining, []int{1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("remaining turns = %#v, want %#v", got, want)
+	}
+	var otherCount int
+	if err := ro.ForEach(ctx, otherID, func(Event) error {
+		otherCount++
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach other: %v", err)
+	}
+	if otherCount != 1 {
+		t.Fatalf("other count = %d, want 1", otherCount)
 	}
 }
 

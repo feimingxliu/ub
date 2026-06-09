@@ -18,14 +18,15 @@ import (
 type Type string
 
 const (
-	TypeUserMessage      Type = "user_message"
-	TypeAssistantMessage Type = "assistant_message"
-	TypeToolResult       Type = "tool_result"
-	TypeSummary          Type = "summary"
-	TypeUsage            Type = "usage"
-	TypeError            Type = "error"
-	TypeActivity         Type = "activity"
-	TypeMemoryWrite      Type = "memory_write"
+	TypeUserMessage         Type = "user_message"
+	TypeAssistantMessage    Type = "assistant_message"
+	TypeToolResult          Type = "tool_result"
+	TypeSummary             Type = "summary"
+	TypeUsage               Type = "usage"
+	TypeError               Type = "error"
+	TypeActivity            Type = "activity"
+	TypeMemoryWrite         Type = "memory_write"
+	TypeFileHistorySnapshot Type = "file_history_snapshot"
 )
 
 // Event is the persisted rollout event shape.
@@ -182,6 +183,11 @@ func Summary(sessionID string, turn int, text string, compressedMessages, keptMe
 // MemoryWrite creates a durable memory audit event.
 func MemoryWrite(sessionID string, turn int, payload MemoryWritePayload) (Event, error) {
 	return NewEvent(sessionID, turn, TypeMemoryWrite, payload)
+}
+
+// FileHistorySnapshot stores one file checkpoint metadata entry.
+func FileHistorySnapshot(sessionID string, turn int, payload any) (Event, error) {
+	return NewEvent(sessionID, turn, TypeFileHistorySnapshot, payload)
 }
 
 // SummaryMessage converts summary text into the system message sent to providers.

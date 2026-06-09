@@ -99,6 +99,7 @@
 | `/new` | — | 在当前工作区新建一个空 session（旧的保留） |
 | `/sessions` | `[session-id\|search <query>]` | 列出当前工作区的历史 session，方向键选择 + Enter 切换；带 id 时直接切换 |
 | `/resume` | `[session-id]` | 恢复历史 session：无参数打开选择器，带 id 时直接恢复 |
+| `/rewind` | `[turn]` | 打开历史 user turn 选择器，回到所选消息之前，并把该消息放回输入框；若后续有文件改动，可选择只回退对话或同时尝试回退文件 |
 | `/init` | `[guidance]` | 启动一轮 agent 调研当前工作区，并创建或改进 `AGENTS.md` |
 | `/plans` | `[plan-id]` | 列出当前工作区的 plan artifact，方向键选择 + Enter 编辑；带 id 时直接打开 |
 | `/plan-edit` | `<plan-id>` | 用 `$VISUAL` / `$EDITOR` 打开 state-root 下的 plan markdown，编辑后回到 TUI |
@@ -274,7 +275,18 @@ ub --resume=abc123           # 直接切到 session abc123
 
 Resume 时会恢复 session 上次使用的 provider/model。mode 不随 session 恢复，使用当前 CLI/config 默认或本次启动传入的 `--mode`。旧版本 session 没有 provider 元数据时，ub 会按模型配置和远端模型列表尽力推断。
 
-### 7.5 调试某次会话
+### 7.5 Rewind 到某条消息之前
+
+```sh
+/rewind
+/rewind 4
+```
+
+`/rewind` 会列出当前 session 中历史 user message。选中某条后，ub 会删除该 turn 及之后的 rollout events，重建 TUI 显示和下一次请求上下文，并把选中的原始消息放回输入框，方便改写后重发。
+
+ub 会在每个 user turn 开始前记录文件 checkpoint，并在 `write` / `edit` / `multiedit` 或可安全识别的 `bash` 删除（字面路径的 `rm` / `git rm`）真正执行前备份目标文件旧状态。若当前 workspace 与目标 checkpoint 不一致，TUI 会先让你选择：只回退对话并保留当前 workspace 文件，或同时把 checkpoint 中可恢复的文件回到目标消息之前的状态。变量、通配符、命令内 `cd` 等无法可靠解析的 shell 删除不会进入文件历史；缺少可靠 checkpoint 的文件会保持不变并显示在提示里。
+
+### 7.6 调试某次会话
 
 ```sh
 ub rollout show abc123 | less          # 彩色 pretty-print

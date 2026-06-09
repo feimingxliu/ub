@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/feimingxliu/ub/internal/filehistory"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/store"
@@ -354,6 +355,17 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 			}
 		}
 		return writeIndentedBlock(w, "text:", payload.Text, style)
+	case rollout.TypeFileHistorySnapshot:
+		var payload filehistory.EventPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode file_history_snapshot event %s: %w", event.ID, err)
+		}
+		update := ""
+		if payload.IsUpdate {
+			update = " update=true"
+		}
+		_, err := fmt.Fprintf(w, "  file checkpoint: turn=%d tracked_files=%d%s\n", payload.Snapshot.Turn, len(payload.Snapshot.TrackedFileBackups), update)
+		return err
 	case rollout.TypeError:
 		var payload rollout.ErrorPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {

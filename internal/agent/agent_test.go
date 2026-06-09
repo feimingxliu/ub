@@ -18,6 +18,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	contextmgr "github.com/feimingxliu/ub/internal/context"
 	"github.com/feimingxliu/ub/internal/execution"
+	"github.com/feimingxliu/ub/internal/filehistory"
 	"github.com/feimingxliu/ub/internal/hook"
 	"github.com/feimingxliu/ub/internal/memory"
 	"github.com/feimingxliu/ub/internal/message"
@@ -114,6 +115,121 @@ func TestAgentPersistsThinkingActivity(t *testing.T) {
 	}
 	if activity.ActivityKind != string(ActivityThinking) || activity.Summary != "checking files" || activity.Content != "checking files" {
 		t.Fatalf("activity = %#v, want persisted thinking", activity)
+	}
+}
+
+func TestAgentFileHistoryTracksToolBeforeExecution(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	path := filepath.Join(root, "main.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	ro := &recordingRollout{}
+	fh, err := filehistory.New(filehistory.Options{
+		Workspace: root,
+		SessionID: "sess_1",
+		Rollout:   ro,
+	})
+	if err != nil {
+		t.Fatalf("filehistory.New: %v", err)
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("edit", map[string]any{"path": "main.txt", "old": "old", "new": "new"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:    p,
+		Tools:       reg,
+		Rollout:     ro,
+		Model:       "fake/model",
+		Mode:        execution.ModeWork,
+		FileHistory: fh,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_1", Prompt: "edit file", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "new\n" {
+		t.Fatalf("file after run = %q err=%v, want new", got, err)
+	}
+	ro.mu.Lock()
+	events := append([]rollout.Event(nil), ro.events...)
+	ro.mu.Unlock()
+	restored, err := filehistory.New(filehistory.Options{
+		Workspace: root,
+		SessionID: "sess_1",
+		Events:    events,
+	})
+	if err != nil {
+		t.Fatalf("filehistory.New restored: %v", err)
+	}
+	changes := restored.ChangedFiles(1)
+	if len(changes) != 1 || changes[0].Path != "main.txt" || changes[0].Kind != tool.KindModify {
+		t.Fatalf("ChangedFiles = %#v, want main.txt modify", changes)
+	}
+	if _, skipped, err := restored.Rewind(1); err != nil || len(skipped) != 0 {
+		t.Fatalf("Rewind err=%v skipped=%#v, want clean restore", err, skipped)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "old\n" {
+		t.Fatalf("file after rewind = %q err=%v, want old", got, err)
+	}
+}
+
+func TestAgentFileHistoryToolsOnlyUsesCurrentSnapshot(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	path := filepath.Join(root, "nested.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	reg := tool.New()
+	if err := fs.Register(reg, root); err != nil {
+		t.Fatalf("register fs: %v", err)
+	}
+	ro := &recordingRollout{}
+	fh, err := filehistory.New(filehistory.Options{
+		Workspace: root,
+		SessionID: "parent_sess",
+		Rollout:   ro,
+	})
+	if err != nil {
+		t.Fatalf("filehistory.New: %v", err)
+	}
+	if err := fh.MakeSnapshot(context.Background(), 7); err != nil {
+		t.Fatalf("MakeSnapshot: %v", err)
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("edit", map[string]any{"path": "nested.txt", "old": "old", "new": "new"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:             p,
+		Tools:                reg,
+		Rollout:              ro,
+		Model:                "fake/model",
+		Mode:                 execution.ModeWork,
+		FileHistory:          fh,
+		FileHistoryToolsOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "child_sess", Prompt: "edit file", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	changes := fh.ChangedFiles(7)
+	if len(changes) != 1 || changes[0].Path != "nested.txt" || changes[0].Kind != tool.KindModify {
+		t.Fatalf("ChangedFiles(7) = %#v, want nested.txt modify", changes)
+	}
+	if changes := fh.ChangedFiles(1); len(changes) != 0 {
+		t.Fatalf("ChangedFiles(1) = %#v, want no child snapshot", changes)
 	}
 }
 

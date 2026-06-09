@@ -2379,6 +2379,101 @@ func TestSlashRetryWithoutUserTurnReportsMessage(t *testing.T) {
 	}
 }
 
+func TestSlashRewindPickerRestoresSelectedPrompt(t *testing.T) {
+	runner := &scriptedRunner{
+		rewindTargets: []RewindTarget{
+			{Turn: 2, Text: "second prompt"},
+			{Turn: 1, Text: "first prompt"},
+		},
+		rewindState: SessionState{
+			ID:       "sess_1",
+			Turn:     1,
+			Messages: []InitialMessage{{Role: userRole, Text: "first prompt", Turn: 1}},
+		},
+		rewindResult: RewindResult{Target: RewindTarget{Turn: 2, Text: "second prompt"}, DeletedEvents: 2},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/rewind")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash rewind returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if model.rewind == nil || model.rewind.phase != rewindPickerTargets {
+		t.Fatalf("rewind picker = %#v, want target picker", model.rewind)
+	}
+
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("rewind selection returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "second prompt" {
+		t.Fatalf("input = %q, want selected prompt", got)
+	}
+	if got, want := runner.rewindRequests, []RewindRequest{{Turn: 2}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rewind requests = %#v, want %#v", got, want)
+	}
+	texts := model.MessageTexts()
+	if len(texts) != 2 || texts[0] != "first prompt" || !strings.Contains(texts[1], "rewound to before turn 2") {
+		t.Fatalf("messages = %#v", texts)
+	}
+}
+
+func TestSlashRewindPickerChoosesFileRevertMode(t *testing.T) {
+	target := RewindTarget{
+		Turn: 2,
+		Text: "change file",
+		AffectedFiles: []RewindFileChange{{
+			Path: "main.go",
+			Kind: "modify",
+		}},
+	}
+	runner := &scriptedRunner{
+		rewindTargets: []RewindTarget{target},
+		rewindState:   SessionState{ID: "sess_1", Turn: 1},
+		rewindResult:  RewindResult{Target: target, DeletedEvents: 3, RevertedFiles: []string{"main.go modify"}},
+	}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "/rewind")
+
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash rewind returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("target selection returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if model.rewind == nil || model.rewind.phase != rewindPickerMode {
+		t.Fatalf("rewind picker = %#v, want mode picker", model.rewind)
+	}
+
+	updated, cmd = model.Update(keyPress(tea.KeyDown))
+	if cmd != nil {
+		t.Fatalf("mode navigation returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("mode selection returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	if got, want := runner.rewindRequests, []RewindRequest{{Turn: 2, RevertFiles: true}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("rewind requests = %#v, want %#v", got, want)
+	}
+	if got := model.InputValue(); got != "change file" {
+		t.Fatalf("input = %q, want restored prompt", got)
+	}
+	texts := model.MessageTexts()
+	if len(texts) != 1 || !strings.Contains(texts[0], "reverted files: main.go modify") {
+		t.Fatalf("messages = %#v", texts)
+	}
+}
+
 func TestSlashDoctorAppendsHealthCheckReport(t *testing.T) {
 	runner := &scriptedRunner{doctorReport: "providers:\n  fake\tfake\toffline\n"}
 	model := NewModel(Options{Runner: runner})
@@ -4756,6 +4851,11 @@ type scriptedRunner struct {
 	sideCalls             int
 	sideQuestions         []string
 	sideRequests          []SideQuestionRequest
+	rewindTargets         []RewindTarget
+	rewindRequests        []RewindRequest
+	rewindState           SessionState
+	rewindResult          RewindResult
+	rewindErr             error
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -4971,6 +5071,28 @@ func (r *scriptedRunner) CurrentSessionID() string {
 
 func (r *scriptedRunner) SearchSessions(_ context.Context, query string, limit int) (string, error) {
 	return fmt.Sprintf("search results for %q (limit %d)", query, limit), nil
+}
+
+func (r *scriptedRunner) ListRewindTargets(context.Context) ([]RewindTarget, error) {
+	return append([]RewindTarget(nil), r.rewindTargets...), nil
+}
+
+func (r *scriptedRunner) Rewind(_ context.Context, req RewindRequest) (SessionState, RewindResult, error) {
+	r.rewindRequests = append(r.rewindRequests, req)
+	if r.rewindErr != nil {
+		return SessionState{}, RewindResult{}, r.rewindErr
+	}
+	state := r.rewindState
+	result := r.rewindResult
+	if result.Target.Turn == 0 {
+		for _, target := range r.rewindTargets {
+			if target.Turn == req.Turn {
+				result.Target = target
+				break
+			}
+		}
+	}
+	return state, result, nil
 }
 
 type promptOnlyRunner struct {
