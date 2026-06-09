@@ -522,7 +522,7 @@ context:
     spillover_max_age: 168h        # ub doctor / startup cleanup 用
 ```
 
-bash / job_output 的 result content 顶部有一个稳定的 `<shell_metadata>` 块,字段:
+`bash` 的 result content 顶部有一个稳定的 `<shell_metadata>` 块,字段:
 
 ```
 <shell_metadata>
@@ -533,6 +533,22 @@ aborted=true        # 仅在 ctx 取消 kill 时出现
 error=<msg>         # 启动失败或其他错误
 </shell_metadata>
 ```
+
+`job_output(job_id, tail?)` 返回当前 job 快照:
+
+```
+job_id=<id>
+state=running|exited
+exit_code=<code>
+stdout_total=<bytes>
+stderr_total=<bytes>
+--- stdout ---
+...
+--- stderr ---
+...
+```
+
+`job_output(job_id, follow=true, timeout_ms?)` 会通过 streaming partial output 先推当前 ring buffer 快照,再推新增 stdout/stderr,直到 job 退出、`timeout_ms` 到期或请求取消。最终 result 仍是上面的快照格式;如果 follow 自身到期,会额外包含 `follow_timeout=true`。
 
 ## 15. Hooks(生命周期 shell 钩子)
 
