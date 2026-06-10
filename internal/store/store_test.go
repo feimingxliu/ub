@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/feimingxliu/ub/internal/paths"
 )
 
 func TestDefaultPathUsesXDGDataHome(t *testing.T) {
@@ -138,6 +141,58 @@ func TestSessionCRUD(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionRemovesAssociatedArtifacts(t *testing.T) {
+	ctx := context.Background()
+	temp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
+	stateRoot := filepath.Join(temp, "state", "ub")
+	st := openTestStore(t, filepath.Join(temp, "ub.db"))
+	defer st.Close()
+
+	workspace := filepath.Join(temp, "repo")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspaceKey, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := time.UnixMilli(1_700_000_000_123).UTC()
+	if err := st.CreateSession(ctx, Session{ID: "sess_1", Workspace: workspaceKey, Title: "first", CreatedAt: created, UpdatedAt: created}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	artifactPaths := createSessionArtifacts(t, st, "sess_1", workspaceKey, stateRoot, "plan-one")
+	if err := st.DeleteSession(ctx, "sess_1"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	assertPathsRemoved(t, artifactPaths...)
+}
+
+func TestRemoveEmptyDirIfExistsIgnoresNonEmptyDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "plans", "workspace")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	remaining := filepath.Join(dir, "other.md")
+	if err := os.WriteFile(remaining, []byte("# Other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeEmptyDirIfExists(dir); err != nil {
+		t.Fatalf("removeEmptyDirIfExists: %v", err)
+	}
+	if _, err := os.Stat(remaining); err != nil {
+		t.Fatalf("non-empty dir content should remain: %v", err)
+	}
+}
+
+func TestIsDirectoryNotEmptyRecognizesWindowsMessage(t *testing.T) {
+	if !isDirectoryNotEmpty(errors.New("The directory is not empty.")) {
+		t.Fatal("expected Windows non-empty directory message to be recognized")
+	}
+}
+
 func TestListSessionsFiltersSortsAndLimits(t *testing.T) {
 	ctx := context.Background()
 	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
@@ -207,14 +262,33 @@ func TestListAllSessionsOrdersByWorkspaceThenUpdated(t *testing.T) {
 
 func TestDeleteAllSessionsRemovesEveryWorkspace(t *testing.T) {
 	ctx := context.Background()
-	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
+	temp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
+	stateRoot := filepath.Join(temp, "state", "ub")
+	st := openTestStore(t, filepath.Join(temp, "ub.db"))
 	defer st.Close()
 
+	workspaceA := filepath.Join(temp, "repo", "a")
+	workspaceB := filepath.Join(temp, "repo", "b")
+	if err := os.MkdirAll(workspaceA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspaceB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspaceAKey, err := filepath.EvalSymlinks(workspaceA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceBKey, err := filepath.EvalSymlinks(workspaceB)
+	if err != nil {
+		t.Fatal(err)
+	}
 	base := time.UnixMilli(1_700_000_000_000).UTC()
 	for _, sess := range []Session{
-		{ID: "a1", Workspace: "/repo/a", Title: "a1", CreatedAt: base, UpdatedAt: base},
-		{ID: "a2", Workspace: "/repo/a", Title: "a2", CreatedAt: base, UpdatedAt: base},
-		{ID: "b1", Workspace: "/repo/b", Title: "b1", CreatedAt: base, UpdatedAt: base},
+		{ID: "a1", Workspace: workspaceAKey, Title: "a1", CreatedAt: base, UpdatedAt: base},
+		{ID: "a2", Workspace: workspaceAKey, Title: "a2", CreatedAt: base, UpdatedAt: base},
+		{ID: "b1", Workspace: workspaceBKey, Title: "b1", CreatedAt: base, UpdatedAt: base},
 	} {
 		if err := st.CreateSession(ctx, sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -226,6 +300,9 @@ func TestDeleteAllSessionsRemovesEveryWorkspace(t *testing.T) {
 			t.Fatalf("insert event for %s: %v", sess.ID, err)
 		}
 	}
+	artifactPaths := createSessionArtifacts(t, st, "a1", workspaceAKey, stateRoot, "plan-a1")
+	artifactPaths = append(artifactPaths, createSessionArtifacts(t, st, "a2", workspaceAKey, stateRoot, "plan-a2")...)
+	artifactPaths = append(artifactPaths, createSessionArtifacts(t, st, "b1", workspaceBKey, stateRoot, "plan-b1")...)
 
 	deleted, err := st.DeleteAllSessions(ctx)
 	if err != nil {
@@ -242,6 +319,7 @@ func TestDeleteAllSessionsRemovesEveryWorkspace(t *testing.T) {
 	if remainingEvents != 0 {
 		t.Fatalf("remaining events = %d, want 0", remainingEvents)
 	}
+	assertPathsRemoved(t, artifactPaths...)
 
 	// idempotent on empty store
 	deleted, err = st.DeleteAllSessions(ctx)
@@ -255,14 +333,33 @@ func TestDeleteAllSessionsRemovesEveryWorkspace(t *testing.T) {
 
 func TestDeleteWorkspaceSessionsCascadesEvents(t *testing.T) {
 	ctx := context.Background()
-	st := openTestStore(t, filepath.Join(t.TempDir(), "ub.db"))
+	temp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
+	stateRoot := filepath.Join(temp, "state", "ub")
+	st := openTestStore(t, filepath.Join(temp, "ub.db"))
 	defer st.Close()
 
+	workspaceA := filepath.Join(temp, "repo", "a")
+	workspaceB := filepath.Join(temp, "repo", "b")
+	if err := os.MkdirAll(workspaceA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspaceB, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workspaceAKey, err := filepath.EvalSymlinks(workspaceA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceBKey, err := filepath.EvalSymlinks(workspaceB)
+	if err != nil {
+		t.Fatal(err)
+	}
 	base := time.UnixMilli(1_700_000_000_000).UTC()
 	for _, sess := range []Session{
-		{ID: "a1", Workspace: "/repo/a", Title: "a1", CreatedAt: base, UpdatedAt: base},
-		{ID: "a2", Workspace: "/repo/a", Title: "a2", CreatedAt: base, UpdatedAt: base},
-		{ID: "b1", Workspace: "/repo/b", Title: "b1", CreatedAt: base, UpdatedAt: base},
+		{ID: "a1", Workspace: workspaceAKey, Title: "a1", CreatedAt: base, UpdatedAt: base},
+		{ID: "a2", Workspace: workspaceAKey, Title: "a2", CreatedAt: base, UpdatedAt: base},
+		{ID: "b1", Workspace: workspaceBKey, Title: "b1", CreatedAt: base, UpdatedAt: base},
 	} {
 		if err := st.CreateSession(ctx, sess); err != nil {
 			t.Fatalf("CreateSession(%s): %v", sess.ID, err)
@@ -274,8 +371,11 @@ func TestDeleteWorkspaceSessionsCascadesEvents(t *testing.T) {
 			t.Fatalf("insert event for %s: %v", sess.ID, err)
 		}
 	}
+	pathsA1 := createSessionArtifacts(t, st, "a1", workspaceAKey, stateRoot, "plan-a1")
+	pathsA2 := createSessionArtifacts(t, st, "a2", workspaceAKey, stateRoot, "plan-a2")
+	pathsB1 := createSessionArtifacts(t, st, "b1", workspaceBKey, stateRoot, "plan-b1")
 
-	deleted, err := st.DeleteWorkspaceSessions(ctx, "/repo/a")
+	deleted, err := st.DeleteWorkspaceSessions(ctx, workspaceAKey)
 	if err != nil {
 		t.Fatalf("DeleteWorkspaceSessions: %v", err)
 	}
@@ -287,12 +387,14 @@ func TestDeleteWorkspaceSessionsCascadesEvents(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events").Scan(&remainingEvents); err != nil {
 		t.Fatalf("count events: %v", err)
 	}
-	if remainingEvents != 1 {
-		t.Fatalf("remaining events = %d, want 1", remainingEvents)
+	if remainingEvents != 2 {
+		t.Fatalf("remaining events = %d, want 2", remainingEvents)
 	}
 	if _, err := st.GetSession(ctx, "b1"); err != nil {
 		t.Fatalf("other workspace session should remain: %v", err)
 	}
+	assertPathsRemoved(t, append(pathsA1, pathsA2...)...)
+	assertPathsExist(t, pathsB1...)
 }
 
 func TestPruneSessionsDeletesOldOutsideRecentRetention(t *testing.T) {
@@ -398,11 +500,21 @@ func TestPruneSessionsRetainsRecentPerWorkspaceIndependently(t *testing.T) {
 
 func openTestStore(t *testing.T, path string) *Store {
 	t.Helper()
+	isolateTestXDG(t, filepath.Dir(path))
 	st, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open(%q): %v", path, err)
 	}
 	return st
+}
+
+func isolateTestXDG(t *testing.T, root string) {
+	t.Helper()
+	if strings.TrimSpace(root) == "" {
+		root = t.TempDir()
+	}
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 }
 
 func sqliteObjectExists(t *testing.T, db *sql.DB, typ, name string) bool {
@@ -424,5 +536,77 @@ func assertSessionEqual(t *testing.T, got, want Session) {
 		!got.CreatedAt.Equal(want.CreatedAt) ||
 		!got.UpdatedAt.Equal(want.UpdatedAt) {
 		t.Fatalf("session mismatch\ngot:  %+v\nwant: %+v", got, want)
+	}
+}
+
+func createSessionArtifacts(t *testing.T, st *Store, sessionID, workspace, stateRoot, planName string) []string {
+	t.Helper()
+	todoPath := filepath.Join(stateRoot, "todos", sessionID+".json")
+	fileHistoryPath := filepath.Join(stateRoot, "file-history", sessionID, "backup.txt")
+	toolOutputPath := filepath.Join(stateRoot, "tool_outputs", sessionID, "call.txt")
+	planDir := filepath.Join(stateRoot, "plans", projectKeyForTest(t, workspace))
+	planPath := filepath.Join(planDir, planName+".md")
+	for _, entry := range []struct {
+		path string
+		body string
+	}{
+		{todoPath, `{"items":[{"id":"1","content":"ship","status":"pending"}]}`},
+		{fileHistoryPath, "backup"},
+		{toolOutputPath, "full output"},
+		{planPath, "# Plan\n"},
+	} {
+		if err := os.MkdirAll(filepath.Dir(entry.path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", filepath.Dir(entry.path), err)
+		}
+		if err := os.WriteFile(entry.path, []byte(entry.body), 0o600); err != nil {
+			t.Fatalf("WriteFile(%s): %v", entry.path, err)
+		}
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"tool_use_id":      "call_plan",
+		"tool_name":        "plan_write",
+		"output":           "ok",
+		"full_output_path": toolOutputPath,
+		"files": []map[string]string{{
+			"path": planPath,
+			"kind": "create",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("marshal tool result payload: %v", err)
+	}
+	if _, err := st.db.ExecContext(context.Background(), `INSERT INTO events
+		(id, session_id, turn, time, type, payload)
+		VALUES (?, ?, 1, ?, 'tool_result', ?)`, "event-tool-"+sessionID+"-"+planName, sessionID, time.Now().UnixMilli(), payload); err != nil {
+		t.Fatalf("insert tool result event: %v", err)
+	}
+	return []string{todoPath, filepath.Dir(fileHistoryPath), filepath.Dir(toolOutputPath), planPath}
+}
+
+func projectKeyForTest(t *testing.T, workspace string) string {
+	t.Helper()
+	key, err := paths.ProjectKey(workspace)
+	if err != nil {
+		t.Fatalf("ProjectKey(%s): %v", workspace, err)
+	}
+	return key
+}
+
+func assertPathsRemoved(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s stat err = %v, want not exist", path, err)
+		}
+	}
+}
+
+func assertPathsExist(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s should exist: %v", path, err)
+		}
 	}
 }

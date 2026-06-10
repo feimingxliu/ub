@@ -341,7 +341,7 @@ type Event struct {
 
 **存储**：SQLite 表 `events(id, session_id, turn, time, type, payload BLOB)`，按 `(session_id, turn, time)` 建索引。写入策略：单条 `INSERT` 即 commit；DB 启用 `PRAGMA journal_mode=WAL` + `PRAGMA synchronous=NORMAL`。
 
-**清理与截断**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不做自动单 session 内局部裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。唯一的单 session 局部截断入口是用户显式 `/rewind`：删除目标 turn 及之后 events 后立即重建内存 history 与 TUI 显示。tool-output spillover 文件按 `context.tool_results.spillover_max_age` 清理，失败只 warning。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
+**清理与截断**：启动时做 best-effort 自动清理，默认最多每 24h 运行一次（记录在 `$XDG_STATE_HOME/ub/cleanup.json`，否则 `~/.local/state/ub/cleanup.json`）。默认删除 30 天未更新且不属于其 workspace 最近 20 个的 session；`events` 不做自动单 session 内局部裁剪，只随 `sessions` 的 `ON DELETE CASCADE` 删除，避免破坏历史恢复、summary 和 rollout replay。删除 session（显式 `sessions rm/delete`、`sessions clear`、全局 clear 或启动过期清理）会同时清理 session 关联的 state artifacts：`$XDG_STATE_HOME/ub/todos/<session-id>.json`、`$XDG_STATE_HOME/ub/file-history/<session-id>/`、默认 tool-output spillover 目录 `$XDG_STATE_HOME/ub/tool_outputs/<session-id>/`，以及该 session 的 rollout `tool_result` 引用且未被其它 session 引用的 plan markdown 文件。唯一的单 session 局部截断入口是用户显式 `/rewind`：删除目标 turn 及之后 events 后立即重建内存 history 与 TUI 显示。tool-output spillover 文件按 `context.tool_results.spillover_max_age` 清理，失败只 warning。启动清理失败只写 warning，不阻断 CLI/TUI 主流程；默认不执行 SQLite `VACUUM`，避免启动时长时间阻塞。
 
 **耐久性目标**（与 requirements F-SESS-4 对齐）：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 的事件；操作系统断电可能丢最后若干条尚未刷盘的事件。**不**为此牺牲性能逐条 fsync——agent 一轮会写数十条事件，每条 fsync 在 SSD 上也要几毫秒，TUI 流畅度会肉眼可见地下降。
 

@@ -146,8 +146,17 @@ func (s *Store) UpdateSession(ctx context.Context, sess Session) error {
 	return nil
 }
 
-// DeleteSession removes a session by id.
+// DeleteSession removes a session by id. Associated state artifacts (todos,
+// file-history backups, tool output spillover, and unreferenced plan files) are
+// removed after the database row is deleted.
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
+	artifacts, err := s.deletionArtifactsForSessionIDs(ctx, []string{id})
+	if err != nil {
+		return fmt.Errorf("delete session %s artifacts: %w", id, err)
+	}
+	if len(artifacts.SessionIDs) == 0 {
+		return ErrNotFound
+	}
 	res, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete session %s: %w", id, err)
@@ -159,13 +168,26 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	if n == 0 {
 		return ErrNotFound
 	}
+	if err := cleanupDeletionArtifacts(artifacts); err != nil {
+		return fmt.Errorf("delete session %s artifacts: %w", id, err)
+	}
 	return nil
 }
 
-// DeleteWorkspaceSessions removes all sessions for a workspace.
+// DeleteWorkspaceSessions removes all sessions for a workspace. Associated
+// state artifacts (todos, file-history backups, tool output spillover, and
+// unreferenced plan files) are removed after database rows are deleted.
 func (s *Store) DeleteWorkspaceSessions(ctx context.Context, workspace string) (int64, error) {
 	if workspace == "" {
 		return 0, errors.New("session workspace is empty")
+	}
+	ids, err := s.sessionIDsForWorkspace(ctx, workspace)
+	if err != nil {
+		return 0, err
+	}
+	artifacts, err := s.deletionArtifactsForSessionIDs(ctx, ids)
+	if err != nil {
+		return 0, fmt.Errorf("delete workspace sessions %s artifacts: %w", workspace, err)
 	}
 	res, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE workspace = ?", workspace)
 	if err != nil {
@@ -175,11 +197,24 @@ func (s *Store) DeleteWorkspaceSessions(ctx context.Context, workspace string) (
 	if err != nil {
 		return 0, fmt.Errorf("delete workspace sessions %s rows affected: %w", workspace, err)
 	}
+	if err := cleanupDeletionArtifacts(artifacts); err != nil {
+		return 0, fmt.Errorf("delete workspace sessions %s artifacts: %w", workspace, err)
+	}
 	return n, nil
 }
 
-// DeleteAllSessions removes every session across all workspaces.
+// DeleteAllSessions removes every session across all workspaces. Associated
+// state artifacts (todos, file-history backups, tool output spillover, and
+// unreferenced plan files) are removed after database rows are deleted.
 func (s *Store) DeleteAllSessions(ctx context.Context) (int64, error) {
+	ids, err := s.allSessionIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	artifacts, err := s.deletionArtifactsForSessionIDs(ctx, ids)
+	if err != nil {
+		return 0, fmt.Errorf("delete all sessions artifacts: %w", err)
+	}
 	res, err := s.db.ExecContext(ctx, "DELETE FROM sessions")
 	if err != nil {
 		return 0, fmt.Errorf("delete all sessions: %w", err)
@@ -187,6 +222,9 @@ func (s *Store) DeleteAllSessions(ctx context.Context) (int64, error) {
 	n, err := res.RowsAffected()
 	if err != nil {
 		return 0, fmt.Errorf("delete all sessions rows affected: %w", err)
+	}
+	if err := cleanupDeletionArtifacts(artifacts); err != nil {
+		return 0, fmt.Errorf("delete all sessions artifacts: %w", err)
 	}
 	return n, nil
 }
@@ -205,7 +243,8 @@ type PruneResult struct {
 
 // PruneSessions deletes sessions older than MaxAge unless they are still among
 // the newest MinRecentPerWorkspace sessions for their workspace. Events are
-// removed by the schema's ON DELETE CASCADE relationship.
+// removed by the schema's ON DELETE CASCADE relationship, and associated state
+// artifacts are best-effort cleaned after rows are deleted.
 func (s *Store) PruneSessions(ctx context.Context, opts PruneOptions) (PruneResult, error) {
 	if opts.MaxAge <= 0 {
 		return PruneResult{}, nil
@@ -218,6 +257,14 @@ func (s *Store) PruneSessions(ctx context.Context, opts PruneOptions) (PruneResu
 		now = time.Now().UTC()
 	}
 	cutoff := timeToMillis(now.Add(-opts.MaxAge))
+	ids, err := s.prunableSessionIDs(ctx, cutoff, opts.MinRecentPerWorkspace)
+	if err != nil {
+		return PruneResult{}, err
+	}
+	artifacts, err := s.deletionArtifactsForSessionIDs(ctx, ids)
+	if err != nil {
+		return PruneResult{}, fmt.Errorf("prune sessions artifacts: %w", err)
+	}
 	res, err := s.db.ExecContext(
 		ctx, `DELETE FROM sessions
 		WHERE updated_at < ?
@@ -239,6 +286,9 @@ func (s *Store) PruneSessions(ctx context.Context, opts PruneOptions) (PruneResu
 	deleted, err := res.RowsAffected()
 	if err != nil {
 		return PruneResult{}, fmt.Errorf("prune sessions rows affected: %w", err)
+	}
+	if err := cleanupDeletionArtifacts(artifacts); err != nil {
+		return PruneResult{}, fmt.Errorf("prune sessions artifacts: %w", err)
 	}
 	return PruneResult{Deleted: deleted}, nil
 }

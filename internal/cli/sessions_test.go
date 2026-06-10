@@ -21,7 +21,7 @@ func TestSessionsListEmpty(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
 	cmd := newRootCmd()
@@ -44,7 +44,7 @@ func TestSessionsDeleteRemovesSession(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 
@@ -100,7 +100,7 @@ func TestSessionsDeleteMissingSession(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
 	cmd := newRootCmd()
@@ -123,7 +123,7 @@ func TestSessionsClearRequiresYes(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
 	cmd := newRootCmd()
@@ -150,7 +150,7 @@ func TestSessionsClearDeletesCurrentWorkspaceOnly(t *testing.T) {
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 	otherKey := mustCanonicalTestWorkspace(t, other)
@@ -215,7 +215,7 @@ func TestSessionsClearAllDeletesEveryWorkspace(t *testing.T) {
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 	otherKey := mustCanonicalTestWorkspace(t, other)
@@ -273,7 +273,7 @@ func TestSessionsClearAllRequiresYes(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
 	cmd := newRootCmd()
@@ -300,7 +300,7 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 	otherKey := mustCanonicalTestWorkspace(t, other)
@@ -356,7 +356,7 @@ func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 	otherKey := mustCanonicalTestWorkspace(t, other)
@@ -420,7 +420,7 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 	workspaceKey := mustCanonicalTestWorkspace(t, workspace)
 	otherKey := mustCanonicalTestWorkspace(t, other)
@@ -494,7 +494,7 @@ func TestSessionsSearchNoMatches(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
 	cmd := newRootCmd()
@@ -566,4 +566,11 @@ func TestSessionsListUsesGitRootWorkspace(t *testing.T) {
 	if !strings.Contains(out.String(), "root-session") {
 		t.Fatalf("sessions ls missing root workspace session:\n%s", out.String())
 	}
+}
+
+func setSessionTestHomes(t *testing.T, temp string) {
+	t.Helper()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
 }

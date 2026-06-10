@@ -211,6 +211,9 @@ func TestRunStartupPrunesOldToolOutputs(t *testing.T) {
 
 func openMaintenanceStore(t *testing.T, path string) *store.Store {
 	t.Helper()
+	root := filepath.Dir(path)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	st, err := store.Open(path)
 	if err != nil {
 		t.Fatalf("Open(%q): %v", path, err)
