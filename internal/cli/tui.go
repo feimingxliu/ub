@@ -64,7 +64,8 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 
 	permBridge := tui.NewPermissionBridge()
 	limitBridge := tui.NewLimitBridge()
-	runner, err := newTUIAgentRunner(cmd, cfg, permBridge, providerFlag, modelFlag)
+	backgroundEvents := make(chan tui.Event, 64)
+	runner, err := newTUIAgentRunner(cmd, cfg, permBridge, providerFlag, modelFlag, backgroundEvents)
 	if err != nil {
 		return err
 	}
@@ -100,29 +101,30 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		initialMessages = runner.Messages()
 	}
 	err = tui.Run(cmd.Context(), tui.Options{
-		Input:          cmd.InOrStdin(),
-		Output:         cmd.OutOrStdout(),
-		Runner:         runner,
-		Permissions:    permBridge.Requests(),
-		Limits:         limitBridge.Requests(),
-		Provider:       runner.Provider(),
-		Providers:      runner.Providers(),
-		Model:          runner.model,
-		Models:         runner.Models(),
-		Effort:         runner.Effort(),
-		Efforts:        runner.Efforts(),
-		ApprovalModel:  runner.ApprovalModel(),
-		ApprovalModels: runner.ApprovalModels(),
-		SmallModel:     runner.SmallModel(),
-		SmallModels:    runner.SmallModels(),
-		Messages:       initialMessages,
-		LoadMessages:   loadMessages,
-		Turn:           runner.Turn(),
-		ExecutionMode:  string(runner.mode),
-		Cwd:            cwd,
-		Theme:          cfg.TUI.Theme,
-		EventTimeout:   runner.eventTimeout,
-		SelectSession:  selectSessionOnStart,
+		Input:            cmd.InOrStdin(),
+		Output:           cmd.OutOrStdout(),
+		Runner:           runner,
+		Permissions:      permBridge.Requests(),
+		Limits:           limitBridge.Requests(),
+		BackgroundEvents: backgroundEvents,
+		Provider:         runner.Provider(),
+		Providers:        runner.Providers(),
+		Model:            runner.model,
+		Models:           runner.Models(),
+		Effort:           runner.Effort(),
+		Efforts:          runner.Efforts(),
+		ApprovalModel:    runner.ApprovalModel(),
+		ApprovalModels:   runner.ApprovalModels(),
+		SmallModel:       runner.SmallModel(),
+		SmallModels:      runner.SmallModels(),
+		Messages:         initialMessages,
+		LoadMessages:     loadMessages,
+		Turn:             runner.Turn(),
+		ExecutionMode:    string(runner.mode),
+		Cwd:              cwd,
+		Theme:            cfg.TUI.Theme,
+		EventTimeout:     runner.eventTimeout,
+		SelectSession:    selectSessionOnStart,
 	})
 	if err != nil {
 		logger.Error("tui failed", "err", err)
@@ -163,6 +165,7 @@ type tuiAgentRunner struct {
 	smallUsesCurrent     bool
 	contextCfg           config.ContextConfig
 	memoryAutoScheduler  *agent.MemoryAutoScheduler
+	backgroundEvents     chan<- tui.Event
 	tools                *toolRuntime
 	mode                 execution.Mode
 	modeMu               sync.RWMutex
@@ -182,7 +185,7 @@ type tuiAgentRunner struct {
 	cachedMessagesSession string
 }
 
-func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker, providerFlag, modelFlag string) (*tuiAgentRunner, error) {
+func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker, providerFlag, modelFlag string, backgroundEvents chan<- tui.Event) (*tuiAgentRunner, error) {
 	providerName, model, err := selectChatProvider(cfg, providerFlag, modelFlag)
 	if err != nil {
 		return nil, err
@@ -267,6 +270,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		smallUsesCurrent:     autoMemorySetup.UsesCurrentModel,
 		contextCfg:           cfg.Context,
 		memoryAutoScheduler:  agent.NewMemoryAutoScheduler(),
+		backgroundEvents:     backgroundEvents,
 		tools:                tools,
 		mode:                 mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
@@ -666,11 +670,27 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},
+		BackgroundEvents: r.backgroundEventSink(ctx),
 	})
 	if err != nil {
 		return nil, err
 	}
 	return a, nil
+}
+
+func (r *tuiAgentRunner) backgroundEventSink(ctx context.Context) agent.EventSink {
+	if r == nil || r.backgroundEvents == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if r.cmd != nil && r.cmd.Context() != nil {
+		ctx = r.cmd.Context()
+	}
+	return func(event agent.Event) {
+		sendTUIEvent(ctx, r.backgroundEvents, convertAgentEvent(event))
+	}
 }
 
 func (r *tuiAgentRunner) Close() error {
@@ -1715,6 +1735,11 @@ func convertAgentEvent(event agent.Event) tui.Event {
 }
 
 func sendTUIEvent(ctx context.Context, events chan<- tui.Event, event tui.Event) {
+	defer func() {
+		// Background post-turn work can outlive the TUI event consumer. Sending
+		// to a closed channel must never take the whole terminal down.
+		_ = recover()
+	}()
 	select {
 	case events <- event:
 	case <-ctx.Done():

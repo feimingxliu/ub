@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -265,6 +266,11 @@ type sideQuestionEventMsg struct {
 	runID int
 }
 
+type backgroundEventMsg struct {
+	event Event
+	ok    bool
+}
+
 func waitForEvent(events <-chan Event, runID int) tea.Cmd {
 	return waitForEventWithTimeout(events, runID, 0)
 }
@@ -298,11 +304,22 @@ func waitForSideQuestionEvent(events <-chan Event, runID int) tea.Cmd {
 	}
 }
 
+func waitForBackgroundEvent(events <-chan Event) tea.Cmd {
+	if events == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		event, ok := <-events
+		return backgroundEventMsg{event: event, ok: ok}
+	}
+}
+
 func runPrompt(ctx context.Context, runner Runner, prompt string, events chan<- Event) tea.Cmd {
 	return func() tea.Msg {
 		defer close(events)
+		defer recoverRunnerPanic(events, "agent run")
 		if err := runner.Run(ctx, prompt, events); err != nil {
-			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+			sendRunnerEvent(events, Event{Type: EventError, Err: err, Content: err.Error(), IsError: true})
 		}
 		return nil
 	}
@@ -311,8 +328,9 @@ func runPrompt(ctx context.Context, runner Runner, prompt string, events chan<- 
 func runShell(ctx context.Context, runner ShellRunner, command string, events chan<- Event) tea.Cmd {
 	return func() tea.Msg {
 		defer close(events)
+		defer recoverRunnerPanic(events, "shell run")
 		if err := runner.RunShell(ctx, command, events); err != nil {
-			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+			sendRunnerEvent(events, Event{Type: EventError, Err: err, Content: err.Error(), IsError: true})
 		}
 		return nil
 	}
@@ -321,8 +339,9 @@ func runShell(ctx context.Context, runner ShellRunner, command string, events ch
 func runSideQuestion(ctx context.Context, runner SideQuestionRunner, req SideQuestionRequest, events chan<- Event) tea.Cmd {
 	return func() tea.Msg {
 		defer close(events)
+		defer recoverRunnerPanic(events, "btw run")
 		if err := runner.AnswerSideQuestion(ctx, req, events); err != nil {
-			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+			sendRunnerEvent(events, Event{Type: EventError, Err: err, Content: err.Error(), IsError: true})
 		}
 		return nil
 	}
@@ -331,9 +350,27 @@ func runSideQuestion(ctx context.Context, runner SideQuestionRunner, req SideQue
 func runCompact(ctx context.Context, runner CompactRunner, events chan<- Event) tea.Cmd {
 	return func() tea.Msg {
 		defer close(events)
+		defer recoverRunnerPanic(events, "compact run")
 		if err := runner.Compact(ctx, events); err != nil {
-			events <- Event{Type: EventError, Err: err, Content: err.Error(), IsError: true}
+			sendRunnerEvent(events, Event{Type: EventError, Err: err, Content: err.Error(), IsError: true})
 		}
 		return nil
 	}
+}
+
+func recoverRunnerPanic(events chan<- Event, label string) {
+	if r := recover(); r != nil {
+		err := fmt.Errorf("%s panic: %v", label, r)
+		sendRunnerEvent(events, Event{
+			Type:    EventError,
+			Content: fmt.Sprintf("%v\n%s", err, debug.Stack()),
+			Err:     err,
+			IsError: true,
+		})
+	}
+}
+
+func sendRunnerEvent(events chan<- Event, event Event) {
+	defer func() { _ = recover() }()
+	events <- event
 }

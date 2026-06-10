@@ -99,7 +99,7 @@ func (a *Agent) scheduleAutoMemory(ctx context.Context, sessionID string, turn i
 		return
 	}
 	if effectiveMemoryAutoDisableOnExternalContext(a.memoryCfg) && turnHasExternalContextToolUse(turnMessages) {
-		a.emit(Event{
+		a.backgroundAutoMemoryAgent().emit(Event{
 			Type:         EventActivity,
 			ActivityKind: ActivityNotice,
 			Status:       "skipped",
@@ -111,12 +111,24 @@ func (a *Agent) scheduleAutoMemory(ctx context.Context, sessionID string, turn i
 		return
 	}
 	a.memoryAutoScheduler.Observe(autoMemoryJob{
-		agent:    a,
+		agent:    a.backgroundAutoMemoryAgent(),
 		ctx:      context.WithoutCancel(ctx),
 		session:  sessionID,
 		turn:     turn,
 		messages: turnMessages,
 	})
+}
+
+func (a *Agent) backgroundAutoMemoryAgent() *Agent {
+	if a == nil {
+		return nil
+	}
+	clone := *a
+	// Auto-memory intentionally outlives the interactive turn that triggered
+	// it. Late notifications go to the long-lived background sink instead of
+	// the per-turn TUI event channel, which is closed when the turn finishes.
+	clone.events = a.backgroundEvents
+	return &clone
 }
 
 func (s *MemoryAutoScheduler) Observe(job autoMemoryJob) {
@@ -164,8 +176,22 @@ func (s *MemoryAutoScheduler) enqueueLocked(job autoMemoryJob) {
 }
 
 func (s *MemoryAutoScheduler) run(job autoMemoryJob) {
-	job.agent.runAutoMemoryJob(job.ctx, job.session, job.turn, job.messages)
+	defer func() {
+		if r := recover(); r != nil {
+			emitAutoMemoryPanic(job.agent, r)
+			if next := s.completeRun(); next != nil {
+				s.run(*next)
+			}
+		}
+	}()
 
+	job.agent.runAutoMemoryJob(job.ctx, job.session, job.turn, job.messages)
+	if next := s.completeRun(); next != nil {
+		s.run(*next)
+	}
+}
+
+func (s *MemoryAutoScheduler) completeRun() *autoMemoryJob {
 	s.mu.Lock()
 	next := s.pending
 	s.pending = nil
@@ -173,11 +199,24 @@ func (s *MemoryAutoScheduler) run(job autoMemoryJob) {
 		s.inProgress = false
 		s.cond.Broadcast()
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	s.mu.Unlock()
+	return next
+}
 
-	s.run(*next)
+func emitAutoMemoryPanic(a *Agent, recovered any) {
+	if a == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Status:       "failed",
+		Summary:      "auto memory panic: " + truncateActivitySummary(fmt.Sprint(recovered)),
+		IsError:      true,
+	})
 }
 
 // Drain waits for background auto-memory work to settle. A non-positive timeout

@@ -2795,6 +2795,15 @@ func (t *streamingFakeTool) ExecuteStream(_ context.Context, _ json.RawMessage, 
 	return tool.Result{Content: "AB"}, nil
 }
 
+type streamingPanicTool struct {
+	streamingFakeTool
+}
+
+func (t *streamingPanicTool) Name() string { return "panicstream" }
+func (t *streamingPanicTool) ExecuteStream(context.Context, json.RawMessage, chan<- tool.StreamEvent) (tool.Result, error) {
+	panic("boom")
+}
+
 func TestAgentForwardsStreamingToolPartialOutput(t *testing.T) {
 	reg := tool.New()
 	if err := reg.Register(&streamingFakeTool{}); err != nil {
@@ -2832,6 +2841,17 @@ func TestAgentForwardsStreamingToolPartialOutput(t *testing.T) {
 	}
 	if partials[0].Status != "stdout" {
 		t.Fatalf("status = %q, want stdout", partials[0].Status)
+	}
+}
+
+func TestAgentStreamingToolPanicBecomesError(t *testing.T) {
+	a := &Agent{}
+	res, err := a.executeToolCall(context.Background(), &streamingPanicTool{}, toolCall{Name: "panicstream"})
+	if err == nil || !strings.Contains(err.Error(), "streaming tool panicstream panic: boom") {
+		t.Fatalf("error = %v", err)
+	}
+	if !res.IsError || !strings.Contains(res.Content, "panicstream panic") {
+		t.Fatalf("result = %+v", res)
 	}
 }
 
@@ -3181,6 +3201,8 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 		{fake.TextDelta(`{"memories":[{"category":"project","text":"build command is ` + "`make build`" + `"}]}`), fake.Done()},
 	}}
 	enabled := true
+	var events []Event
+	var backgroundEvents []Event
 	a, err := New(Options{
 		Provider:           main,
 		Tools:              reg,
@@ -3195,6 +3217,12 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 			Enabled:       &enabled,
 			MaxCandidates: 3,
 		}},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+		BackgroundEvents: func(event Event) {
+			backgroundEvents = append(backgroundEvents, event)
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -3228,6 +3256,41 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 	}
 	if payload.Source != "auto" || payload.Scope != "auto" || payload.Category != "project" || !strings.Contains(payload.Text, "make build") {
 		t.Fatalf("memory_write payload = %#v", payload)
+	}
+	for _, event := range events {
+		if event.Type == EventActivity && strings.Contains(event.Summary, "memory ") {
+			t.Fatalf("auto memory emitted post-turn UI activity: %+v", event)
+		}
+	}
+	if !hasActivity(backgroundEvents, ActivityNotice, "memory ") {
+		t.Fatalf("auto memory did not emit background write notice: %+v", backgroundEvents)
+	}
+}
+
+func TestMemoryAutoSchedulerRecoversJobPanic(t *testing.T) {
+	scheduler := NewMemoryAutoScheduler()
+	var events []Event
+	a := &Agent{events: func(event Event) {
+		events = append(events, event)
+	}}
+	scheduler.inProgress = true
+	scheduler.run(autoMemoryJob{
+		agent:    a,
+		ctx:      context.Background(),
+		session:  "sess",
+		turn:     1,
+		messages: []message.Message{message.Text(message.RoleUser, "remember this")},
+	})
+
+	scheduler.mu.Lock()
+	inProgress := scheduler.inProgress
+	pending := scheduler.pending
+	scheduler.mu.Unlock()
+	if inProgress || pending != nil {
+		t.Fatalf("scheduler did not release state after panic: inProgress=%v pending=%v", inProgress, pending)
+	}
+	if len(events) != 1 || events[0].Type != EventActivity || !events[0].IsError || !strings.Contains(events[0].Summary, "auto memory panic") {
+		t.Fatalf("events = %+v", events)
 	}
 }
 
@@ -3386,6 +3449,8 @@ func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
 	}}
 	enabled := true
 	disableExternal := true
+	var events []Event
+	var backgroundEvents []Event
 	a, err := New(Options{
 		Provider:           main,
 		Tools:              reg,
@@ -3398,6 +3463,12 @@ func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
 			Enabled:                  &enabled,
 			DisableOnExternalContext: &disableExternal,
 		}},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+		BackgroundEvents: func(event Event) {
+			backgroundEvents = append(backgroundEvents, event)
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -3410,6 +3481,12 @@ func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
 	}
 	if len(summary.requests) != 0 {
 		t.Fatalf("auto memory requests = %d, want 0", len(summary.requests))
+	}
+	if hasActivity(events, ActivityNotice, "auto memory skipped") {
+		t.Fatalf("external-context skip emitted on turn event stream: %+v", events)
+	}
+	if !hasActivity(backgroundEvents, ActivityNotice, "auto memory skipped") {
+		t.Fatalf("external-context skip did not emit background notice: %+v", backgroundEvents)
 	}
 }
 

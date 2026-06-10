@@ -63,6 +63,7 @@ type Options struct {
 	MaxTurns             int
 	LimitAsker           LimitAsker
 	Events               EventSink
+	BackgroundEvents     EventSink
 	Reasoning            *reasoning.Config
 	MaxContextTokens     int
 	SummaryProvider      provider.Provider
@@ -95,6 +96,7 @@ type Agent struct {
 	maxTurns             int
 	limitAsker           LimitAsker
 	events               EventSink
+	backgroundEvents     EventSink
 	reasoning            *reasoning.Config
 	maxContextTokens     int
 	summaryProvider      provider.Provider
@@ -198,6 +200,7 @@ func New(opts Options) (*Agent, error) {
 		maxTurns:             maxTurns,
 		limitAsker:           opts.LimitAsker,
 		events:               opts.Events,
+		backgroundEvents:     opts.BackgroundEvents,
 		reasoning:            cloneReasoning(opts.Reasoning),
 		maxContextTokens:     opts.MaxContextTokens,
 		summaryProvider:      opts.SummaryProvider,
@@ -799,12 +802,20 @@ func (a *Agent) executeToolCall(ctx context.Context, t tool.Tool, call toolCall)
 		err error
 	}, 1)
 	go func() {
-		res, err := streamer.ExecuteStream(ctx, call.Input, events)
-		close(events)
-		resultCh <- struct {
-			res tool.Result
-			err error
-		}{res: res, err: err}
+		var res tool.Result
+		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("streaming tool %s panic: %v", call.Name, r)
+				res = tool.Result{Content: err.Error(), IsError: true}
+			}
+			closeToolStreamEvents(events)
+			resultCh <- struct {
+				res tool.Result
+				err error
+			}{res: res, err: err}
+		}()
+		res, err = streamer.ExecuteStream(ctx, call.Input, events)
 	}()
 	summary := SummarizeToolInput(call.Name, call.Input)
 	for ev := range events {
@@ -823,6 +834,11 @@ func (a *Agent) executeToolCall(ctx context.Context, t tool.Tool, call toolCall)
 	}
 	r := <-resultCh
 	return r.res, r.err
+}
+
+func closeToolStreamEvents(events chan tool.StreamEvent) {
+	defer func() { _ = recover() }()
+	close(events)
 }
 
 func (a *Agent) limitToolResult(sessionID string, call toolCall, result tool.Result) tool.Result {

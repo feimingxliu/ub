@@ -64,6 +64,18 @@ func TestResolveResumeSessionIDRequiresExplicitID(t *testing.T) {
 	}
 }
 
+func TestSendTUIEventIgnoresClosedChannel(t *testing.T) {
+	events := make(chan tui.Event)
+	close(events)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("sendTUIEvent panicked on closed channel: %v", r)
+		}
+	}()
+	sendTUIEvent(context.Background(), events, tui.Event{Type: tui.EventActivity, Content: "late"})
+}
+
 func TestShouldSelectSessionOnStart(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -98,7 +110,7 @@ func TestTUIRunnerUsesProviderAndModelFlags(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
 
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "manual", "manual/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "manual", "manual/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -126,7 +138,7 @@ func TestTUIRunnerSetProviderSwitchesProviderAndModel(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -167,7 +179,7 @@ func TestTUIRunnerSetProviderPersistsActiveSessionProvider(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -209,7 +221,7 @@ func TestTUIRunnerSwitchSessionRestoresProviderAndModel(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	first, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "manual", "manual/model")
+	first, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "manual", "manual/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner first: %v", err)
 	}
@@ -221,7 +233,7 @@ func TestTUIRunnerSwitchSessionRestoresProviderAndModel(t *testing.T) {
 		t.Fatalf("first Close: %v", err)
 	}
 
-	second, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	second, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner second: %v", err)
 	}
@@ -257,7 +269,7 @@ func TestTUIRunnerSetProviderKeepsCurrentModelWhenAvailable(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "shared/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "shared/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -298,7 +310,7 @@ func TestTUIRunnerSetProviderKeepsCompactOnMainModelAndSmallModelForMemory(t *te
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -368,7 +380,7 @@ func TestTUIRunnerSetProviderRefreshesApprovalModelsFromProviderCheck(t *testing
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -402,7 +414,7 @@ func TestTUIRunnerSetSmallModelUpdatesAutoMemoryModelOnly(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -457,7 +469,7 @@ func TestTUIRunnerSetSmallModelRejectsUnavailable(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -505,7 +517,7 @@ func TestTUIRunnerSetApprovalModelPreservesProviderCandidates(t *testing.T) {
 	}
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "primary", "primary/model", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
@@ -696,7 +708,7 @@ func TestTUIAgentRunnerInitMergesConfiguredAndDiscoveredModels(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetContext(context.Background())
 
-	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "", "")
+	runner, err := newTUIAgentRunner(cmd, cfg, tui.NewPermissionBridge(), "", "", nil)
 	if err != nil {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}

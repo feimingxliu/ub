@@ -244,6 +244,27 @@ func TestModelStreamsRunnerEvents(t *testing.T) {
 	}
 }
 
+func TestModelShowsBackgroundActivityNotice(t *testing.T) {
+	events := make(chan Event, 1)
+	model := NewModel(Options{BackgroundEvents: events})
+	updated, cmd := model.handleBackgroundEvent(backgroundEventMsg{
+		event: Event{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "memory wrote: build command is `make build`"},
+		ok:    true,
+	})
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"memory wrote: build command is `make build`"}) {
+		t.Fatalf("messages = %#v", got)
+	}
+	if cmd == nil {
+		t.Fatalf("background handler did not continue waiting for events")
+	}
+	events <- Event{Type: EventActivity, Summary: "next background notice"}
+	msg, ok := cmd().(backgroundEventMsg)
+	if !ok || !msg.ok || msg.event.Summary != "next background notice" {
+		t.Fatalf("next background msg = %#v", msg)
+	}
+}
+
 func TestModelUpdatesContextStatusFromEvent(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test"})
 	model.running = true

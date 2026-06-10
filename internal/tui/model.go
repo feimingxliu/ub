@@ -48,33 +48,34 @@ Process:
 
 // Options configures the initial TUI shell.
 type Options struct {
-	Input          io.Reader
-	Output         io.Writer
-	Context        context.Context
-	Runner         Runner
-	Permissions    <-chan PermissionRequest
-	Limits         <-chan LimitRequest
-	Provider       string
-	Providers      []string
-	Model          string
-	Models         []string
-	Effort         string
-	Efforts        []string
-	ApprovalModel  string
-	ApprovalModels []string
-	SmallModel     string
-	SmallModels    []string
-	Messages       []InitialMessage
-	Turn           int
-	ExecutionMode  string
-	Cwd            string
-	Theme          string
-	EventTimeout   time.Duration
-	SelectSession  bool
-	Clipboard      Clipboard
-	LoadMessages   func(context.Context) ([]InitialMessage, error)
-	initialWidth   int
-	initialHeight  int
+	Input            io.Reader
+	Output           io.Writer
+	Context          context.Context
+	Runner           Runner
+	Permissions      <-chan PermissionRequest
+	Limits           <-chan LimitRequest
+	BackgroundEvents <-chan Event
+	Provider         string
+	Providers        []string
+	Model            string
+	Models           []string
+	Effort           string
+	Efforts          []string
+	ApprovalModel    string
+	ApprovalModels   []string
+	SmallModel       string
+	SmallModels      []string
+	Messages         []InitialMessage
+	Turn             int
+	ExecutionMode    string
+	Cwd              string
+	Theme            string
+	EventTimeout     time.Duration
+	SelectSession    bool
+	Clipboard        Clipboard
+	LoadMessages     func(context.Context) ([]InitialMessage, error)
+	initialWidth     int
+	initialHeight    int
 }
 
 // Run starts the terminal UI and blocks until it exits.
@@ -100,55 +101,56 @@ func Run(ctx context.Context, opts Options) error {
 
 // Model is the root Bubble Tea model for the chat shell.
 type Model struct {
-	input           textinput.Model
-	messages        messageList
-	status          statusBar
-	styles          tuitheme.Styles
-	runner          Runner
-	permReqs        <-chan PermissionRequest
-	pending         *PermissionRequest
-	modal           permissiondialog.Model
-	limitReqs       <-chan LimitRequest
-	pendingLimit    *LimitRequest
-	ctx             context.Context
-	cancel          context.CancelFunc
-	running         bool
-	events          <-chan Event
-	providers       []string
-	models          []string
-	efforts         []string
-	approvalModel   string
-	approvalModels  []string
-	smallModel      string
-	smallModels     []string
-	picker          *modelPicker
-	pickerTarget    string
-	sessions        *sessionPicker
-	plans           *planPicker
-	rewind          *rewindPicker
-	files           *filePicker
-	slashIdx        int
-	history         []string
-	histIdx         int
-	draft           string
-	queuedPrompts   []string
-	queueIdx        int
-	queueDraft      string
-	scroll          int
-	runID           int
-	timeout         time.Duration
-	width           int
-	height          int
-	spinnerFrame    int
-	runStartedAt    time.Time
-	activitySummary string
-	toast           toastState
-	btw             sideQuestionState
-	clipboard       Clipboard
-	loadMessages    func(context.Context) ([]InitialMessage, error)
-	loadingMessages bool
-	lastEscTime     time.Time
-	lastEscRunID    int
+	input            textinput.Model
+	messages         messageList
+	status           statusBar
+	styles           tuitheme.Styles
+	runner           Runner
+	permReqs         <-chan PermissionRequest
+	pending          *PermissionRequest
+	modal            permissiondialog.Model
+	limitReqs        <-chan LimitRequest
+	pendingLimit     *LimitRequest
+	backgroundEvents <-chan Event
+	ctx              context.Context
+	cancel           context.CancelFunc
+	running          bool
+	events           <-chan Event
+	providers        []string
+	models           []string
+	efforts          []string
+	approvalModel    string
+	approvalModels   []string
+	smallModel       string
+	smallModels      []string
+	picker           *modelPicker
+	pickerTarget     string
+	sessions         *sessionPicker
+	plans            *planPicker
+	rewind           *rewindPicker
+	files            *filePicker
+	slashIdx         int
+	history          []string
+	histIdx          int
+	draft            string
+	queuedPrompts    []string
+	queueIdx         int
+	queueDraft       string
+	scroll           int
+	runID            int
+	timeout          time.Duration
+	width            int
+	height           int
+	spinnerFrame     int
+	runStartedAt     time.Time
+	activitySummary  string
+	toast            toastState
+	btw              sideQuestionState
+	clipboard        Clipboard
+	loadMessages     func(context.Context) ([]InitialMessage, error)
+	loadingMessages  bool
+	lastEscTime      time.Time
+	lastEscRunID     int
 }
 
 // NewModel creates the root TUI model.
@@ -216,30 +218,31 @@ func NewModel(opts Options) Model {
 	}
 
 	m := Model{
-		input:           input,
-		messages:        newMessageList(),
-		styles:          styles,
-		runner:          opts.Runner,
-		clipboard:       opts.Clipboard,
-		permReqs:        opts.Permissions,
-		limitReqs:       opts.Limits,
-		ctx:             ctx,
-		providers:       normalizeOptions(providers, providerName),
-		models:          normalizeModels(models, modelName),
-		efforts:         normalizeOptions(efforts, effort),
-		approvalModel:   approvalModel,
-		approvalModels:  normalizeModels(approvalModels, approvalModel),
-		smallModel:      smallModel,
-		smallModels:     normalizeModels(smallModels, smallModel),
-		history:         promptHistoryFromMessages(opts.Messages),
-		histIdx:         -1,
-		queueIdx:        -1,
-		timeout:         opts.EventTimeout,
-		loadMessages:    opts.LoadMessages,
-		loadingMessages: opts.LoadMessages != nil,
-		width:           width,
-		height:          height,
-		btw:             newSideQuestionState(),
+		input:            input,
+		messages:         newMessageList(),
+		styles:           styles,
+		runner:           opts.Runner,
+		clipboard:        opts.Clipboard,
+		permReqs:         opts.Permissions,
+		limitReqs:        opts.Limits,
+		backgroundEvents: opts.BackgroundEvents,
+		ctx:              ctx,
+		providers:        normalizeOptions(providers, providerName),
+		models:           normalizeModels(models, modelName),
+		efforts:          normalizeOptions(efforts, effort),
+		approvalModel:    approvalModel,
+		approvalModels:   normalizeModels(approvalModels, approvalModel),
+		smallModel:       smallModel,
+		smallModels:      normalizeModels(smallModels, smallModel),
+		history:          promptHistoryFromMessages(opts.Messages),
+		histIdx:          -1,
+		queueIdx:         -1,
+		timeout:          opts.EventTimeout,
+		loadMessages:     opts.LoadMessages,
+		loadingMessages:  opts.LoadMessages != nil,
+		width:            width,
+		height:           height,
+		btw:              newSideQuestionState(),
 		status: statusBar{
 			provider:      defaultString(providerName, "unknown"),
 			model:         modelName,
@@ -272,6 +275,9 @@ func NewModel(opts Options) Model {
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner)}
+	if m.backgroundEvents != nil {
+		cmds = append(cmds, waitForBackgroundEvent(m.backgroundEvents))
+	}
 	if m.loadMessages != nil {
 		cmds = append(cmds, loadMessagesCmd(m.ctx, m.loadMessages))
 	}
@@ -285,6 +291,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleStreamEvent(msg)
 	case sideQuestionEventMsg:
 		return m.handleSideQuestionEvent(msg)
+	case backgroundEventMsg:
+		return m.handleBackgroundEvent(msg)
 	case permissionRequestMsg:
 		return m.handlePermissionRequest(msg)
 	case limitRequestMsg:
@@ -808,6 +816,35 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	}
 	cmd := waitForEventFromUpdate(msg.event, &m)
 	return m, cmd
+}
+
+func (m Model) handleBackgroundEvent(msg backgroundEventMsg) (tea.Model, tea.Cmd) {
+	if !msg.ok {
+		return m, nil
+	}
+	switch msg.event.Type {
+	case EventActivity:
+		text := strings.TrimSpace(msg.event.Summary)
+		if text == "" {
+			text = strings.TrimSpace(msg.event.Content)
+		}
+		if text != "" {
+			role := systemRole
+			if msg.event.IsError {
+				role = errorRole
+			}
+			m.messages.append(role, text)
+			m.scrollToBottom()
+		}
+	case EventError:
+		text := strings.TrimSpace(msg.event.Content)
+		if text == "" && msg.event.Err != nil {
+			text = msg.event.Err.Error()
+		}
+		m.messages.append(errorRole, defaultString(text, "background task failed"))
+		m.scrollToBottom()
+	}
+	return m, waitForBackgroundEvent(m.backgroundEvents)
 }
 
 func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea.Cmd) {
