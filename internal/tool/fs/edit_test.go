@@ -100,6 +100,44 @@ func TestEdit_LineRangeReplacementAvoidsExactOldWhitespace(t *testing.T) {
 	}
 }
 
+func TestEdit_LineRangeRequiresOldForMultiLineReplacement(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "target.txt", "one\ntwo\nthree\n")
+	e := newEditTool(root)
+
+	_, err := execTool(t, e, editArgs{
+		Path:      "target.txt",
+		StartLine: 2,
+		New:       "TWO\ninserted",
+	})
+	if err == nil || !strings.Contains(err.Error(), "old is required for multi-line line edits") {
+		t.Fatalf("expected line anchor requirement, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "target.txt"))
+	if string(got) != "one\ntwo\nthree\n" {
+		t.Fatalf("disk changed on missing anchor: %q", got)
+	}
+}
+
+func TestEdit_LineRangeAllowsAnchoredMultiLineReplacement(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "target.txt", "one\ntwo\nthree\n")
+	e := newEditTool(root)
+
+	if _, err := execTool(t, e, editArgs{
+		Path:      "target.txt",
+		StartLine: 2,
+		Old:       "two",
+		New:       "TWO\ninserted",
+	}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "target.txt"))
+	if string(got) != "one\nTWO\ninserted\nthree\n" {
+		t.Fatalf("content mismatch: %q", got)
+	}
+}
+
 func TestEdit_LineRangeOldAnchorsSelectedLines(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "anchor.go", "func before() {}\nfunc target() {}\n")
@@ -148,6 +186,25 @@ func TestEdit_LineRangeReplacementPreservesCRLF(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(root, "win.txt"))
 	if string(got) != "one\r\nTWO\r\nthree\r\n" {
 		t.Fatalf("content mismatch: %q", got)
+	}
+}
+
+func TestEdit_GoSyntaxGuardRejectsBrokenResult(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n\nfunc main() {\n}\n")
+	e := newEditTool(root)
+
+	_, err := execTool(t, e, editArgs{
+		Path: "main.go",
+		Old:  "func main() {\n}",
+		New:  "func main() {\nfunc misplaced() {}\n}",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Go syntax guard rejected") {
+		t.Fatalf("expected Go syntax guard error, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "main.go"))
+	if string(got) != "package main\n\nfunc main() {\n}\n" {
+		t.Fatalf("disk changed on syntax guard: %q", got)
 	}
 }
 
@@ -243,7 +300,7 @@ func TestEdit_OldNotFoundHintsExactWhitespace(t *testing.T) {
 
 func TestEdit_DescriptionSteersAwayFromShellEdits(t *testing.T) {
 	desc := newEditTool(t.TempDir()).Description()
-	for _, want := range []string{"tabs", "line endings", "re-read a narrow range", "Prefer this over bash/sed/python"} {
+	for _, want := range []string{"tabs", "line endings", "multi-line replacements", "re-read a narrow range", "Prefer this over bash/sed/python"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("description missing %q:\n%s", want, desc)
 		}

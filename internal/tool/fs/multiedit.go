@@ -15,7 +15,7 @@ import (
 )
 
 type multiEditArgs struct {
-	Edits []editArgs `json:"edits" jsonschema:"required,description=Edits applied atomically. Same-path edits are accumulated in array order: edit N sees the result of edits 1..N-1. Each step may use exact old/new replacement or start_line/end_line complete-line replacement. Exact old text must match including tabs, spaces, and line endings."`
+	Edits []editArgs `json:"edits" jsonschema:"required,description=Edits applied atomically. Same-path edits are accumulated in array order: edit N sees the result of edits 1..N-1. Each step may use exact old/new replacement or start_line/end_line complete-line replacement. Exact old text must match including tabs, spaces, and line endings. Multi-line line edits require old anchors."`
 }
 
 func (a *multiEditArgs) UnmarshalJSON(raw []byte) error {
@@ -79,7 +79,7 @@ func newMultiEditToolWithNotifier(root string, notifier ChangeNotifier) *multiEd
 
 func (t *multiEditTool) Name() string { return "multiedit" }
 func (t *multiEditTool) Description() string {
-	return "Apply multiple edits across one or more workspace files atomically. Same-path edits accumulate in array order. Each step may use exact old/new replacement or start_line/end_line complete-line replacement. Exact old text must match including tabs, spaces, and line endings; if a step is not found, re-read a narrow range or use line replacement instead of bash/sed/python for file edits."
+	return "Apply multiple edits across one or more workspace files atomically. Same-path edits accumulate in array order. Each step may use exact old/new replacement or start_line/end_line complete-line replacement. Exact old text must match including tabs, spaces, and line endings; line-mode multi-line replacements require old anchors so stale line numbers cannot silently edit the wrong place. If a step is not found, re-read a narrow range or use anchored line replacement instead of bash/sed/python for file edits."
 }
 func (t *multiEditTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *multiEditTool) Risk() tool.Risk            { return tool.RiskWrite }
@@ -141,6 +141,9 @@ func (t *multiEditTool) plan(raw json.RawMessage) ([]*meFile, error) {
 
 	out := make([]*meFile, 0, len(files))
 	for _, f := range files {
+		if err := validateEditedContent(f.rel, f.before, f.after); err != nil {
+			return nil, fmt.Errorf("multiedit: %s: %w", f.rel, err)
+		}
 		out = append(out, f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })

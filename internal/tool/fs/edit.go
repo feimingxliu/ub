@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/parser"
+	"go/token"
 	"os"
 	"strings"
 
@@ -20,10 +22,10 @@ var readFileFn = os.ReadFile
 
 type editArgs struct {
 	Path       string       `json:"path"        jsonschema:"required,description=Path relative to workspace root."`
-	Old        string       `json:"old,omitempty" jsonschema:"description=Exact substring to replace, including tabs, spaces, and line endings. Required unless start_line is set. With start_line, old is an optional anchor and must match the selected complete lines when provided."`
-	New        string       `json:"new"         jsonschema:"required,description=Replacement text. With start_line, this replaces complete lines; omit a trailing newline to preserve the replaced range's line structure."`
+	Old        string       `json:"old,omitempty" jsonschema:"description=Exact substring to replace, including tabs, spaces, and line endings. Required unless start_line is set. With start_line, old anchors the selected complete lines when provided; include it for multi-line replacements."`
+	New        string       `json:"new"         jsonschema:"required,description=Replacement text. With start_line, this replaces complete lines; omit a trailing newline to preserve the replaced range's line structure. Multi-line line edits require old."`
 	ReplaceAll tool.BoolArg `json:"replace_all,omitempty" jsonschema:"description=Replace all matches when true. Defaults to false."`
-	StartLine  tool.IntArg  `json:"start_line,omitempty" jsonschema:"description=1-based first line to replace. When set, edit replaces complete lines and old may be omitted."`
+	StartLine  tool.IntArg  `json:"start_line,omitempty" jsonschema:"description=1-based first line to replace. When set, edit replaces complete lines. old may be omitted only for single-line line edits."`
 	EndLine    tool.IntArg  `json:"end_line,omitempty"   jsonschema:"description=1-based last line to replace, inclusive. Defaults to start_line."`
 }
 
@@ -47,7 +49,7 @@ func newEditToolWithNotifier(root string, notifier ChangeNotifier) *editTool {
 
 func (t *editTool) Name() string { return "edit" }
 func (t *editTool) Description() string {
-	return "Replace text inside a workspace file. Prefer exact old/new replacement for targeted edits; old must match exactly, including tabs, spaces, and line endings. If exact old is hard to reconstruct from numbered read output, use start_line/end_line to replace complete lines by line number; when old is also provided in line mode, it anchors the selected lines and must match them. If old is not found or the line anchor mismatches, re-read a narrow range around the target and retry with exact text. Prefer this over bash/sed/python for file edits."
+	return "Replace text inside a workspace file. Prefer exact old/new replacement for targeted edits; old must match exactly, including tabs, spaces, and line endings. If exact old is hard to reconstruct from numbered read output, use start_line/end_line to replace complete lines by line number. In line mode, provide old for multi-line replacements or function/block moves so stale line numbers cannot silently edit the wrong place. If old is not found or the line anchor mismatches, re-read a narrow range around the target and retry with exact text. Prefer this over bash/sed/python for file edits."
 }
 func (t *editTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *editTool) Risk() tool.Risk            { return tool.RiskWrite }
@@ -124,6 +126,9 @@ func applyLineEdit(content string, a editArgs) (string, int, error) {
 	end := spans[endLine-1].end
 	oldRange := content[start:end]
 	eol := dominantLineEnding(content)
+	if a.Old == "" && lineEditRequiresAnchor(startLine, endLine, a.New) {
+		return "", 0, fmt.Errorf("edit: old is required for multi-line line edits; re-read a narrow range around the target and include old as an anchor")
+	}
 	if a.Old != "" && !lineRangeOldMatches(oldRange, a.Old, eol) {
 		return "", 0, fmt.Errorf("edit: line range old mismatch; selected lines %d-%d do not match old; re-read a narrow range around the target and retry", startLine, endLine)
 	}
@@ -132,6 +137,28 @@ func applyLineEdit(content string, a editArgs) (string, int, error) {
 		replacement += eol
 	}
 	return content[:start] + replacement + content[end:], 1, nil
+}
+
+func lineEditRequiresAnchor(startLine, endLine int, replacement string) bool {
+	if endLine != startLine {
+		return true
+	}
+	return logicalLineCount(replacement) > 1
+}
+
+func logicalLineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	if strings.HasSuffix(s, "\n") {
+		s = strings.TrimSuffix(s, "\n")
+	}
+	if s == "" {
+		return 1
+	}
+	return strings.Count(s, "\n") + 1
 }
 
 func lineRangeOldMatches(selected, old, eol string) bool {
@@ -223,6 +250,9 @@ func (t *editTool) Preview(_ context.Context, raw json.RawMessage) (tool.Preview
 	if err != nil {
 		return tool.Preview{}, err
 	}
+	if err := validateEditedContent(rel, string(before), after); err != nil {
+		return tool.Preview{}, err
+	}
 	diff := udiff.Unified(rel, rel, string(before), after)
 	return tool.Preview{
 		Summary: fmt.Sprintf("Edit %s", rel),
@@ -249,6 +279,9 @@ func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	if err != nil {
 		return tool.Result{}, err
 	}
+	if err := validateEditedContent(rel, string(before), after); err != nil {
+		return tool.Result{}, err
+	}
 	diff := udiff.Unified(rel, rel, string(before), after)
 	// re-check the file just before writing to detect concurrent changes
 	// between Preview and Execute.
@@ -271,4 +304,22 @@ func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 			UnifiedDiff: diff,
 		}},
 	}, nil
+}
+
+func validateEditedContent(path, before, after string) error {
+	if !strings.HasSuffix(path, ".go") {
+		return nil
+	}
+	if parseGoFile(path, before) != nil {
+		return nil
+	}
+	if err := parseGoFile(path, after); err != nil {
+		return fmt.Errorf("edit: Go syntax guard rejected %s: file was parseable before edit but not after (%v); re-read the target area and retry with a narrower old anchor", path, err)
+	}
+	return nil
+}
+
+func parseGoFile(path, content string) error {
+	_, err := parser.ParseFile(token.NewFileSet(), path, content, parser.SkipObjectResolution)
+	return err
 }

@@ -108,6 +108,24 @@ func TestMultiEdit_LineRangeStep(t *testing.T) {
 	}
 }
 
+func TestMultiEdit_LineRangeRequiresOldForMultiLineStep(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "one\ntwo\nthree\n")
+
+	me := newMultiEditTool(root)
+	args := multiEditArgs{Edits: []editArgs{
+		{Path: "a.txt", StartLine: 2, New: "TWO\ninserted"},
+	}}
+	_, err := execTool(t, me, args)
+	if err == nil || !strings.Contains(err.Error(), "old is required for multi-line line edits") {
+		t.Fatalf("expected line anchor requirement, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+	if string(got) != "one\ntwo\nthree\n" {
+		t.Fatalf("disk changed on missing anchor: %q", got)
+	}
+}
+
 func TestMultiEdit_LineRangeOldMismatchAbortsBatch(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "foo\n")
@@ -126,6 +144,26 @@ func TestMultiEdit_LineRangeOldMismatchAbortsBatch(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(root, "b.txt"))
 	if string(a) != "foo\n" || string(b) != "one\ntwo\n" {
 		t.Fatalf("partial write happened: a=%q b=%q", a, b)
+	}
+}
+
+func TestMultiEdit_GoSyntaxGuardRejectsBrokenResult(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "main.go", "package main\n\nfunc main() {\n}\n")
+
+	me := newMultiEditTool(root)
+	args := multiEditArgs{Edits: []editArgs{{
+		Path: "main.go",
+		Old:  "func main() {\n}",
+		New:  "func main() {\nfunc misplaced() {}\n}",
+	}}}
+	_, err := execTool(t, me, args)
+	if err == nil || !strings.Contains(err.Error(), "Go syntax guard rejected") {
+		t.Fatalf("expected Go syntax guard error, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "main.go"))
+	if string(got) != "package main\n\nfunc main() {\n}\n" {
+		t.Fatalf("disk changed on syntax guard: %q", got)
 	}
 }
 
@@ -210,7 +248,7 @@ func TestMultiEdit_MultiMatchWithoutReplaceAll(t *testing.T) {
 
 func TestMultiEdit_DescriptionSteersAwayFromShellEdits(t *testing.T) {
 	desc := newMultiEditTool(t.TempDir()).Description()
-	for _, want := range []string{"tabs", "line endings", "re-read a narrow range", "instead of bash/sed/python"} {
+	for _, want := range []string{"tabs", "line endings", "old anchors", "re-read a narrow range", "instead of bash/sed/python"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("description missing %q:\n%s", want, desc)
 		}
