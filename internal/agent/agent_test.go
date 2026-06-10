@@ -1574,6 +1574,25 @@ func TestToolActivitySummaryMultiEdit(t *testing.T) {
 	}
 }
 
+func TestToolActivitySummaryTodoUpdateOmitsZeroItemIndex(t *testing.T) {
+	summary := SummarizeToolInput("todo_update", json.RawMessage(`{"id":"patch","item_index":0,"status":"in_progress"}`))
+	if strings.Contains(summary, "item=0") {
+		t.Fatalf("todo_update summary leaked zero item index: %q", summary)
+	}
+	for _, want := range []string{"id=patch", "status=in_progress"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("todo_update summary = %q, want %s", summary, want)
+		}
+	}
+
+	byIndex := SummarizeToolInput("todo_update", json.RawMessage(`{"item_index":2,"status":"completed"}`))
+	for _, want := range []string{"item=2", "status=completed"} {
+		if !strings.Contains(byIndex, want) {
+			t.Fatalf("todo_update by-index summary = %q, want %s", byIndex, want)
+		}
+	}
+}
+
 func TestToolResultDetailUsesUnifiedDiff(t *testing.T) {
 	detail := toolResultDetail(tool.Result{
 		Files: []tool.FileChange{{

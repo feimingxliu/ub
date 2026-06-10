@@ -155,6 +155,11 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 			parts = append(parts, label+"="+value)
 		}
 	}
+	addPositiveInt := func(label, key string) {
+		if value, ok := positiveIntField(body, key); ok {
+			parts = append(parts, fmt.Sprintf("%s=%d", label, value))
+		}
+	}
 	addCount := func(label, key string) {
 		value, ok := body[key]
 		if !ok || value == nil {
@@ -227,7 +232,7 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 		addCount("items", "tasks")
 	case "todo_update":
 		add("id", "id")
-		add("item", "item_index")
+		addPositiveInt("item", "item_index")
 		add("status", "status")
 	case "multiedit":
 		addCount("edits", "edits")
@@ -442,6 +447,40 @@ func safeStringField(body map[string]any, key string) (string, bool) {
 		return "", false
 	}
 	return truncateActivitySummary(value), true
+}
+
+func positiveIntField(body map[string]any, key string) (int, bool) {
+	value, ok := body[key]
+	if !ok || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil || parsed < 1 {
+			return 0, false
+		}
+		return parsed, true
+	case float64:
+		if typed != float64(int64(typed)) {
+			return 0, false
+		}
+		parsed := int(typed)
+		if parsed < 1 {
+			return 0, false
+		}
+		return parsed, true
+	default:
+		raw, ok := rawStringField(body, key)
+		if !ok {
+			return 0, false
+		}
+		parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || parsed < 1 {
+			return 0, false
+		}
+		return parsed, true
+	}
 }
 
 func commandStringField(body map[string]any, key string) (string, bool) {
