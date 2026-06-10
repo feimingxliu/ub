@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,11 +22,18 @@ type documentState struct {
 	Open       bool
 }
 
+// ErrServerUnavailable marks requests against an LSP process that has exited
+// or whose stdio pipe is no longer writable.
+var ErrServerUnavailable = errors.New("lsp: server unavailable")
+
+const stderrBufferLimit = 32 * 1024
+
 // Client is a minimal stdio LSP client.
 type Client struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
+	stderr *limitedBuffer
 	root   string
 
 	nextID atomic.Int64
@@ -40,7 +48,10 @@ type Client struct {
 	diagnosticsMu sync.RWMutex
 	diagnostics   map[string][]Diagnostic
 
-	done      chan error
+	done      chan struct{}
+	doneOnce  sync.Once
+	doneMu    sync.Mutex
+	doneErr   error
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -67,7 +78,8 @@ func Start(ctx context.Context, cfg ServerConfig) (*Client, error) {
 	for key, value := range cfg.Env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
-	cmd.Stderr = io.Discard
+	stderr := newLimitedBuffer(stderrBufferLimit)
+	cmd.Stderr = stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("lsp: stdin pipe: %w", err)
@@ -83,11 +95,12 @@ func Start(ctx context.Context, cfg ServerConfig) (*Client, error) {
 		cmd:         cmd,
 		stdin:       stdin,
 		stdout:      bufio.NewReader(stdout),
+		stderr:      stderr,
 		root:        root,
 		pending:     map[int64]chan rpcMessage{},
 		docs:        map[string]*documentState{},
 		diagnostics: map[string][]Diagnostic{},
-		done:        make(chan error, 1),
+		done:        make(chan struct{}),
 	}
 	c.nextID.Store(1)
 	go c.readLoop()
@@ -125,6 +138,9 @@ func (c *Client) initialize(ctx context.Context) error {
 
 // Call sends one LSP request and decodes its result into out.
 func (c *Client) Call(ctx context.Context, method string, params any, out any) error {
+	if err := c.errIfDone(); err != nil {
+		return err
+	}
 	id := c.nextID.Add(1)
 	ch := make(chan rpcMessage, 1)
 	c.pendingMu.Lock()
@@ -163,6 +179,8 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 			return fmt.Errorf("lsp: decode %s result: %w", method, err)
 		}
 		return nil
+	case <-c.done:
+		return c.unavailableErr()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -170,6 +188,9 @@ func (c *Client) Call(ctx context.Context, method string, params any, out any) e
 
 // Notify sends one LSP notification.
 func (c *Client) Notify(ctx context.Context, method string, params any) error {
+	if err := c.errIfDone(); err != nil {
+		return err
+	}
 	payload, err := json.Marshal(rpcNotification{
 		JSONRPC: "2.0",
 		Method:  method,
@@ -184,6 +205,8 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
+	case <-c.done:
+		return c.unavailableErr()
 	default:
 		return nil
 	}
@@ -192,14 +215,24 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 func (c *Client) writeFrame(payload []byte) error {
 	c.write.Lock()
 	defer c.write.Unlock()
-	return writeFrame(c.stdin, payload)
+	if err := c.errIfDone(); err != nil {
+		return err
+	}
+	if err := writeFrame(c.stdin, payload); err != nil {
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		c.markDone(err)
+		return c.unavailableErr()
+	}
+	return nil
 }
 
 func (c *Client) readLoop() {
 	for {
 		body, err := readFrame(c.stdout)
 		if err != nil {
-			c.done <- err
+			c.markDone(err)
 			return
 		}
 		var msg rpcMessage
@@ -283,11 +316,16 @@ func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 		defer cancel()
-		_ = c.Call(ctx, "shutdown", nil, nil)
-		_ = c.Notify(ctx, "exit", nil)
-		_ = c.stdin.Close()
+		if c.errIfDone() == nil {
+			_ = c.Call(ctx, "shutdown", nil, nil)
+			_ = c.Notify(ctx, "exit", nil)
+			_ = c.stdin.Close()
+		} else if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
 		select {
-		case err := <-c.done:
+		case <-c.done:
+			err := c.doneError()
 			if err != nil && err != io.EOF {
 				c.closeErr = err
 			}
@@ -295,11 +333,47 @@ func (c *Client) Close() error {
 			if c.cmd.Process != nil {
 				_ = c.cmd.Process.Kill()
 			}
-			c.closeErr = <-c.done
+			<-c.done
+			c.closeErr = c.doneError()
 		}
 		_ = c.cmd.Wait()
 	})
 	return c.closeErr
+}
+
+func (c *Client) errIfDone() error {
+	select {
+	case <-c.done:
+		return c.unavailableErr()
+	default:
+		return nil
+	}
+}
+
+func (c *Client) markDone(err error) {
+	c.doneOnce.Do(func() {
+		c.doneMu.Lock()
+		c.doneErr = err
+		c.doneMu.Unlock()
+		close(c.done)
+	})
+}
+
+func (c *Client) doneError() error {
+	c.doneMu.Lock()
+	defer c.doneMu.Unlock()
+	return c.doneErr
+}
+
+func (c *Client) unavailableErr() error {
+	detail := "server exited"
+	if err := c.doneError(); err != nil && err != io.EOF {
+		detail = err.Error()
+	}
+	if stderr := c.stderr.String(); stderr != "" {
+		detail += "; stderr: " + stderr
+	}
+	return fmt.Errorf("%w: %s", ErrServerUnavailable, detail)
 }
 
 func (c *Client) recordDiagnostics(raw json.RawMessage) {

@@ -139,6 +139,131 @@ func TestLazyManagerDefersStartUntilQuery(t *testing.T) {
 	}
 }
 
+func TestClientUnavailableIncludesStderr(t *testing.T) {
+	root := t.TempDir()
+	logPath := root + "/lsp.log"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := Start(ctx, ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestLSPFixture"},
+		Env: map[string]string{
+			"UB_LSP_FIXTURE":                        "1",
+			"UB_LSP_FIXTURE_LOG":                    logPath,
+			"UB_LSP_FIXTURE_EXIT_AFTER_INITIALIZED": "1",
+			"UB_LSP_FIXTURE_STDERR":                 "fixture crashed",
+		},
+		Root: root,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fixture did not exit")
+	}
+	err = c.DidChange(ctx, root+"/main.go", "package main\n")
+	if !errors.Is(err, ErrServerUnavailable) {
+		t.Fatalf("DidChange error = %v, want ErrServerUnavailable", err)
+	}
+	if !strings.Contains(err.Error(), "fixture crashed") {
+		t.Fatalf("error did not include stderr:\n%v", err)
+	}
+	_ = c.Close()
+}
+
+func TestLazyManagerRetriesQueryAfterDeadServer(t *testing.T) {
+	root := t.TempDir()
+	file := root + "/main.go"
+	if err := os.WriteFile(file, []byte("package main\nfunc main() {"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UB_LSP_FIXTURE", "1")
+	t.Setenv("UB_LSP_FIXTURE_LOG", root+"/lsp.log")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	m := NewLazyManager(root, map[string]config.LSPServerConfig{
+		"fixture": {
+			Command:   os.Args[0],
+			Args:      []string{"-test.run=TestLSPFixture"},
+			FileTypes: []string{"go"},
+		},
+	})
+	if _, err := m.Diagnostics(ctx, file); err != nil {
+		t.Fatalf("initial Diagnostics: %v", err)
+	}
+	first := currentLazyManager(m)
+	if first == nil || len(first.servers) != 1 {
+		t.Fatalf("first manager = %#v", first)
+	}
+	firstClient := first.servers[0].client
+	if err := firstClient.cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill fixture: %v", err)
+	}
+	select {
+	case <-firstClient.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fixture did not exit after kill")
+	}
+
+	if _, err := m.Diagnostics(ctx, file); err != nil {
+		t.Fatalf("Diagnostics after dead server: %v", err)
+	}
+	second := currentLazyManager(m)
+	if second == nil || second == first {
+		t.Fatalf("lazy manager did not restart; first=%p second=%p", first, second)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestLazyManagerDropsDeadNotify(t *testing.T) {
+	root := t.TempDir()
+	file := root + "/main.go"
+	if err := os.WriteFile(file, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UB_LSP_FIXTURE", "1")
+	t.Setenv("UB_LSP_FIXTURE_LOG", root+"/lsp.log")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	m := NewLazyManager(root, map[string]config.LSPServerConfig{
+		"fixture": {
+			Command:   os.Args[0],
+			Args:      []string{"-test.run=TestLSPFixture"},
+			FileTypes: []string{"go"},
+		},
+	})
+	if _, err := m.Diagnostics(ctx, file); err != nil {
+		t.Fatalf("initial Diagnostics: %v", err)
+	}
+	manager := currentLazyManager(m)
+	client := manager.servers[0].client
+	if err := client.cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill fixture: %v", err)
+	}
+	select {
+	case <-client.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("fixture did not exit after kill")
+	}
+
+	if err := m.DidChangeFile(ctx, file); err != nil {
+		t.Fatalf("DidChangeFile after dead server: %v", err)
+	}
+	if got := currentLazyManager(m); got != nil {
+		t.Fatalf("dead manager was not cleared: %p", got)
+	}
+}
+
+func currentLazyManager(m *LazyManager) *Manager {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manager
+}
+
 func TestManagerRejectsFilesOutsideWorkspace(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir() + "/secret.go"
@@ -261,6 +386,12 @@ func runLSPFixture() {
 		switch msg.Method {
 		case "initialize":
 			respondLSP(msg.ID, map[string]any{"capabilities": map[string]any{}})
+		case "initialized":
+			if os.Getenv("UB_LSP_FIXTURE_EXIT_AFTER_INITIALIZED") == "1" {
+				time.Sleep(50 * time.Millisecond)
+				fmt.Fprintln(os.Stderr, os.Getenv("UB_LSP_FIXTURE_STDERR"))
+				return
+			}
 		case "shutdown":
 			respondLSP(msg.ID, nil)
 		case "textDocument/didOpen", "textDocument/didChange":

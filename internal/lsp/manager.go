@@ -131,6 +131,42 @@ func (m *LazyManager) ensureStarted(ctx context.Context) (*Manager, error) {
 	return nil, m.startErr
 }
 
+func withLazyManager[T any](lm *LazyManager, ctx context.Context, fn func(*Manager) (T, error)) (T, error) {
+	var zero T
+	manager, err := lm.ensureStarted(ctx)
+	if err != nil {
+		return zero, err
+	}
+	out, err := fn(manager)
+	if !errors.Is(err, ErrServerUnavailable) {
+		return out, err
+	}
+	lm.resetManager(manager)
+	manager, startErr := lm.ensureStarted(ctx)
+	if startErr != nil {
+		return zero, startErr
+	}
+	out, err = fn(manager)
+	if errors.Is(err, ErrServerUnavailable) {
+		lm.resetManager(manager)
+	}
+	return out, err
+}
+
+func (m *LazyManager) resetManager(manager *Manager) {
+	if m == nil || manager == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.manager == manager {
+		m.manager = nil
+		m.started = false
+		m.startErr = nil
+	}
+	m.mu.Unlock()
+	_ = manager.Close()
+}
+
 // DidChangeFile updates an already-started server. Before the first query it is
 // a no-op so ordinary file edits do not pay LSP startup cost.
 func (m *LazyManager) DidChangeFile(ctx context.Context, path string) error {
@@ -143,71 +179,62 @@ func (m *LazyManager) DidChangeFile(ctx context.Context, path string) error {
 	if manager == nil {
 		return nil
 	}
-	return manager.DidChangeFile(ctx, path)
+	if err := manager.DidChangeFile(ctx, path); err != nil {
+		if errors.Is(err, ErrServerUnavailable) {
+			m.resetManager(manager)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *LazyManager) Diagnostics(ctx context.Context, file string) ([]FileDiagnostics, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return manager.Diagnostics(ctx, file)
+	return withLazyManager(m, ctx, func(manager *Manager) ([]FileDiagnostics, error) {
+		return manager.Diagnostics(ctx, file)
+	})
 }
 
 func (m *LazyManager) References(ctx context.Context, file string, line, col int) ([]Location, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return manager.References(ctx, file, line, col)
+	return withLazyManager(m, ctx, func(manager *Manager) ([]Location, error) {
+		return manager.References(ctx, file, line, col)
+	})
 }
 
 func (m *LazyManager) ReferencesBySymbol(ctx context.Context, symbol, path string) ([]Location, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return manager.ReferencesBySymbol(ctx, symbol, path)
+	return withLazyManager(m, ctx, func(manager *Manager) ([]Location, error) {
+		return manager.ReferencesBySymbol(ctx, symbol, path)
+	})
 }
 
 func (m *LazyManager) Hover(ctx context.Context, file string, line, col int) (HoverResult, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return HoverResult{}, err
-	}
-	return manager.Hover(ctx, file, line, col)
+	return withLazyManager(m, ctx, func(manager *Manager) (HoverResult, error) {
+		return manager.Hover(ctx, file, line, col)
+	})
 }
 
 func (m *LazyManager) Completion(ctx context.Context, file string, line, col, max int) ([]CompletionItem, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return manager.Completion(ctx, file, line, col, max)
+	return withLazyManager(m, ctx, func(manager *Manager) ([]CompletionItem, error) {
+		return manager.Completion(ctx, file, line, col, max)
+	})
 }
 
 func (m *LazyManager) DocumentSymbols(ctx context.Context, file string) ([]DocumentSymbol, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return manager.DocumentSymbols(ctx, file)
+	return withLazyManager(m, ctx, func(manager *Manager) ([]DocumentSymbol, error) {
+		return manager.DocumentSymbols(ctx, file)
+	})
 }
 
 func (m *LazyManager) Rename(ctx context.Context, file string, line, col int, newName string) (WorkspaceEdit, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return WorkspaceEdit{}, err
-	}
-	return manager.Rename(ctx, file, line, col, newName)
+	return withLazyManager(m, ctx, func(manager *Manager) (WorkspaceEdit, error) {
+		return manager.Rename(ctx, file, line, col, newName)
+	})
 }
 
 func (m *LazyManager) CodeActions(ctx context.Context, file string, line, col, endLine, endCol int) ([]CodeAction, error) {
-	manager, err := m.ensureStarted(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return manager.CodeActions(ctx, file, line, col, endLine, endCol)
+	return withLazyManager(m, ctx, func(manager *Manager) ([]CodeAction, error) {
+		return manager.CodeActions(ctx, file, line, col, endLine, endCol)
+	})
 }
 
 func (m *LazyManager) Close() error {
