@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"go/parser"
-	"go/token"
 	"os"
 	"strings"
 
@@ -250,9 +248,6 @@ func (t *editTool) Preview(_ context.Context, raw json.RawMessage) (tool.Preview
 	if err != nil {
 		return tool.Preview{}, err
 	}
-	if err := validateEditedContent(rel, string(before), after); err != nil {
-		return tool.Preview{}, err
-	}
 	diff := udiff.Unified(rel, rel, string(before), after)
 	return tool.Preview{
 		Summary: fmt.Sprintf("Edit %s", rel),
@@ -279,9 +274,6 @@ func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 	if err != nil {
 		return tool.Result{}, err
 	}
-	if err := validateEditedContent(rel, string(before), after); err != nil {
-		return tool.Result{}, err
-	}
 	diff := udiff.Unified(rel, rel, string(before), after)
 	// re-check the file just before writing to detect concurrent changes
 	// between Preview and Execute.
@@ -304,22 +296,4 @@ func (t *editTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 			UnifiedDiff: diff,
 		}},
 	}, nil
-}
-
-func validateEditedContent(path, before, after string) error {
-	if !strings.HasSuffix(path, ".go") {
-		return nil
-	}
-	if parseGoFile(path, before) != nil {
-		return nil
-	}
-	if err := parseGoFile(path, after); err != nil {
-		return fmt.Errorf("edit: Go syntax guard rejected %s: file was parseable before edit but not after (%v); re-read the target area and retry with a narrower old anchor", path, err)
-	}
-	return nil
-}
-
-func parseGoFile(path, content string) error {
-	_, err := parser.ParseFile(token.NewFileSet(), path, content, parser.SkipObjectResolution)
-	return err
 }

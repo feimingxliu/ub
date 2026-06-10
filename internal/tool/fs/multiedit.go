@@ -141,9 +141,6 @@ func (t *multiEditTool) plan(raw json.RawMessage) ([]*meFile, error) {
 
 	out := make([]*meFile, 0, len(files))
 	for _, f := range files {
-		if err := validateEditedContent(f.rel, f.before, f.after); err != nil {
-			return nil, fmt.Errorf("multiedit: %s: %w", f.rel, err)
-		}
 		out = append(out, f)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })

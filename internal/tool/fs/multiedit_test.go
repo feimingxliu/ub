@@ -147,26 +147,6 @@ func TestMultiEdit_LineRangeOldMismatchAbortsBatch(t *testing.T) {
 	}
 }
 
-func TestMultiEdit_GoSyntaxGuardRejectsBrokenResult(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "main.go", "package main\n\nfunc main() {\n}\n")
-
-	me := newMultiEditTool(root)
-	args := multiEditArgs{Edits: []editArgs{{
-		Path: "main.go",
-		Old:  "func main() {\n}",
-		New:  "func main() {\nfunc misplaced() {}\n}",
-	}}}
-	_, err := execTool(t, me, args)
-	if err == nil || !strings.Contains(err.Error(), "Go syntax guard rejected") {
-		t.Fatalf("expected Go syntax guard error, got: %v", err)
-	}
-	got, _ := os.ReadFile(filepath.Join(root, "main.go"))
-	if string(got) != "package main\n\nfunc main() {\n}\n" {
-		t.Fatalf("disk changed on syntax guard: %q", got)
-	}
-}
-
 func TestMultiEdit_PreviewDoesNotMutate(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "foo\n")
