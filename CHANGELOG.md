@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.11] - 2026-06-10
+
+
+### Added
+
+- Add checkpoint-based rewind recovery ([46b78e6](https://github.com/feimingxliu/ub/commit/46b78e67edd3b040968b4d78aebab1f12edb7882))
+- Add small model switching ([272af4a](https://github.com/feimingxliu/ub/commit/272af4ab481d8188ba59ddcc47f34e4e186aff34))
+- Batch auto memory extraction ([c0a7a71](https://github.com/feimingxliu/ub/commit/c0a7a71af84be06cf10b4a22e7912c244862bffb))
+
+
+### Fixed
+
+- Move new todo lists to latest activity ([ee561f3](https://github.com/feimingxliu/ub/commit/ee561f31b6bd127ea0eed94527269fee3770480d))
+
 ## [0.3.10] - 2026-06-09
 
 
@@ -10,6 +24,11 @@ All notable changes to this project are documented here.
 - Complete plan todo workflow ([2f7b704](https://github.com/feimingxliu/ub/commit/2f7b704e88ec44a4b892d95f142eb6651d868fb8))
 - Add automatic memory lifecycle events ([877152e](https://github.com/feimingxliu/ub/commit/877152e2ae0166fdaadd0b78130d3192190f63ad))
 - Stream job_output follow ([215ea0e](https://github.com/feimingxliu/ub/commit/215ea0ebeb24eae2e53a2aec34a57a81ba0dfd78))
+
+
+### Maintenance
+
+- V0.3.10 ([728e144](https://github.com/feimingxliu/ub/commit/728e144624ccb667d79b61d69275e8ddbfd34abe))
 
 ## [0.3.9] - 2026-06-08
 
