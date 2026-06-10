@@ -80,11 +80,30 @@ func mergeMemory(dst *MemoryConfig, src MemoryConfig) {
 		enabled := *src.Auto.Enabled
 		dst.Auto.Enabled = &enabled
 	}
+	if src.Auto.Trigger != "" {
+		dst.Auto.Trigger = src.Auto.Trigger
+	}
 	if src.Auto.MaxCandidates != 0 {
 		dst.Auto.MaxCandidates = src.Auto.MaxCandidates
 	}
 	if src.Auto.MaxPromptChars != 0 {
 		dst.Auto.MaxPromptChars = src.Auto.MaxPromptChars
+	}
+	if src.Auto.MinTurnsSinceExtraction != 0 {
+		dst.Auto.MinTurnsSinceExtraction = src.Auto.MinTurnsSinceExtraction
+	}
+	if src.Auto.MinNewMessages != 0 {
+		dst.Auto.MinNewMessages = src.Auto.MinNewMessages
+	}
+	if src.Auto.MinInterval != 0 {
+		dst.Auto.MinInterval = src.Auto.MinInterval
+	}
+	if src.Auto.DrainTimeout != 0 {
+		dst.Auto.DrainTimeout = src.Auto.DrainTimeout
+	}
+	if src.Auto.DisableOnExternalContext != nil {
+		disable := *src.Auto.DisableOnExternalContext
+		dst.Auto.DisableOnExternalContext = &disable
 	}
 }
 

@@ -475,27 +475,29 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		memoryMaxChars:   cfg.Memory.MaxChars,
 		fileHistory:      fileHistory,
 	}
+	memoryAutoScheduler := agent.NewMemoryAutoScheduler()
 	a, err := agent.New(agent.Options{
-		Provider:         p,
-		Tools:            tools.Registry,
-		Permission:       perm,
-		Rollout:          state.rollout,
-		Model:            model,
-		Mode:             mode,
-		MaxTurns:         cfg.MaxTurns,
-		Reasoning:        chatReasoningConfig(cfg, providerName, providerCfg, model),
-		MaxContextTokens: chatMaxContextTokens(providerName, providerCfg, model),
-		SummaryProvider:  summarySetup.Provider,
-		SummaryModel:     summarySetup.Model,
-		Context:          cfg.Context,
-		Prompt:           cfg.Prompt,
-		Runtime:          agentRuntimeContext(tools.Workspace),
-		Hooks:            hooksRunner,
-		WorkspaceRoot:    tools.Workspace,
-		MemoryMaxChars:   cfg.Memory.MaxChars,
-		Memory:           cfg.Memory,
-		SubagentRunner:   subRunner,
-		FileHistory:      fileHistory,
+		Provider:            p,
+		Tools:               tools.Registry,
+		Permission:          perm,
+		Rollout:             state.rollout,
+		Model:               model,
+		Mode:                mode,
+		MaxTurns:            cfg.MaxTurns,
+		Reasoning:           chatReasoningConfig(cfg, providerName, providerCfg, model),
+		MaxContextTokens:    chatMaxContextTokens(providerName, providerCfg, model),
+		SummaryProvider:     summarySetup.Provider,
+		SummaryModel:        summarySetup.Model,
+		Context:             cfg.Context,
+		Prompt:              cfg.Prompt,
+		Runtime:             agentRuntimeContext(tools.Workspace),
+		Hooks:               hooksRunner,
+		WorkspaceRoot:       tools.Workspace,
+		MemoryMaxChars:      cfg.Memory.MaxChars,
+		Memory:              cfg.Memory,
+		MemoryAutoScheduler: memoryAutoScheduler,
+		SubagentRunner:      subRunner,
+		FileHistory:         fileHistory,
 	})
 	if err != nil {
 		return err
@@ -513,6 +515,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if _, err := io.WriteString(cmd.OutOrStdout(), result.Text); err != nil {
 		return err
 	}
+	_ = a.DrainAutoMemory(cmd.Context())
 	return finishChatSession(cmd, state, prompt, providerName, model)
 }
 

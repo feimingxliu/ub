@@ -69,6 +69,7 @@ func TestMergeDefaults(t *testing.T) {
 	cleanupEnabled := false
 	promptWorkspaceEnabled := false
 	memoryAutoEnabled := false
+	memoryAutoDisableExternal := false
 	got := Merge(Defaults(), &Config{
 		TUI:           TUIConfig{Theme: "light"},
 		ExecutionMode: ModePlan,
@@ -94,9 +95,15 @@ func TestMergeDefaults(t *testing.T) {
 		Memory: MemoryConfig{
 			MaxChars: 9000,
 			Auto: MemoryAutoConfig{
-				Enabled:        &memoryAutoEnabled,
-				MaxCandidates:  2,
-				MaxPromptChars: 4096,
+				Enabled:                  &memoryAutoEnabled,
+				Trigger:                  "immediate",
+				MaxCandidates:            2,
+				MaxPromptChars:           4096,
+				MinTurnsSinceExtraction:  4,
+				MinNewMessages:           8,
+				MinInterval:              15 * time.Minute,
+				DrainTimeout:             5 * time.Second,
+				DisableOnExternalContext: &memoryAutoDisableExternal,
 			},
 		},
 		Tools: ToolsConfig{
@@ -151,7 +158,14 @@ func TestMergeDefaults(t *testing.T) {
 		got.Memory.Auto.Enabled == nil ||
 		*got.Memory.Auto.Enabled ||
 		got.Memory.Auto.MaxCandidates != 2 ||
-		got.Memory.Auto.MaxPromptChars != 4096 {
+		got.Memory.Auto.MaxPromptChars != 4096 ||
+		got.Memory.Auto.Trigger != "immediate" ||
+		got.Memory.Auto.MinTurnsSinceExtraction != 4 ||
+		got.Memory.Auto.MinNewMessages != 8 ||
+		got.Memory.Auto.MinInterval != 15*time.Minute ||
+		got.Memory.Auto.DrainTimeout != 5*time.Second ||
+		got.Memory.Auto.DisableOnExternalContext == nil ||
+		*got.Memory.Auto.DisableOnExternalContext {
 		t.Fatalf("memory = %#v", got.Memory)
 	}
 	if got.Tools.Job.MaxConcurrent != 10 ||

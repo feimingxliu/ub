@@ -75,6 +75,7 @@ type Options struct {
 	WorkspaceRoot        string
 	MemoryMaxChars       int
 	Memory               config.MemoryConfig
+	MemoryAutoScheduler  *MemoryAutoScheduler
 	SubagentRunner       tool.SubagentRunner
 	FileHistory          *filehistory.Manager
 	FileHistoryToolsOnly bool
@@ -105,6 +106,7 @@ type Agent struct {
 	workspaceRoot        string
 	memoryMaxChars       int
 	memoryCfg            config.MemoryConfig
+	memoryAutoScheduler  *MemoryAutoScheduler
 	subagentRunner       tool.SubagentRunner
 	fileHistory          *filehistory.Manager
 	fileHistoryToolsOnly bool
@@ -175,6 +177,10 @@ func New(opts Options) (*Agent, error) {
 		workspaceRoot = runtime.Workspace
 	}
 	promptCfg := effectivePromptConfig(opts.Prompt)
+	memoryAutoScheduler := opts.MemoryAutoScheduler
+	if memoryAutoScheduler == nil {
+		memoryAutoScheduler = NewMemoryAutoScheduler()
+	}
 	return &Agent{
 		provider:             opts.Provider,
 		tools:                opts.Tools,
@@ -199,6 +205,7 @@ func New(opts Options) (*Agent, error) {
 		workspaceRoot:        workspaceRoot,
 		memoryMaxChars:       opts.MemoryMaxChars,
 		memoryCfg:            opts.Memory,
+		memoryAutoScheduler:  memoryAutoScheduler,
 		subagentRunner:       opts.SubagentRunner,
 		fileHistory:          opts.FileHistory,
 		fileHistoryToolsOnly: opts.FileHistoryToolsOnly,

@@ -235,11 +235,33 @@
         "enabled": {
           "type": "boolean"
         },
+        "trigger": {
+          "type": "string",
+          "enum": [
+            "background",
+            "immediate"
+          ]
+        },
         "max_candidates": {
           "type": "integer"
         },
         "max_prompt_chars": {
           "type": "integer"
+        },
+        "min_turns_since_extraction": {
+          "type": "integer"
+        },
+        "min_new_messages": {
+          "type": "integer"
+        },
+        "min_interval": {
+          "type": "integer"
+        },
+        "drain_timeout": {
+          "type": "integer"
+        },
+        "disable_on_external_context": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

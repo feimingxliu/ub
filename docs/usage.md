@@ -509,13 +509,21 @@ memory:
   max_chars: 8000
   auto:
     enabled: true
+    trigger: background
     max_candidates: 3
     max_prompt_chars: 12000
+    min_turns_since_extraction: 3
+    min_new_messages: 6
+    min_interval: 10m
+    drain_timeout: 3s
+    disable_on_external_context: true
 ```
 
 ### 自动归纳
 
-默认启用 `memory.auto.enabled`。每个成功完成的 work / auto / full-access turn 结束后,ub 会用当前 provider 可用的 `small_model`(未配置或该 provider 明确不可用时复用当前模型)判断本轮是否有值得长期保存的事实,并最多写入 `memory.auto.max_candidates` 条项目自动记忆。plan 模式不会自动写 memory。
+默认启用 `memory.auto.enabled`。成功完成的 work / auto / full-access turn 结束后,ub 只在主流程里做低成本观察:plan 模式、空 workspace、显式 `remember` 已处理的 turn、以及默认配置下使用外部上下文(MCP / web / tool_search 类工具)的 turn 都不会触发自动写入。其余 turn 会进入后台调度器;调度器按显式记忆信号、`memory.auto.min_turns_since_extraction`、`memory.auto.min_new_messages` 和 `memory.auto.min_interval` 批量决定何时调用当前 provider 可用的 `small_model`(未配置或该 provider 明确不可用时复用当前模型)抽取长期事实。
+
+`memory.auto.trigger=background` 是默认模式,会把抽取放到后台,避免每个 turn 结束都同步等待 small model。`trigger=immediate` 可用于调试或希望每个 eligible turn 都尽快后台抽取的场景。headless `ub run` 在主答案输出后最多等待 `memory.auto.drain_timeout`,TUI 则先展示完成状态,后台抽取结果随后通过 `memory_write` 事件审计。
 
 自动归纳只接受受控 JSON 候选,随后仍会经过 category 校验、隐私过滤、冲突合并和衰减策略;被拒绝的候选不会写入 memory。
 

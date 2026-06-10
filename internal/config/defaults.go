@@ -8,6 +8,11 @@ const (
 	DefaultMemoryMaxChars                      = 4000
 	DefaultMemoryAutoMaxCandidates             = 3
 	DefaultMemoryAutoMaxPromptChars            = 12000
+	DefaultMemoryAutoTrigger                   = "background"
+	DefaultMemoryAutoMinTurnsSinceExtraction   = 3
+	DefaultMemoryAutoMinNewMessages            = 6
+	DefaultMemoryAutoMinInterval               = 10 * time.Minute
+	DefaultMemoryAutoDrainTimeout              = 3 * time.Second
 )
 
 // Defaults returns the built-in configuration used as the lowest-priority
@@ -19,6 +24,7 @@ func Defaults() *Config {
 	promptWorkspaceInstructionsEnabled := true
 	promptGitSnapshotEnabled := true
 	memoryAutoEnabled := true
+	memoryAutoDisableOnExternalContext := true
 	return &Config{
 		ExecutionMode: ModeWork,
 		Prompt: PromptConfig{
@@ -73,9 +79,15 @@ func Defaults() *Config {
 		Memory: MemoryConfig{
 			MaxChars: DefaultMemoryMaxChars,
 			Auto: MemoryAutoConfig{
-				Enabled:        &memoryAutoEnabled,
-				MaxCandidates:  DefaultMemoryAutoMaxCandidates,
-				MaxPromptChars: DefaultMemoryAutoMaxPromptChars,
+				Enabled:                  &memoryAutoEnabled,
+				Trigger:                  DefaultMemoryAutoTrigger,
+				MaxCandidates:            DefaultMemoryAutoMaxCandidates,
+				MaxPromptChars:           DefaultMemoryAutoMaxPromptChars,
+				MinTurnsSinceExtraction:  DefaultMemoryAutoMinTurnsSinceExtraction,
+				MinNewMessages:           DefaultMemoryAutoMinNewMessages,
+				MinInterval:              DefaultMemoryAutoMinInterval,
+				DrainTimeout:             DefaultMemoryAutoDrainTimeout,
+				DisableOnExternalContext: &memoryAutoDisableOnExternalContext,
 			},
 		},
 	}

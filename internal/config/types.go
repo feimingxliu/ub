@@ -210,9 +210,15 @@ type MemoryConfig struct {
 
 // MemoryAutoConfig controls LLM-assisted post-turn memory extraction.
 type MemoryAutoConfig struct {
-	Enabled        *bool `yaml:"enabled,omitempty"          json:"enabled,omitempty"`
-	MaxCandidates  int   `yaml:"max_candidates,omitempty"   json:"max_candidates,omitempty"`
-	MaxPromptChars int   `yaml:"max_prompt_chars,omitempty" json:"max_prompt_chars,omitempty"`
+	Enabled                  *bool         `yaml:"enabled,omitempty"                     json:"enabled,omitempty"`
+	Trigger                  string        `yaml:"trigger,omitempty"                     json:"trigger,omitempty" jsonschema:"enum=background,enum=immediate"`
+	MaxCandidates            int           `yaml:"max_candidates,omitempty"              json:"max_candidates,omitempty"`
+	MaxPromptChars           int           `yaml:"max_prompt_chars,omitempty"            json:"max_prompt_chars,omitempty"`
+	MinTurnsSinceExtraction  int           `yaml:"min_turns_since_extraction,omitempty" json:"min_turns_since_extraction,omitempty"`
+	MinNewMessages           int           `yaml:"min_new_messages,omitempty"            json:"min_new_messages,omitempty"`
+	MinInterval              time.Duration `yaml:"min_interval,omitempty"                json:"min_interval,omitempty"`
+	DrainTimeout             time.Duration `yaml:"drain_timeout,omitempty"               json:"drain_timeout,omitempty"`
+	DisableOnExternalContext *bool         `yaml:"disable_on_external_context,omitempty" json:"disable_on_external_context,omitempty"`
 }
 
 // HooksConfig holds shell hook lists keyed by trigger kind: pre_tool_call,

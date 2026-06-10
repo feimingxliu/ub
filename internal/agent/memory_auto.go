@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/feimingxliu/ub/internal/config"
 	contextmgr "github.com/feimingxliu/ub/internal/context"
@@ -42,12 +44,44 @@ type autoMemoryCandidate struct {
 	Text     string `json:"text"`
 }
 
-func (a *Agent) finishSuccessfulTurn(ctx context.Context, sessionID string, turn int, messages []message.Message, text string) {
-	a.maybeAutoWriteMemory(ctx, sessionID, turn, messages)
-	a.emit(Event{Type: EventDone, Text: text})
+// MemoryAutoScheduler coalesces post-turn auto-memory extraction so the main
+// agent response path does not synchronously call the small model on every
+// successful turn.
+type MemoryAutoScheduler struct {
+	mu sync.Mutex
+
+	inProgress bool
+	pending    *autoMemoryJob
+
+	bufferedMessages []message.Message
+	bufferedTurns    int
+	lastExtraction   time.Time
+
+	cond *sync.Cond
 }
 
-func (a *Agent) maybeAutoWriteMemory(ctx context.Context, sessionID string, turn int, messages []message.Message) {
+type autoMemoryJob struct {
+	agent    *Agent
+	ctx      context.Context
+	session  string
+	turn     int
+	messages []message.Message
+}
+
+// NewMemoryAutoScheduler creates an in-process scheduler. Hosts that create a
+// fresh Agent per turn should share one scheduler for the session.
+func NewMemoryAutoScheduler() *MemoryAutoScheduler {
+	s := &MemoryAutoScheduler{}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
+func (a *Agent) finishSuccessfulTurn(ctx context.Context, sessionID string, turn int, messages []message.Message, text string) {
+	a.emit(Event{Type: EventDone, Text: text})
+	a.scheduleAutoMemory(ctx, sessionID, turn, messages)
+}
+
+func (a *Agent) scheduleAutoMemory(ctx context.Context, sessionID string, turn int, messages []message.Message) {
 	if !a.autoMemoryEnabled() {
 		return
 	}
@@ -61,6 +95,127 @@ func (a *Agent) maybeAutoWriteMemory(ctx context.Context, sessionID string, turn
 	if len(turnMessages) == 0 {
 		return
 	}
+	if turnHasRememberToolUse(turnMessages) {
+		return
+	}
+	if effectiveMemoryAutoDisableOnExternalContext(a.memoryCfg) && turnHasExternalContextToolUse(turnMessages) {
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityNotice,
+			Status:       "skipped",
+			Summary:      "auto memory skipped: external context used this turn",
+		})
+		return
+	}
+	if a.memoryAutoScheduler == nil {
+		return
+	}
+	a.memoryAutoScheduler.Observe(autoMemoryJob{
+		agent:    a,
+		ctx:      context.WithoutCancel(ctx),
+		session:  sessionID,
+		turn:     turn,
+		messages: turnMessages,
+	})
+}
+
+func (s *MemoryAutoScheduler) Observe(job autoMemoryJob) {
+	if s == nil || job.agent == nil || len(job.messages) == 0 {
+		return
+	}
+	cfg := job.agent.memoryCfg
+	force := memoryAutoStrongSignal(job.messages) || effectiveMemoryAutoTrigger(cfg) == "immediate"
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.bufferedMessages = append(s.bufferedMessages, cloneMessages(job.messages)...)
+	s.bufferedTurns++
+
+	minInterval := effectiveMemoryAutoMinInterval(cfg)
+	intervalReady := s.lastExtraction.IsZero() || time.Since(s.lastExtraction) >= minInterval
+	if !force && !intervalReady {
+		return
+	}
+	if !force &&
+		s.bufferedTurns < effectiveMemoryAutoMinTurnsSinceExtraction(cfg) &&
+		memoryAutoVisibleMessageCount(s.bufferedMessages) < effectiveMemoryAutoMinNewMessages(cfg) {
+		return
+	}
+
+	job.messages = cloneMessages(s.bufferedMessages)
+	s.bufferedMessages = nil
+	s.bufferedTurns = 0
+	s.lastExtraction = time.Now()
+	s.enqueueLocked(job)
+}
+
+func (s *MemoryAutoScheduler) enqueueLocked(job autoMemoryJob) {
+	if s.inProgress {
+		if s.pending != nil {
+			job.messages = append(cloneMessages(s.pending.messages), job.messages...)
+		}
+		s.pending = &job
+		s.cond.Broadcast()
+		return
+	}
+	s.inProgress = true
+	go s.run(job)
+}
+
+func (s *MemoryAutoScheduler) run(job autoMemoryJob) {
+	job.agent.runAutoMemoryJob(job.ctx, job.session, job.turn, job.messages)
+
+	s.mu.Lock()
+	next := s.pending
+	s.pending = nil
+	if next == nil {
+		s.inProgress = false
+		s.cond.Broadcast()
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	s.run(*next)
+}
+
+// Drain waits for background auto-memory work to settle. A non-positive timeout
+// returns immediately; interactive hosts normally rely on EventDone instead.
+func (s *MemoryAutoScheduler) Drain(ctx context.Context, timeout time.Duration) error {
+	if s == nil || timeout <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for s.inProgress || s.pending != nil {
+			s.cond.Wait()
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// DrainAutoMemory waits for this agent's scheduler using memory.auto.drain_timeout.
+func (a *Agent) DrainAutoMemory(ctx context.Context) error {
+	if a == nil || a.memoryAutoScheduler == nil {
+		return nil
+	}
+	return a.memoryAutoScheduler.Drain(ctx, effectiveMemoryAutoDrainTimeout(a.memoryCfg))
+}
+
+func (a *Agent) runAutoMemoryJob(ctx context.Context, sessionID string, turn int, turnMessages []message.Message) {
 	candidates, err := a.generateAutoMemoryCandidates(ctx, turnMessages)
 	if err != nil {
 		a.emit(Event{
@@ -245,6 +400,47 @@ func effectiveMemoryAutoMaxPromptChars(cfg config.MemoryConfig) int {
 	return cfg.Auto.MaxPromptChars
 }
 
+func effectiveMemoryAutoTrigger(cfg config.MemoryConfig) string {
+	switch strings.TrimSpace(cfg.Auto.Trigger) {
+	case "immediate":
+		return "immediate"
+	default:
+		return config.DefaultMemoryAutoTrigger
+	}
+}
+
+func effectiveMemoryAutoMinTurnsSinceExtraction(cfg config.MemoryConfig) int {
+	if cfg.Auto.MinTurnsSinceExtraction <= 0 {
+		return config.DefaultMemoryAutoMinTurnsSinceExtraction
+	}
+	return cfg.Auto.MinTurnsSinceExtraction
+}
+
+func effectiveMemoryAutoMinNewMessages(cfg config.MemoryConfig) int {
+	if cfg.Auto.MinNewMessages <= 0 {
+		return config.DefaultMemoryAutoMinNewMessages
+	}
+	return cfg.Auto.MinNewMessages
+}
+
+func effectiveMemoryAutoMinInterval(cfg config.MemoryConfig) time.Duration {
+	if cfg.Auto.MinInterval <= 0 {
+		return config.DefaultMemoryAutoMinInterval
+	}
+	return cfg.Auto.MinInterval
+}
+
+func effectiveMemoryAutoDrainTimeout(cfg config.MemoryConfig) time.Duration {
+	if cfg.Auto.DrainTimeout <= 0 {
+		return config.DefaultMemoryAutoDrainTimeout
+	}
+	return cfg.Auto.DrainTimeout
+}
+
+func effectiveMemoryAutoDisableOnExternalContext(cfg config.MemoryConfig) bool {
+	return cfg.Auto.DisableOnExternalContext != nil && *cfg.Auto.DisableOnExternalContext
+}
+
 func lastTurnMessages(messages []message.Message) []message.Message {
 	turns := userTurnWindows(messages)
 	if len(turns) == 0 {
@@ -252,6 +448,73 @@ func lastTurnMessages(messages []message.Message) []message.Message {
 	}
 	last := turns[len(turns)-1]
 	return cloneMessages(messages[last.start:last.end])
+}
+
+func turnHasRememberToolUse(messages []message.Message) bool {
+	for _, msg := range messages {
+		for _, block := range msg.Content {
+			if block.Type == message.BlockToolUse && block.ToolName == "remember" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func turnHasExternalContextToolUse(messages []message.Message) bool {
+	for _, msg := range messages {
+		for _, block := range msg.Content {
+			if block.Type != message.BlockToolUse {
+				continue
+			}
+			name := strings.TrimSpace(block.ToolName)
+			if strings.HasPrefix(name, "mcp__") ||
+				strings.HasPrefix(name, "web_") ||
+				strings.HasPrefix(name, "tool_search") ||
+				name == "search_query" ||
+				name == "web_search" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func memoryAutoStrongSignal(messages []message.Message) bool {
+	for _, msg := range messages {
+		if msg.Role != message.RoleUser {
+			continue
+		}
+		text := strings.ToLower(msg.Text())
+		for _, marker := range []string{
+			"remember",
+			"from now on",
+			"for future",
+			"next time",
+			"preference",
+			"prefer ",
+			"记住",
+			"记一下",
+			"以后",
+			"下次",
+		} {
+			if strings.Contains(text, marker) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func memoryAutoVisibleMessageCount(messages []message.Message) int {
+	count := 0
+	for _, msg := range messages {
+		switch msg.Role {
+		case message.RoleUser, message.RoleAssistant, message.RoleTool:
+			count++
+		}
+	}
+	return count
 }
 
 func extractJSONObject(text string) string {

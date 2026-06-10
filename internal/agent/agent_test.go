@@ -2803,6 +2803,9 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 	if _, err := a.Run(context.Background(), Request{SessionID: "sess_auto_mem", Prompt: "remember build command", Turn: 1}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory: %v", err)
+	}
 	if len(summary.requests) != 1 || summary.requests[0].Model != "small" {
 		t.Fatalf("summary requests = %#v", summary.requests)
 	}
@@ -2863,6 +2866,151 @@ func TestAgentAutoMemorySkipsPlanMode(t *testing.T) {
 	}
 	if got := memory.Read(ws, 0); got != "" {
 		t.Fatalf("plan mode should not write memory:\n%s", got)
+	}
+}
+
+func TestAgentAutoMemoryDoesNotRunForSimpleSingleTurn(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("hello"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("memory should not run for a simple single turn")},
+	}}
+	enabled := true
+	a, err := New(Options{
+		Provider:        main,
+		Tools:           reg,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		WorkspaceRoot:   ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled: &enabled,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_simple_mem", Prompt: "hi", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory: %v", err)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+	}
+	if got := memory.Read(ws, 0); got != "" {
+		t.Fatalf("simple turn should not write memory:\n%s", got)
+	}
+}
+
+func TestAgentAutoMemoryBatchesTurnsBeforeExtraction(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("first answer"), fake.Done()},
+		{fake.TextDelta("second answer"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta(`{"memories":[{"category":"project","text":"test command is ` + "`make test`" + `"}]}`), fake.Done()},
+	}}
+	enabled := true
+	a, err := New(Options{
+		Provider:        main,
+		Tools:           reg,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		WorkspaceRoot:   ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 2,
+			MinNewMessages:          99,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_batch_mem", Prompt: "inspect build setup", Turn: 1})
+	if err != nil {
+		t.Fatalf("Run turn 1: %v", err)
+	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory turn 1: %v", err)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests after turn 1 = %d, want 0", len(summary.requests))
+	}
+	if _, err := a.Run(context.Background(), Request{
+		SessionID: "sess_batch_mem",
+		Prompt:    "inspect tests",
+		Turn:      2,
+		History:   res.Messages,
+	}); err != nil {
+		t.Fatalf("Run turn 2: %v", err)
+	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory turn 2: %v", err)
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("summary requests after turn 2 = %d, want 1", len(summary.requests))
+	}
+	rendered := renderMessages(summary.requests[0].Messages)
+	if !strings.Contains(rendered, "first answer") || !strings.Contains(rendered, "second answer") {
+		t.Fatalf("memory extraction did not receive batched turns:\n%s", rendered)
+	}
+}
+
+func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	if err := reg.Register(&namedSafeTool{name: "mcp__remote__lookup"}); err != nil {
+		t.Fatalf("register mcp tool: %v", err)
+	}
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("mcp__remote__lookup", map[string]any{"query": "latest"}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.Error("memory should not run after external context")},
+	}}
+	enabled := true
+	disableExternal := true
+	a, err := New(Options{
+		Provider:        main,
+		Tools:           reg,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		WorkspaceRoot:   ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                  &enabled,
+			DisableOnExternalContext: &disableExternal,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_external_mem", Prompt: "remember this external result", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory: %v", err)
+	}
+	if len(summary.requests) != 0 {
+		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
 	}
 }
 

@@ -160,6 +160,7 @@ type tuiAgentRunner struct {
 	smallModels          []string
 	summaryUsesCurrent   bool
 	contextCfg           config.ContextConfig
+	memoryAutoScheduler  *agent.MemoryAutoScheduler
 	tools                *toolRuntime
 	mode                 execution.Mode
 	modeMu               sync.RWMutex
@@ -257,6 +258,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		smallModels:          smallModels,
 		summaryUsesCurrent:   summarySetup.UsesCurrentModel,
 		contextCfg:           cfg.Context,
+		memoryAutoScheduler:  agent.NewMemoryAutoScheduler(),
 		tools:                tools,
 		mode:                 mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
@@ -626,28 +628,29 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		fileHistory:      fileHistory,
 	}
 	a, err := agent.New(agent.Options{
-		Provider:         r.provider,
-		Tools:            r.tools.Registry,
-		Permission:       r.permission,
-		Rollout:          r.state.rollout,
-		Model:            r.model,
-		Mode:             r.currentMode(),
-		ModeFunc:         r.currentMode,
-		MaxTurns:         r.maxTurns,
-		LimitAsker:       r.limitAsker,
-		Reasoning:        resolvedReasoning,
-		MaxContextTokens: maxContext,
-		SummaryProvider:  r.summaryProvider,
-		SummaryModel:     r.summaryModel,
-		Context:          r.contextCfg,
-		Prompt:           r.cfg.Prompt,
-		Runtime:          runtime,
-		Hooks:            hooksRunner,
-		WorkspaceRoot:    r.tools.Workspace,
-		MemoryMaxChars:   r.cfg.Memory.MaxChars,
-		Memory:           r.cfg.Memory,
-		SubagentRunner:   subRunner,
-		FileHistory:      fileHistory,
+		Provider:            r.provider,
+		Tools:               r.tools.Registry,
+		Permission:          r.permission,
+		Rollout:             r.state.rollout,
+		Model:               r.model,
+		Mode:                r.currentMode(),
+		ModeFunc:            r.currentMode,
+		MaxTurns:            r.maxTurns,
+		LimitAsker:          r.limitAsker,
+		Reasoning:           resolvedReasoning,
+		MaxContextTokens:    maxContext,
+		SummaryProvider:     r.summaryProvider,
+		SummaryModel:        r.summaryModel,
+		Context:             r.contextCfg,
+		Prompt:              r.cfg.Prompt,
+		Runtime:             runtime,
+		Hooks:               hooksRunner,
+		WorkspaceRoot:       r.tools.Workspace,
+		MemoryMaxChars:      r.cfg.Memory.MaxChars,
+		Memory:              r.cfg.Memory,
+		MemoryAutoScheduler: r.memoryAutoScheduler,
+		SubagentRunner:      subRunner,
+		FileHistory:         fileHistory,
 		Events: func(event agent.Event) {
 			sendTUIEvent(ctx, events, convertAgentEvent(event))
 		},

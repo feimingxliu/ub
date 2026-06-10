@@ -51,7 +51,14 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Memory.Auto.Enabled == nil ||
 		!*cfg.Memory.Auto.Enabled ||
 		cfg.Memory.Auto.MaxCandidates != DefaultMemoryAutoMaxCandidates ||
-		cfg.Memory.Auto.MaxPromptChars != DefaultMemoryAutoMaxPromptChars {
+		cfg.Memory.Auto.MaxPromptChars != DefaultMemoryAutoMaxPromptChars ||
+		cfg.Memory.Auto.Trigger != DefaultMemoryAutoTrigger ||
+		cfg.Memory.Auto.MinTurnsSinceExtraction != DefaultMemoryAutoMinTurnsSinceExtraction ||
+		cfg.Memory.Auto.MinNewMessages != DefaultMemoryAutoMinNewMessages ||
+		cfg.Memory.Auto.MinInterval != DefaultMemoryAutoMinInterval ||
+		cfg.Memory.Auto.DrainTimeout != DefaultMemoryAutoDrainTimeout ||
+		cfg.Memory.Auto.DisableOnExternalContext == nil ||
+		!*cfg.Memory.Auto.DisableOnExternalContext {
 		t.Fatalf("memory defaults not applied: %#v", cfg.Memory)
 	}
 	if !cfg.Cleanup.CleanupEnabled() ||
@@ -72,8 +79,14 @@ func TestLoadFromDirsParsesMemoryConfig(t *testing.T) {
   max_chars: 8000
   auto:
     enabled: false
+    trigger: immediate
     max_candidates: 2
     max_prompt_chars: 4096
+    min_turns_since_extraction: 4
+    min_new_messages: 8
+    min_interval: 15m
+    drain_timeout: 5s
+    disable_on_external_context: false
 `)
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
@@ -85,7 +98,14 @@ func TestLoadFromDirsParsesMemoryConfig(t *testing.T) {
 		cfg.Memory.Auto.Enabled == nil ||
 		*cfg.Memory.Auto.Enabled ||
 		cfg.Memory.Auto.MaxCandidates != 2 ||
-		cfg.Memory.Auto.MaxPromptChars != 4096 {
+		cfg.Memory.Auto.MaxPromptChars != 4096 ||
+		cfg.Memory.Auto.Trigger != "immediate" ||
+		cfg.Memory.Auto.MinTurnsSinceExtraction != 4 ||
+		cfg.Memory.Auto.MinNewMessages != 8 ||
+		cfg.Memory.Auto.MinInterval.String() != "15m0s" ||
+		cfg.Memory.Auto.DrainTimeout.String() != "5s" ||
+		cfg.Memory.Auto.DisableOnExternalContext == nil ||
+		*cfg.Memory.Auto.DisableOnExternalContext {
 		t.Fatalf("memory = %#v", cfg.Memory)
 	}
 }
