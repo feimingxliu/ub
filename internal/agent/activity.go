@@ -296,6 +296,90 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 	return truncateActivitySummary(strings.Join(parts, ", "))
 }
 
+// ToolInputDetail returns a readable expanded view for high-value tool inputs
+// without dumping the raw tool-call JSON into the activity stream.
+func ToolInputDetail(name string, raw json.RawMessage) string {
+	body, ok := decodeToolInput(raw)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	addBlock := func(label, key string) {
+		value, ok := preservedStringField(body, key)
+		if !ok {
+			return
+		}
+		value = redactText(key, strings.TrimRight(value, " \t\r\n"))
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		writeDetailBlock(&b, label, value)
+	}
+	addLine := func(label, key string) {
+		value, ok := rawStringField(body, key)
+		if !ok {
+			return
+		}
+		value = redactText(key, value)
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		writeDetailLine(&b, label, value)
+	}
+
+	switch strings.TrimSpace(name) {
+	case "bash", "job_run":
+		addBlock("command", "command")
+		addLine("cwd", "cwd")
+		addLine("timeout_ms", "timeout_ms")
+	case "task":
+		addBlock("prompt", "prompt")
+		addLine("max_turns", "max_turns")
+	default:
+		if _, hasCommand := body["command"]; hasCommand {
+			addBlock("command", "command")
+			addLine("cwd", "cwd")
+			addLine("timeout_ms", "timeout_ms")
+		} else if _, hasPrompt := body["prompt"]; hasPrompt {
+			addBlock("prompt", "prompt")
+			addLine("max_turns", "max_turns")
+		}
+	}
+	return strings.TrimRight(b.String(), " \t\r\n")
+}
+
+func decodeToolInput(raw json.RawMessage) (map[string]any, bool) {
+	if len(raw) == 0 {
+		return map[string]any{}, true
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, false
+	}
+	if body == nil {
+		body = map[string]any{}
+	}
+	return body, true
+}
+
+func writeDetailBlock(b *strings.Builder, label, value string) {
+	if b.Len() > 0 {
+		b.WriteString("\n\n")
+	}
+	b.WriteString(label)
+	b.WriteString(":\n")
+	b.WriteString(value)
+}
+
+func writeDetailLine(b *strings.Builder, label, value string) {
+	if b.Len() > 0 {
+		b.WriteString("\n")
+	}
+	b.WriteString(label)
+	b.WriteString(": ")
+	b.WriteString(value)
+}
+
 func summarizeToolResult(result tool.Result) string {
 	if len(result.Files) > 0 {
 		paths := make([]string, 0, min(len(result.Files), 3))
@@ -332,11 +416,33 @@ func summarizeToolResult(result tool.Result) string {
 // ToolActivityResult returns the short title summary and expandable detail used
 // by live TUI events and rollout resume reconstruction.
 func ToolActivityResult(toolName, inputSummary string, result tool.Result) (string, string) {
+	return toolActivityResult(toolName, inputSummary, "", result)
+}
+
+// ToolActivityResultWithInput includes the expanded invocation details that are
+// useful after the single-line activity summary has been truncated.
+func ToolActivityResultWithInput(toolName string, input json.RawMessage, result tool.Result) (string, string) {
+	return toolActivityResult(toolName, SummarizeToolInput(toolName, input), ToolInputDetail(toolName, input), result)
+}
+
+func toolActivityResult(toolName, inputSummary, inputDetail string, result tool.Result) (string, string) {
 	summary := strings.TrimSpace(inputSummary)
 	if len(result.Files) > 0 || summary == "" {
 		summary = summarizeToolResult(result)
 	}
-	return truncateActivitySummary(summary), truncateToolActivityDetail(toolActivityDetail(toolName, result))
+	detail := joinActivityDetails(inputDetail, toolActivityDetail(toolName, result))
+	return truncateActivitySummary(summary), truncateToolActivityDetail(detail)
+}
+
+func joinActivityDetails(parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimRight(part, " \t\r\n")
+		if strings.TrimSpace(part) != "" {
+			out = append(out, part)
+		}
+	}
+	return strings.Join(out, "\n\n")
 }
 
 func toolActivityDetail(toolName string, result tool.Result) string {
@@ -484,13 +590,21 @@ func positiveIntField(body map[string]any, key string) (int, bool) {
 }
 
 func commandStringField(body map[string]any, key string) (string, bool) {
+	value, ok := preservedStringField(body, key)
+	if !ok {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	return value, value != ""
+}
+
+func preservedStringField(body map[string]any, key string) (string, bool) {
 	value, ok := body[key]
 	if !ok || value == nil {
 		return "", false
 	}
 	if typed, ok := value.(string); ok {
-		typed = strings.TrimSpace(typed)
-		return typed, typed != ""
+		return typed, strings.TrimSpace(typed) != ""
 	}
 	return rawStringField(body, key)
 }

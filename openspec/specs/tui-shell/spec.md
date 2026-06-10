@@ -203,6 +203,7 @@ TUI SHALL 在消息列表中展示 Agent activity 事件，包括 provider think
 - **WHEN** TUI 渲染消息列表
 - **THEN** 输出 MUST 显示工具名、状态和短摘要
 - **THEN** 输出 MUST NOT 直接展示完整 tool input JSON
+- **THEN** 展开命令型工具 activity 时 MUST 以可读文本展示完整命令或提示输入,而不是只展示截断后的短摘要
 - **THEN** 同一个 tool call MUST NOT 因状态变化产生多条重复活动消息
 
 #### Scenario: thinking 与 tool 分区展示

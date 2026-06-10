@@ -1574,6 +1574,39 @@ func TestToolActivitySummaryTaskAndUnknownTools(t *testing.T) {
 	}
 }
 
+func TestToolInputDetailPreservesFullShellCommand(t *testing.T) {
+	input, err := json.Marshal(map[string]any{
+		"command":    "printf 'first line'\nprintf 'second line'\n",
+		"cwd":        "internal/agent",
+		"timeout_ms": 1500,
+	})
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+
+	summary := SummarizeToolInput("bash", input)
+	if strings.Contains(summary, "second line") {
+		t.Fatalf("summary should stay single-line and compact: %q", summary)
+	}
+
+	detail := ToolInputDetail("bash", input)
+	for _, want := range []string{"command:\nprintf 'first line'\nprintf 'second line'", "cwd: internal/agent", "timeout_ms: 1500"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail missing %q:\n%s", want, detail)
+		}
+	}
+}
+
+func TestToolInputDetailRedactsSensitiveCommand(t *testing.T) {
+	detail := ToolInputDetail("bash", json.RawMessage(`{"command":"curl -H 'Authorization: Bearer secret-token' https://example.test"}`))
+	if strings.Contains(detail, "secret-token") || strings.Contains(detail, "Authorization") {
+		t.Fatalf("detail leaked secret:\n%s", detail)
+	}
+	if !strings.Contains(detail, "command:\n[redacted]") {
+		t.Fatalf("detail = %q, want redacted command block", detail)
+	}
+}
+
 func TestToolActivitySummaryMultiEdit(t *testing.T) {
 	summary := SummarizeToolInput("multiedit", json.RawMessage(`{"edits":[{"path":"a.go","old":"x","new":"y"},{"path":"a.go","old":"y","new":"z"},{"path":"b.go","old":"x","new":"y"}]}`))
 	if !strings.Contains(summary, "edits=3") || !strings.Contains(summary, "files=2") {
@@ -1632,6 +1665,20 @@ func TestToolActivityResultFormatsShellDetail(t *testing.T) {
 	for _, want := range []string{"exit_code=0", "duration_ms=12", "--- stdout ---", "ok", "--- stderr ---", "warn"} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail missing %q: %q", want, detail)
+		}
+	}
+}
+
+func TestToolActivityResultWithInputIncludesShellCommand(t *testing.T) {
+	input := json.RawMessage(`{"command":"go test ./...\nprintf 'done'","cwd":"internal/agent"}`)
+	content := "<shell_metadata>\nexit_code=0\nduration_ms=12\n</shell_metadata>\n--- stdout ---\nok\n--- stderr ---\n"
+	summary, detail := ToolActivityResultWithInput("bash", input, tool.Result{Content: content})
+	if summary != "cmd=go test ./..., cwd=internal/agent" {
+		t.Fatalf("summary = %q, want compact first-line command", summary)
+	}
+	for _, want := range []string{"command:\ngo test ./...\nprintf 'done'", "cwd: internal/agent", "exit_code=0", "--- stdout ---", "ok"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail missing %q:\n%s", want, detail)
 		}
 	}
 }

@@ -1069,6 +1069,34 @@ func TestToolPartialOutputUpdatesRunningToolDetail(t *testing.T) {
 	}
 }
 
+func TestToolInputDetailDoesNotDuplicateBeforePartialOutput(t *testing.T) {
+	model := NewModel(Options{})
+	model.running = true
+	model.runID = 3
+	model.events = make(chan Event)
+	commandDetail := "command:\ngo test ./...\nprintf 'done'"
+
+	for _, event := range []Event{
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "queued", Summary: "cmd=go test ./...", Content: commandDetail},
+		{Type: EventActivity, ActivityKind: "tool", ToolUseID: "call_1", ToolName: "bash", Status: "running", Summary: "cmd=go test ./...", Content: commandDetail},
+		{Type: EventToolPartialOutput, ToolUseID: "call_1", ToolName: "bash", Status: "stdout", Summary: "cmd=go test ./...", Content: "ok\n"},
+	} {
+		updated, cmd := model.Update(streamEventMsg{runID: 3, ok: true, event: event})
+		if cmd == nil {
+			t.Fatal("tool activity event should continue waiting for stream events")
+		}
+		model = assertModel(t, updated)
+	}
+
+	item := model.messages.items[0]
+	if strings.Count(item.detail, "command:\n") != 1 {
+		t.Fatalf("tool input detail duplicated:\n%s", item.detail)
+	}
+	if item.detail != commandDetail+"\nok\n" {
+		t.Fatalf("tool detail = %q, want command detail followed by partial output", item.detail)
+	}
+}
+
 func TestToolPartialOutputSurvivesGenericFinalDetail(t *testing.T) {
 	model := NewModel(Options{})
 	model.running = true

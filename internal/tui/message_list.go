@@ -1629,13 +1629,30 @@ func mergeToolMessage(existing, incoming message) message {
 	if incoming.detail == "" {
 		incoming.detail = existing.detail
 	} else if existing.detail != "" {
-		incoming.detail = truncateToolPartialPreview(existing.detail + incoming.detail)
+		if strings.TrimSpace(existing.detail) == strings.TrimSpace(incoming.detail) {
+			incoming.detail = existing.detail
+		} else {
+			incoming.detail = truncateToolPartialPreview(appendToolRunningDetail(existing.detail, incoming.detail))
+		}
 	}
 	if genericRunningToolTitle(incoming) && strings.TrimSpace(existing.title) != "" {
 		incoming.title = existing.title
 		incoming.text = existing.text
 	}
 	return incoming
+}
+
+func appendToolRunningDetail(existing, incoming string) string {
+	if existing == "" {
+		return incoming
+	}
+	if incoming == "" {
+		return existing
+	}
+	if strings.HasSuffix(existing, "\n") || strings.HasPrefix(incoming, "\n") {
+		return existing + incoming
+	}
+	return existing + "\n" + incoming
 }
 
 func shouldKeepExistingToolDetail(existing, incoming message) bool {

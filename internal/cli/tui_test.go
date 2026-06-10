@@ -934,6 +934,9 @@ func TestMessagesForTUIRestoresShellActivityWithoutMetadataTags(t *testing.T) {
 	if strings.Contains(got[1].Content, "<shell_metadata>") || !strings.Contains(got[1].Content, "ok") {
 		t.Fatalf("shell detail = %q, want formatted output without metadata tags", got[1].Content)
 	}
+	if !strings.Contains(got[1].Content, "command:\necho ok") {
+		t.Fatalf("shell detail = %q, want restored command input", got[1].Content)
+	}
 }
 
 func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {

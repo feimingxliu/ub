@@ -1617,8 +1617,7 @@ func appendToolResultForTUI(out []tui.InitialMessage, toolUses map[string]messag
 	if result.IsError {
 		status = "failed"
 	}
-	inputSummary := agent.SummarizeToolInput(toolName, toolUse.Input)
-	summary, detail := agent.ToolActivityResult(toolName, inputSummary, result)
+	summary, detail := agent.ToolActivityResultWithInput(toolName, toolUse.Input, result)
 	return append(out, tui.InitialMessage{
 		Turn:         turn,
 		ActivityKind: "tool",

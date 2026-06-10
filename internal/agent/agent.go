@@ -574,7 +574,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			}
 			calls = append(calls, call)
 			blocks = append(blocks, message.ToolUseBlock(call.ID, call.Name, call.Input))
-			a.emitToolActivity(call, "queued", SummarizeToolInput(call.Name, call.Input), "", false)
+			a.emitToolActivity(call, "queued", SummarizeToolInput(call.Name, call.Input), ToolInputDetail(call.Name, call.Input), false)
 		case provider.EventUsage:
 			if event.Usage != nil {
 				observeInputUsage(a.model, estimatedTokens, event.Usage.InputTokens)
@@ -684,20 +684,20 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 			reason = "pre_tool_call hook blocked"
 		}
 		result := tool.Result{Content: fmt.Sprintf("pre_tool_call hook blocked %s: %s", call.Name, reason), IsError: true}
-		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 		a.emitToolActivity(call, "blocked", summary, detail, true)
 		return result
 	}
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
 		result := tool.Result{Content: fmt.Sprintf("tool %q not found", call.Name), IsError: true}
-		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 		a.emitToolActivity(call, "failed", summary, detail, true)
 		return result
 	}
 	if !toolAvailableInMode(call.Name, a.currentMode()) {
 		result := tool.Result{Content: toolUnavailableInModeMessage(call.Name, a.currentMode()), IsError: true}
-		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 		a.emitToolActivity(call, "failed", summary, detail, true)
 		return result
 	}
@@ -706,13 +706,13 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 		pv, err := previewable.Preview(ctx, call.Input)
 		if err != nil {
 			result := tool.Result{Content: fmt.Sprintf("preview %q: %v", call.Name, err), IsError: true}
-			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+			summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
 		preview = &pv
 	}
-	a.emitToolActivity(call, "running", SummarizeToolInput(call.Name, call.Input), "", false)
+	a.emitToolActivity(call, "running", SummarizeToolInput(call.Name, call.Input), ToolInputDetail(call.Name, call.Input), false)
 	if a.permission != nil {
 		approvalObserved := false
 		result, err := a.permission.Ask(ctx, permission.Request{
@@ -727,7 +727,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 		if err != nil {
 			a.recordPermissionActivity(ctx, sessionID, turn, call.Name, "permission", "error", err.Error(), false)
 			result := tool.Result{Content: fmt.Sprintf("permission %q: %v", call.Name, err), IsError: true}
-			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+			summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
@@ -740,7 +740,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 				reason = string(result.Decision)
 			}
 			result := tool.Result{Content: fmt.Sprintf("permission denied for %q: %s", call.Name, reason), IsError: true}
-			summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+			summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
@@ -754,7 +754,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	if err != nil {
 		result := tool.Result{Content: err.Error(), IsError: true}
 		result = a.limitToolResult(sessionID, call, result)
-		summary, detail := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+		summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 		a.emitToolActivity(call, "failed", summary, detail, true)
 		return result
 	}
@@ -771,7 +771,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	if result.IsError {
 		status = "failed"
 	}
-	summary, content := ToolActivityResult(call.Name, SummarizeToolInput(call.Name, call.Input), result)
+	summary, content := ToolActivityResultWithInput(call.Name, call.Input, result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
 	if call.Name == "remember" && !result.IsError {
 		a.recordRememberToolMemoryWrite(ctx, sessionID, turn, result)
