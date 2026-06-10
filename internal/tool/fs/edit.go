@@ -20,7 +20,7 @@ var readFileFn = os.ReadFile
 
 type editArgs struct {
 	Path       string       `json:"path"        jsonschema:"required,description=Path relative to workspace root."`
-	Old        string       `json:"old,omitempty" jsonschema:"description=Exact substring to replace, including tabs, spaces, and line endings. Required unless start_line is set."`
+	Old        string       `json:"old,omitempty" jsonschema:"description=Exact substring to replace, including tabs, spaces, and line endings. Required unless start_line is set. With start_line, old is an optional anchor and must match the selected complete lines when provided."`
 	New        string       `json:"new"         jsonschema:"required,description=Replacement text. With start_line, this replaces complete lines; omit a trailing newline to preserve the replaced range's line structure."`
 	ReplaceAll tool.BoolArg `json:"replace_all,omitempty" jsonschema:"description=Replace all matches when true. Defaults to false."`
 	StartLine  tool.IntArg  `json:"start_line,omitempty" jsonschema:"description=1-based first line to replace. When set, edit replaces complete lines and old may be omitted."`
@@ -47,7 +47,7 @@ func newEditToolWithNotifier(root string, notifier ChangeNotifier) *editTool {
 
 func (t *editTool) Name() string { return "edit" }
 func (t *editTool) Description() string {
-	return "Replace text inside a workspace file. Prefer exact old/new replacement for targeted edits; old must match exactly, including tabs, spaces, and line endings. If exact old is hard to reconstruct from numbered read output, use start_line/end_line to replace complete lines by line number. If old is not found, re-read a narrow range around the target and retry with exact text. Prefer this over bash/sed/python for file edits."
+	return "Replace text inside a workspace file. Prefer exact old/new replacement for targeted edits; old must match exactly, including tabs, spaces, and line endings. If exact old is hard to reconstruct from numbered read output, use start_line/end_line to replace complete lines by line number; when old is also provided in line mode, it anchors the selected lines and must match them. If old is not found or the line anchor mismatches, re-read a narrow range around the target and retry with exact text. Prefer this over bash/sed/python for file edits."
 }
 func (t *editTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *editTool) Risk() tool.Risk            { return tool.RiskWrite }
@@ -123,11 +123,26 @@ func applyLineEdit(content string, a editArgs) (string, int, error) {
 	start := spans[startLine-1].start
 	end := spans[endLine-1].end
 	oldRange := content[start:end]
-	replacement := normalizeReplacementLineEndings(a.New, dominantLineEnding(content))
+	eol := dominantLineEnding(content)
+	if a.Old != "" && !lineRangeOldMatches(oldRange, a.Old, eol) {
+		return "", 0, fmt.Errorf("edit: line range old mismatch; selected lines %d-%d do not match old; re-read a narrow range around the target and retry", startLine, endLine)
+	}
+	replacement := normalizeReplacementLineEndings(a.New, eol)
 	if replacement != "" && hasLineEnding(oldRange) && !hasLineEnding(replacement) {
-		replacement += dominantLineEnding(content)
+		replacement += eol
 	}
 	return content[:start] + replacement + content[end:], 1, nil
+}
+
+func lineRangeOldMatches(selected, old, eol string) bool {
+	if selected == old {
+		return true
+	}
+	normalizedOld := normalizeReplacementLineEndings(old, eol)
+	if selected == normalizedOld {
+		return true
+	}
+	return hasLineEnding(selected) && !hasLineEnding(normalizedOld) && selected == normalizedOld+eol
 }
 
 func contentLineSpans(content string) []lineSpan {

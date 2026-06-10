@@ -108,6 +108,27 @@ func TestMultiEdit_LineRangeStep(t *testing.T) {
 	}
 }
 
+func TestMultiEdit_LineRangeOldMismatchAbortsBatch(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.txt", "foo\n")
+	writeFile(t, root, "b.txt", "one\ntwo\n")
+
+	me := newMultiEditTool(root)
+	args := multiEditArgs{Edits: []editArgs{
+		{Path: "a.txt", Old: "foo", New: "FOO"},
+		{Path: "b.txt", StartLine: 1, Old: "two", New: "TWO"},
+	}}
+	_, err := execTool(t, me, args)
+	if err == nil || !strings.Contains(err.Error(), "line range old mismatch") {
+		t.Fatalf("expected line anchor mismatch, got: %v", err)
+	}
+	a, _ := os.ReadFile(filepath.Join(root, "a.txt"))
+	b, _ := os.ReadFile(filepath.Join(root, "b.txt"))
+	if string(a) != "foo\n" || string(b) != "one\ntwo\n" {
+		t.Fatalf("partial write happened: a=%q b=%q", a, b)
+	}
+}
+
 func TestMultiEdit_PreviewDoesNotMutate(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "a.txt", "foo\n")

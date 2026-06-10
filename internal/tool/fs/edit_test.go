@@ -100,6 +100,44 @@ func TestEdit_LineRangeReplacementAvoidsExactOldWhitespace(t *testing.T) {
 	}
 }
 
+func TestEdit_LineRangeOldAnchorsSelectedLines(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "anchor.go", "func before() {}\nfunc target() {}\n")
+	e := newEditTool(root)
+
+	if _, err := execTool(t, e, editArgs{
+		Path:      "anchor.go",
+		StartLine: 1,
+		Old:       "func target() {}",
+		New:       "func inserted() {}",
+	}); err == nil || !strings.Contains(err.Error(), "line range old mismatch") {
+		t.Fatalf("expected line anchor mismatch, got: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "anchor.go"))
+	if string(got) != "func before() {}\nfunc target() {}\n" {
+		t.Fatalf("disk changed on anchor mismatch: %q", got)
+	}
+}
+
+func TestEdit_LineRangeOldAnchorAllowsOmittedTrailingNewline(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "anchor.txt", "one\ntwo\n")
+	e := newEditTool(root)
+
+	if _, err := execTool(t, e, editArgs{
+		Path:      "anchor.txt",
+		StartLine: 2,
+		Old:       "two",
+		New:       "TWO",
+	}); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "anchor.txt"))
+	if string(got) != "one\nTWO\n" {
+		t.Fatalf("content mismatch: %q", got)
+	}
+}
+
 func TestEdit_LineRangeReplacementPreservesCRLF(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "win.txt", "one\r\ntwo\r\nthree\r\n")
