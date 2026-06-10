@@ -104,7 +104,7 @@ type ApprovalModelRefreshRunner interface {
 }
 
 // SmallModelControlRunner optionally lets slash commands update the small
-// model used by summary and auto memory.
+// model used by auto memory.
 type SmallModelControlRunner interface {
 	SetSmallModel(model string) error
 	SmallModel() string

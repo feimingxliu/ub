@@ -73,11 +73,12 @@ func (r *tuiAgentRunner) Rewind(ctx context.Context, req tui.RewindRequest) (tui
 	if err != nil {
 		return tui.SessionState{}, tui.RewindResult{}, err
 	}
-	history, nextTurn, err := readChatHistory(r.cmd, r.state.rollout, r.state.sessionID)
+	history, contextHistory, nextTurn, err := readChatHistory(r.cmd, r.state.rollout, r.state.sessionID)
 	if err != nil {
 		return tui.SessionState{}, tui.RewindResult{}, err
 	}
 	r.state.history = history
+	r.state.contextHistory = contextHistory
 	r.state.nextTurn = nextTurn
 	r.state.session.UpdatedAt = time.Now().UTC()
 	if err := r.state.store.UpdateSession(ctx, r.state.session); err != nil {

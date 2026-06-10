@@ -317,9 +317,10 @@ type ModelConfig struct {
 - Agent 每次发起 provider 请求前估算请求消息 token（含 tool schema），并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏用 `ctx est` 展示请求前估算，用 `ctx last` 展示 provider usage 的最近实际 input token
 - Agent 每次 provider 请求都会临时注入当前运行环境（workspace cwd、shell、OS）和路径规则，避免模型猜测 `/home/user` 等默认路径；该 runtime context 不写入 rollout，也不进入恢复后的历史消息
 - max context 优先读取 `providers.<name>.models.<model>.max_context_tokens`，未配置时回退 provider `Caps().MaxContextTokens`
-- 自动 summary 按 `estimated_input + context.reserve_output_tokens > max_context * context.trigger_ratio` 触发；TUI 的 `/compact` 可主动触发同一 summary 逻辑。最近原文保留使用 `context.keep_recent_turns` + 最近上下文 token budget，至少保留当前 user turn，且按完整 user turn 边界截断，避免孤立 tool_use/tool_result
+- 自动 summary 按 `estimated_input + context.reserve_output_tokens > max_context * context.trigger_ratio` 触发；summary 默认使用当前主对话模型，避免把决定后续上下文的高风险压缩交给小模型。如果 provider 仍返回可识别的上下文超限错误，Agent 会强制执行一次同一 summary 策略并重试同一轮请求，重试后仍失败则返回 provider 原始错误；TUI 的 `/compact` 可主动触发同一 summary 逻辑。最近原文保留使用 `context.keep_recent_turns` + 最近上下文 token budget，至少保留当前 user turn，且按完整 user turn 边界截断，避免孤立 tool_use/tool_result
+- summary prompt 自身也按 summary 模型的 context window 做预算控制：待摘要 conversation 超过预算时，Agent 只按完整 user turn 边界打包分块，再把块摘要递归合并，避免主模型已超限后 summary 模型继续收到同样超限的历史；单个 user turn 自身超预算时不做 message/字符级切碎，直接返回明确错误
 - tool result 在进入下一次 provider 请求和写入 rollout 前统一限幅：默认最多 12KiB/400 行模型可见内容；超限时完整输出写入 `$XDG_STATE_HOME/ub/tool_outputs/<session>/<tool_use>.txt`（否则 `~/.local/state/ub/...`），rollout 只保存 preview、`truncated`、`original_bytes`、`full_output_path`
-- 读取 rollout 历史时遇到 `Summary` 事件即从该 summary message 重新开始构造上下文，避免恢复 session 后重新带上已压缩旧消息
+- 读取 rollout 历史时保留完整可见 transcript，`Summary` 事件不作为用户/助手消息渲染；同时为 provider 请求单独构造 context history，遇到 `Summary` 事件即用事件中记录的 compacted messages（summary system message + 保留的最近原文窗口）替换请求上下文，避免恢复 session 后重新带上已压缩旧消息；旧 `Summary` 事件没有 compacted messages 时退回只使用 summary system message
 
 **重要的内部消息表示**：
 不要直接复用 anthropic / openai 的请求类型。在 `internal/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`；content block 包含 text / reasoning / image / tool_use / tool_result），各 provider 各自转换。理由：避免被某家 SDK 锁定。
@@ -390,7 +391,7 @@ CREATE INDEX idx_events_session ON events(session_id, turn, time);
 ```yaml
 default_provider: anthropic
 default_model: claude-sonnet-4-7   # 可省略；provider 可列模型时自动选第一个
-small_model: gpt-4o-mini           # 完整模型名；当前 provider 可用时用于 summary、生成标题、approval fallback
+small_model: gpt-4o-mini           # 完整模型名；当前 provider 可用时用于 auto memory、生成标题、approval fallback
 execution_mode: work               # work / plan / auto / full-access
 
 prompt:
@@ -577,7 +578,7 @@ UI 流程：
 
 **approval 模型切换规划**：`/approval-model [model]` 只影响 auto 模式的命令审批模型，不改变主对话模型。无参数时展示 approval provider 的候选模型；显式指定时必须通过候选列表校验；切换成功后重建 `permission.Manager` 内的 approval agent，并仅影响后续 tool approval。
 
-**small 模型切换规划**：`/small-model [model]` 只影响当前进程内 summary / auto memory 使用的模型，不改变主对话模型，也不写回配置文件。候选来自当前 provider 的完整模型字符串列表；显式指定时必须通过候选列表校验；切换成功后后续 compact 与 auto memory 使用该模型。
+**small 模型切换规划**：`/small-model [model]` 只影响当前进程内 auto memory 使用的模型，不改变主对话模型、compact summary 模型，也不写回配置文件。候选来自当前 provider 的完整模型字符串列表；显式指定时必须通过候选列表校验；切换成功后后续 auto memory 使用该模型。
 
 **auto memory 调度**：agent 成功 turn 结束时先发送 `EventDone`,再把本轮消息交给 `MemoryAutoScheduler`。调度器在前台只做低成本门控:plan 模式、空 workspace、显式 `remember` 已经写入的 turn、以及默认配置下包含 MCP / web / tool_search 等外部上下文工具的 turn 不进入自动抽取。其余消息按 `memory.auto.trigger`、累计 turn 数、累计可见消息数和最小间隔批量调度后台 small-model 抽取;正在抽取时只保留一个合并后的 pending job。TUI 复用 session 级 scheduler,不等待抽取完成;headless `ub run` 在主答案输出后按 `memory.auto.drain_timeout` 做 best-effort drain。实际写入仍走 `memory.AppendWithOutcome` 和 `memory_write` rollout 事件。
 

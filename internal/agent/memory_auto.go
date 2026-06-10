@@ -264,11 +264,11 @@ func (a *Agent) runAutoMemoryJob(ctx context.Context, sessionID string, turn int
 }
 
 func (a *Agent) generateAutoMemoryCandidates(ctx context.Context, turnMessages []message.Message) ([]autoMemoryCandidate, error) {
-	p := a.summaryProvider
+	p := a.autoMemoryProvider
 	if p == nil {
 		p = a.provider
 	}
-	model := strings.TrimSpace(a.summaryModel)
+	model := strings.TrimSpace(a.autoMemoryModel)
 	if model == "" {
 		model = a.model
 	}

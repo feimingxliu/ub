@@ -31,6 +31,88 @@ func init() {
 	})
 }
 
+func TestReadChatHistoryRestoresSummaryContextMessages(t *testing.T) {
+	temp := t.TempDir()
+	st, err := store.Open(filepath.Join(temp, "ub.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	now := time.Now().UTC()
+	if err := st.CreateSession(context.Background(), store.Session{
+		ID:        "sess_1",
+		Workspace: temp,
+		Title:     "summary resume",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		t.Fatalf("New rollout: %v", err)
+	}
+
+	oldEvent, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "old prompt"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	currentEvent, err := rollout.UserMessage("sess_1", 2, message.Text(message.RoleUser, "current prompt"))
+	if err != nil {
+		t.Fatalf("UserMessage current: %v", err)
+	}
+	compacted := []message.Message{
+		rollout.SummaryMessage("Earlier summary."),
+		message.Text(message.RoleUser, "current prompt"),
+	}
+	summaryEvent, err := rollout.SummaryWithMessages("sess_1", 2, "Earlier summary.", compacted, 2, 1, 100)
+	if err != nil {
+		t.Fatalf("SummaryWithMessages: %v", err)
+	}
+	finalEvent, err := rollout.AssistantMessage("sess_1", 2, message.Text(message.RoleAssistant, "final answer"))
+	if err != nil {
+		t.Fatalf("AssistantMessage: %v", err)
+	}
+	for _, event := range []rollout.Event{oldEvent, currentEvent, summaryEvent, finalEvent} {
+		if err := ro.Append(context.Background(), event); err != nil {
+			t.Fatalf("Append %s: %v", event.Type, err)
+		}
+	}
+
+	history, contextHistory, nextTurn, err := readChatHistory(nil, ro, "sess_1")
+	if err != nil {
+		t.Fatalf("readChatHistory: %v", err)
+	}
+	if nextTurn != 3 {
+		t.Fatalf("nextTurn = %d, want 3", nextTurn)
+	}
+	if len(history) != 3 {
+		t.Fatalf("history len = %d, want 3: %#v", len(history), history)
+	}
+	if history[0].Role != message.RoleUser || history[0].Text() != "old prompt" {
+		t.Fatalf("history[0] = %#v, want old prompt", history[0])
+	}
+	if history[1].Role != message.RoleUser || history[1].Text() != "current prompt" {
+		t.Fatalf("history[1] = %#v, want kept current prompt", history[1])
+	}
+	if history[2].Role != message.RoleAssistant || history[2].Text() != "final answer" {
+		t.Fatalf("history[2] = %#v, want final answer", history[2])
+	}
+	if len(contextHistory) != 3 {
+		t.Fatalf("context history len = %d, want 3: %#v", len(contextHistory), contextHistory)
+	}
+	if contextHistory[0].Role != message.RoleSystem || !strings.Contains(contextHistory[0].Text(), "Earlier summary.") {
+		t.Fatalf("contextHistory[0] = %#v, want summary message", contextHistory[0])
+	}
+	if contextHistory[1].Role != message.RoleUser || contextHistory[1].Text() != "current prompt" {
+		t.Fatalf("contextHistory[1] = %#v, want current prompt", contextHistory[1])
+	}
+	if contextHistory[2].Role != message.RoleAssistant || contextHistory[2].Text() != "final answer" {
+		t.Fatalf("contextHistory[2] = %#v, want final answer", contextHistory[2])
+	}
+}
+
 func TestRunStartupCleanupPrunesOldSessions(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `default_model: fake/test-model

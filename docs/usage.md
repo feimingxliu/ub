@@ -107,9 +107,9 @@
 | `/model` | `[model]` | 无参数列当前 provider 下可用 model；带参数切换 |
 | `/effort` | `[level]` | 切换 reasoning effort（`none` / `minimal` / `low` / `medium` / `high` / `xhigh`），仅对支持 reasoning 的模型生效 |
 | `/approval-model` | `[model]` | 设置 auto 模式下用作审批 agent 的模型，无参数列候选；不影响主对话 model |
-| `/small-model` | `[model]` | 设置 summary / auto memory 使用的当前 provider 模型，无参数列候选；不影响主对话 model |
+| `/small-model` | `[model]` | 设置 auto memory 使用的当前 provider 模型，无参数列候选；不影响主对话 model 或 compact summary |
 | `/mode` | `<work\|plan\|auto\|full-access>` | 切换执行模式（也可按 `Shift+Tab` 循环切） |
-| `/compact` | — | 主动触发上下文压缩（用 `small_model` 生成摘要） |
+| `/compact` | — | 主动触发上下文压缩（默认用当前主模型生成摘要） |
 | `/btw` | `[question]` | 打开独立 BTW 视图；带问题时立即旁路询问，不排队、不打断当前 turn、不写入主历史。回答按普通助手消息 Markdown 渲染；视图内直接输入追问并按 `Enter` 继续，底部显示 BTW 专属状态行（`answering` 表示模型回答中，`idle` 表示可继续追问），`PgUp`/`PgDown` 或滚轮只滚动 BTW 输出，`Esc` 返回主对话并清空 BTW 历史，`Ctrl+Y` 复制最新答案，`Ctrl+U` 清空当前记录并留在 BTW |
 | `/profile` | `<name>` | 显示切换 profile 的提示（需要重启 ub 才生效，因为 profile 影响启动期加载） |
 
@@ -185,10 +185,16 @@ permissions:
 
 每次发请求前，agent 会估算 `(input tokens + reserve_output_tokens) / model.max_context`。超过阈值（默认 0.8）触发：
 
-1. 用当前 provider 可用的 `small_model` 跑摘要 prompt 模板；若未配置或该 provider 明确不可用，则复用当前模型
+1. 用当前主对话模型跑摘要 prompt 模板
 2. 保留最近 `keep_recent_turns` 个完整 user turn（按 token budget 截断，但按 user turn 边界对齐）
 3. tool result 默认限幅 12 KiB / 400 行，完整输出落到 `$XDG_STATE_HOME/ub/tool-output/`，rollout 里只存 preview + truncation metadata
 4. rollout 写一条 `Summary` 事件
+
+压缩不会删除或隐藏 session 里的原始对话消息。恢复 session 时，TUI 仍按完整 transcript 展示；只是下一次发送给 provider 的请求上下文会从最近的 summary + 保留原文窗口开始。
+
+如果本地估算没有提前触发，但 provider 返回可识别的上下文超限错误，agent 会强制执行一次同样的压缩流程并重试同一轮请求。重试后仍超限或仍失败时，ub 返回 provider 的原始错误，避免在失败循环里反复摘要。
+
+压缩时不会把全部待压缩历史无条件一次性丢给 summary 模型。若 summary prompt 本身超过 summary 模型预算，agent 会按完整 user turn 分块摘要，再合并这些块摘要。单个 user turn 自身超预算时，ub 会返回明确错误，而不是按 message 或字符切碎语义。
 
 ### 6.2 手动压缩
 

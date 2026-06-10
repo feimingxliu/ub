@@ -157,8 +157,10 @@ type tuiAgentRunner struct {
 	approvalReasoning    reasoning.Config
 	summaryProvider      provider.Provider
 	summaryModel         string
+	autoMemoryProvider   provider.Provider
+	autoMemoryModel      string
 	smallModels          []string
-	summaryUsesCurrent   bool
+	smallUsesCurrent     bool
 	contextCfg           config.ContextConfig
 	memoryAutoScheduler  *agent.MemoryAutoScheduler
 	tools                *toolRuntime
@@ -217,7 +219,11 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	smallModels := mergeModelCandidates(summarySetup.Model, []string{model}, models)
+	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	if err != nil {
+		return nil, err
+	}
+	smallModels := mergeModelCandidates(autoMemorySetup.Model, []string{model}, models)
 	tools, err := newToolRuntime(cmd.Context(), cfg)
 	if err != nil {
 		return nil, err
@@ -255,8 +261,10 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		approvalReasoning:    cfg.ApprovalAgent.Reasoning,
 		summaryProvider:      summarySetup.Provider,
 		summaryModel:         summarySetup.Model,
+		autoMemoryProvider:   autoMemorySetup.Provider,
+		autoMemoryModel:      autoMemorySetup.Model,
 		smallModels:          smallModels,
-		summaryUsesCurrent:   summarySetup.UsesCurrentModel,
+		smallUsesCurrent:     autoMemorySetup.UsesCurrentModel,
 		contextCfg:           cfg.Context,
 		memoryAutoScheduler:  agent.NewMemoryAutoScheduler(),
 		tools:                tools,
@@ -288,16 +296,18 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		return err
 	}
 	result, err := a.Run(ctx, agent.Request{
-		SessionID: r.state.sessionID,
-		Turn:      r.state.nextTurn,
-		History:   r.state.history,
-		Prompt:    prompt,
+		SessionID:      r.state.sessionID,
+		Turn:           r.state.nextTurn,
+		History:        r.state.history,
+		ContextHistory: r.state.contextHistory,
+		Prompt:         prompt,
 	})
 	if err != nil {
 		_ = finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 		return err
 	}
 	r.state.history = result.Messages
+	r.state.contextHistory = result.ContextMessages
 	r.state.nextTurn++
 	return finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 }
@@ -480,7 +490,7 @@ func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) e
 		return err
 	}
 	if !result.Noop {
-		r.state.history = result.Messages
+		r.state.contextHistory = result.Messages
 	}
 	return finishChatSession(r.cmd, r.state, "", r.providerName, r.model)
 }
@@ -641,6 +651,8 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		MaxContextTokens:    maxContext,
 		SummaryProvider:     r.summaryProvider,
 		SummaryModel:        r.summaryModel,
+		AutoMemoryProvider:  r.autoMemoryProvider,
+		AutoMemoryModel:     r.autoMemoryModel,
 		Context:             r.contextCfg,
 		Prompt:              r.cfg.Prompt,
 		Runtime:             runtime,
@@ -924,10 +936,11 @@ func (r *tuiAgentRunner) SetModel(model string) error {
 	r.models = candidates
 	r.model = model
 	r.models = appendModelCandidate(r.models, model)
-	if r.summaryUsesCurrent {
-		r.summaryModel = model
+	r.summaryModel = model
+	if r.smallUsesCurrent {
+		r.autoMemoryModel = model
 	}
-	r.smallModels = mergeModelCandidates(r.summaryModel, []string{r.model}, r.smallModels, r.models)
+	r.smallModels = mergeModelCandidates(r.autoMemoryModel, []string{r.model}, r.smallModels, r.models)
 	r.refreshReasoning()
 	return r.persistSessionProviderModel(r.cmd.Context())
 }
@@ -993,6 +1006,10 @@ func (r *tuiAgentRunner) setProviderModel(ctx context.Context, providerName, mod
 	if err != nil {
 		return tui.ProviderSelection{}, err
 	}
+	autoMemorySetup, err := newAutoMemorySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel)
+	if err != nil {
+		return tui.ProviderSelection{}, err
+	}
 	approvalSetup, err := newApprovalAgentSetup(r.cmd.Context(), r.cfg, providerName, selectedModel)
 	if err != nil {
 		return tui.ProviderSelection{}, err
@@ -1005,8 +1022,10 @@ func (r *tuiAgentRunner) setProviderModel(ctx context.Context, providerName, mod
 	r.efforts = modelinfo.EffortOptions(info)
 	r.summaryProvider = summarySetup.Provider
 	r.summaryModel = summarySetup.Model
-	r.smallModels = mergeModelCandidates(summarySetup.Model, []string{selectedModel}, models)
-	r.summaryUsesCurrent = summarySetup.UsesCurrentModel
+	r.autoMemoryProvider = autoMemorySetup.Provider
+	r.autoMemoryModel = autoMemorySetup.Model
+	r.smallModels = mergeModelCandidates(autoMemorySetup.Model, []string{selectedModel}, models)
+	r.smallUsesCurrent = autoMemorySetup.UsesCurrentModel
 	r.approvalProviderName = approvalSetup.ProviderName
 	r.approvalProviderCfg = approvalSetup.ProviderConfig
 	r.approvalModel = approvalSetup.Model
@@ -1107,12 +1126,12 @@ func (r *tuiAgentRunner) SetSmallModel(model string) error {
 	if r.cmd != nil {
 		ctx = r.cmd.Context()
 	}
-	r.smallModels = mergeModelCandidates(r.summaryModel, []string{r.model}, r.smallModels, r.providerModels(ctx, r.providerName, r.providerCfg, ""))
+	r.smallModels = mergeModelCandidates(r.autoMemoryModel, []string{r.model}, r.smallModels, r.providerModels(ctx, r.providerName, r.providerCfg, ""))
 	if !modelInList(r.smallModels, model) {
 		return fmt.Errorf("small model %q is not available for the current provider", model)
 	}
-	r.summaryModel = model
-	r.summaryUsesCurrent = false
+	r.autoMemoryModel = model
+	r.smallUsesCurrent = false
 	r.smallModels = appendModelCandidate(r.smallModels, model)
 	return nil
 }
@@ -1121,7 +1140,7 @@ func (r *tuiAgentRunner) RefreshSmallModels(ctx context.Context) ([]string, erro
 	if r == nil || r.providerName == "" {
 		return nil, fmt.Errorf("small model switching is unavailable")
 	}
-	r.smallModels = mergeModelCandidates(r.summaryModel, []string{r.model}, r.providerModels(ctx, r.providerName, r.providerCfg, ""))
+	r.smallModels = mergeModelCandidates(r.autoMemoryModel, []string{r.model}, r.providerModels(ctx, r.providerName, r.providerCfg, ""))
 	return append([]string(nil), r.smallModels...), nil
 }
 
@@ -1208,7 +1227,7 @@ func (r *tuiAgentRunner) SmallModel() string {
 	if r == nil {
 		return ""
 	}
-	return r.summaryModel
+	return r.autoMemoryModel
 }
 
 func (r *tuiAgentRunner) SmallModels() []string {
@@ -1518,16 +1537,12 @@ func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessi
 			return nil
 		}
 
+		if event.Type == rollout.TypeSummary {
+			return nil
+		}
 		msg, ok, err := rollout.MessageFromEvent(event)
 		if err != nil {
 			return err
-		}
-		if event.Type == rollout.TypeSummary {
-			if ok {
-				toolUses = map[string]message.ContentBlock{}
-				out = appendMessagesForTUI(nil, toolUses, msg, event.Turn)
-			}
-			return nil
 		}
 		if ok {
 			out = appendMessagesForTUI(out, toolUses, msg, event.Turn)

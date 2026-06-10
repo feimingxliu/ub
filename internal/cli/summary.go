@@ -16,23 +16,31 @@ type summarySetup struct {
 }
 
 func newSummarySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (summarySetup, error) {
+	return newProviderModelSetup(ctx, providerName, providerCfg, strings.TrimSpace(fallbackModel), true, "summary")
+}
+
+func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (summarySetup, error) {
 	if cfg == nil {
 		return summarySetup{}, nil
 	}
-	model, usesCurrent, err := selectSummaryModel(ctx, cfg, providerName, providerCfg, fallbackModel)
+	model, usesCurrent, err := selectSmallModel(ctx, cfg, providerName, providerCfg, fallbackModel)
 	if err != nil {
 		return summarySetup{}, err
 	}
-	model, err = selectProviderModel(ctx, providerName, providerCfg, model)
+	return newProviderModelSetup(ctx, providerName, providerCfg, model, usesCurrent, "auto memory")
+}
+
+func newProviderModelSetup(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string, usesCurrent bool, purpose string) (summarySetup, error) {
+	model, err := selectProviderModel(ctx, providerName, providerCfg, model)
 	if err != nil {
-		return summarySetup{}, fmt.Errorf("select summary model: %w", err)
+		return summarySetup{}, fmt.Errorf("select %s model: %w", purpose, err)
 	}
 	if strings.TrimSpace(model) == "" {
 		return summarySetup{}, nil
 	}
 	p, err := provider.New(providerName, providerCfg)
 	if err != nil {
-		return summarySetup{}, fmt.Errorf("create summary provider %q: %w", providerName, err)
+		return summarySetup{}, fmt.Errorf("create %s provider %q: %w", purpose, providerName, err)
 	}
 	return summarySetup{
 		Provider:         p,
@@ -41,18 +49,18 @@ func newSummarySetup(ctx context.Context, cfg *config.Config, providerName strin
 	}, nil
 }
 
-func selectSummaryModel(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (string, bool, error) {
+func selectSmallModel(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (string, bool, error) {
 	smallModel := strings.TrimSpace(cfg.SmallModel)
 	if smallModel == "" {
 		return strings.TrimSpace(fallbackModel), true, nil
 	}
-	if summaryModelAvailable(ctx, providerName, providerCfg, smallModel) {
+	if smallModelAvailable(ctx, providerName, providerCfg, smallModel) {
 		return smallModel, false, nil
 	}
 	return strings.TrimSpace(fallbackModel), true, nil
 }
 
-func summaryModelAvailable(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string) bool {
+func smallModelAvailable(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string) bool {
 	model = strings.TrimSpace(model)
 	if model == "" {
 		return false

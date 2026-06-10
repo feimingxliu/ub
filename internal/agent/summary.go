@@ -20,6 +20,8 @@ import (
 const (
 	defaultTriggerRatio    = 0.8
 	defaultKeepRecentTurns = 3
+	summaryFallbackBudget  = 32000
+	summaryMergeMaxDepth   = 4
 )
 
 //go:embed summary_prompt.txt
@@ -136,6 +138,44 @@ type compactedMessages struct {
 	estimatedTokens   int
 }
 
+type contextOverflowRecovery struct {
+	messages  []message.Message
+	recovered bool
+}
+
+func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int, tools []provider.ToolDefinition, providerErr error, alreadyRecovered bool) (contextOverflowRecovery, error) {
+	if alreadyRecovered || !isContextOverflowError(providerErr) {
+		return contextOverflowRecovery{}, nil
+	}
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Status:       "running",
+		Summary:      "provider context limit exceeded; compacting and retrying",
+	})
+	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, messages, estimated, tools)
+	if err != nil {
+		return contextOverflowRecovery{}, fmt.Errorf("context overflow compact failed after provider error: %w", err)
+	}
+	if !ok {
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityNotice,
+			Status:       "done",
+			Summary:      "provider context limit exceeded; no earlier messages to compact",
+		})
+		return contextOverflowRecovery{}, nil
+	}
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Status:       "done",
+		Summary:      fmt.Sprintf("provider context limit exceeded; compacted %d earlier messages and retrying", compacted.compactedMessages),
+	})
+	a.emitContextUsage(compacted.estimatedTokens, true)
+	return contextOverflowRecovery{messages: compacted.messages, recovered: true}, nil
+}
+
 func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int, tools []provider.ToolDefinition) (compactedMessages, bool, error) {
 	prefix, suffix, ok := splitSummaryWindow(messages, summaryWindowOptions{
 		KeepRecentTurns: effectiveKeepRecentTurns(a.contextCfg),
@@ -151,7 +191,7 @@ func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int,
 	}
 	compacted := append([]message.Message{rollout.SummaryMessage(summary)}, suffix...)
 	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
-		return rollout.Summary(sessionID, turn, summary, len(prefix), len(suffix), estimated)
+		return rollout.SummaryWithMessages(sessionID, turn, summary, compacted, len(prefix), len(suffix), estimated)
 	}); err != nil {
 		return compactedMessages{}, false, err
 	}
@@ -185,7 +225,70 @@ func (a *Agent) generateSummary(ctx context.Context, messages []message.Message)
 	if model == "" {
 		model = a.model
 	}
-	prompt := strings.ReplaceAll(a.summaryPromptTemplate(), "{{conversation}}", renderMessages(messages))
+	return a.generateSummaryMessages(ctx, p, model, messages, a.summaryInputBudget(p, model), 0)
+}
+
+func (a *Agent) generateSummaryMessages(ctx context.Context, p provider.Provider, model string, messages []message.Message, budget, depth int) (string, error) {
+	chunks, err := splitSummaryMessageChunks(a.summaryPromptTemplate(), messages, model, budget)
+	if err != nil {
+		return "", err
+	}
+	if len(chunks) == 0 {
+		return "", errors.New("summary provider returned empty summary")
+	}
+	if len(chunks) == 1 {
+		summary, err := a.requestSummary(ctx, p, model, renderMessages(chunks[0]))
+		if err == nil || !isContextOverflowError(err) {
+			return summary, err
+		}
+		return "", fmt.Errorf("summary input for one user turn exceeds the summary model context; configure a longer-context summary model or reduce large inputs/tool results: %w", err)
+	}
+
+	summaries := make([]string, 0, len(chunks))
+	for i, chunk := range chunks {
+		summary, err := a.generateSummaryMessages(ctx, p, model, chunk, budget, depth+1)
+		if err != nil {
+			return "", err
+		}
+		summaries = append(summaries, fmt.Sprintf("Chunk %d of %d:\n%s", i+1, len(chunks), summary))
+	}
+	if depth >= summaryMergeMaxDepth {
+		return strings.Join(summaries, "\n\n"), nil
+	}
+	return a.generateSummaryUnits(ctx, p, model, summaries, budget, depth+1)
+}
+
+func (a *Agent) generateSummaryUnits(ctx context.Context, p provider.Provider, model string, units []string, budget, depth int) (string, error) {
+	chunks, err := splitSummaryTextUnits(a.summaryPromptTemplate(), units, model, budget)
+	if err != nil {
+		return "", err
+	}
+	if len(chunks) == 0 {
+		return "", errors.New("summary provider returned empty summary")
+	}
+	if len(chunks) == 1 {
+		summary, err := a.requestSummary(ctx, p, model, strings.Join(chunks[0], "\n\n"))
+		if err == nil || !isContextOverflowError(err) {
+			return summary, err
+		}
+		return "", fmt.Errorf("summary merge input exceeds the summary model context; configure a longer-context summary model: %w", err)
+	}
+	merged := make([]string, 0, len(chunks))
+	for i, chunk := range chunks {
+		summary, err := a.generateSummaryUnits(ctx, p, model, chunk, budget, depth+1)
+		if err != nil {
+			return "", err
+		}
+		merged = append(merged, fmt.Sprintf("Merged chunk %d of %d:\n%s", i+1, len(chunks), summary))
+	}
+	if depth >= summaryMergeMaxDepth {
+		return strings.Join(merged, "\n\n"), nil
+	}
+	return a.generateSummaryUnits(ctx, p, model, merged, budget, depth+1)
+}
+
+func (a *Agent) requestSummary(ctx context.Context, p provider.Provider, model, conversation string) (string, error) {
+	prompt := strings.ReplaceAll(a.summaryPromptTemplate(), "{{conversation}}", conversation)
 	request := []message.Message{message.Text(message.RoleUser, prompt)}
 	estimated := contextmgr.Estimate(request, model)
 	stream, err := p.Chat(ctx, provider.Request{
@@ -378,6 +481,166 @@ func effectiveKeepRecentTurns(cfg config.ContextConfig) int {
 		return defaultKeepRecentTurns
 	}
 	return cfg.KeepRecentTurns
+}
+
+func (a *Agent) summaryInputBudget(p provider.Provider, model string) int {
+	maxContext := provider.CapsForModel(p, model).MaxContextTokens
+	if maxContext <= 0 {
+		return summaryFallbackBudget
+	}
+	reserve := tooloutput.ReserveOutputTokens(a.contextCfg)
+	if reserve <= 0 {
+		reserve = 4096
+	}
+	if reserve > maxContext/2 {
+		reserve = maxContext / 4
+	}
+	budget := int(float64(maxContext-reserve) * 0.8)
+	if budget <= 0 {
+		return maxContext
+	}
+	if budget > maxContext {
+		return maxContext
+	}
+	return budget
+}
+
+func splitSummaryMessageChunks(template string, messages []message.Message, model string, budget int) ([][]message.Message, error) {
+	units := summaryMessageUnits(messages)
+	if len(units) == 0 {
+		return nil, nil
+	}
+	if budget <= 0 {
+		budget = summaryFallbackBudget
+	}
+	emptyPrompt := summaryPromptEstimate(template, "", model)
+	if budget <= emptyPrompt {
+		return nil, fmt.Errorf("summary input budget (%d tokens) cannot fit summary prompt overhead (%d tokens)", budget, emptyPrompt)
+	}
+
+	chunks := make([][]message.Message, 0, 2)
+	var current []message.Message
+	for _, unit := range units {
+		if len(unit) == 0 {
+			continue
+		}
+		if summaryPromptEstimate(template, renderMessages(unit), model) > budget {
+			return nil, fmt.Errorf("single user turn exceeds summary input budget (%d tokens)", budget)
+		}
+		candidate := append(cloneMessages(current), cloneMessages(unit)...)
+		if len(current) > 0 && summaryPromptEstimate(template, renderMessages(candidate), model) > budget {
+			chunks = append(chunks, current)
+			current = cloneMessages(unit)
+			continue
+		}
+		current = candidate
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+	return chunks, nil
+}
+
+func summaryMessageUnits(messages []message.Message) [][]message.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	turns := userTurnWindows(messages)
+	if len(turns) == 0 {
+		return [][]message.Message{cloneMessages(messages)}
+	}
+	units := make([][]message.Message, 0, len(turns)+1)
+	if turns[0].start > 0 {
+		units = append(units, cloneMessages(messages[:turns[0].start]))
+	}
+	for _, turn := range turns {
+		units = append(units, cloneMessages(messages[turn.start:turn.end]))
+	}
+	return units
+}
+
+func splitSummaryTextUnits(template string, units []string, model string, budget int) ([][]string, error) {
+	if len(units) == 0 {
+		return nil, nil
+	}
+	if budget <= 0 {
+		budget = summaryFallbackBudget
+	}
+	emptyPrompt := summaryPromptEstimate(template, "", model)
+	if budget <= emptyPrompt {
+		return nil, fmt.Errorf("summary input budget (%d tokens) cannot fit summary prompt overhead (%d tokens)", budget, emptyPrompt)
+	}
+	chunks := make([][]string, 0, 2)
+	var current []string
+	for _, unit := range units {
+		unit = strings.TrimSpace(unit)
+		if unit == "" {
+			continue
+		}
+		if summaryPromptEstimate(template, unit, model) > budget {
+			return nil, fmt.Errorf("single summary chunk exceeds summary input budget (%d tokens)", budget)
+		}
+		candidate := append(append([]string(nil), current...), unit)
+		if len(current) > 0 && summaryPromptEstimate(template, strings.Join(candidate, "\n\n"), model) > budget {
+			chunks = append(chunks, current)
+			current = []string{unit}
+			continue
+		}
+		current = candidate
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, current)
+	}
+	return chunks, nil
+}
+
+func summaryPromptEstimate(template, conversation, model string) int {
+	prompt := strings.ReplaceAll(template, "{{conversation}}", conversation)
+	return contextmgr.Estimate([]message.Message{message.Text(message.RoleUser, prompt)}, model)
+}
+
+func isContextOverflowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	text = strings.NewReplacer("_", " ", "-", " ").Replace(text)
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "context canceled") || strings.Contains(text, "context deadline exceeded") {
+		return false
+	}
+	if strings.Contains(text, "max output tokens") || strings.Contains(text, "maximum output tokens") {
+		return false
+	}
+	if strings.Contains(text, "context") {
+		for _, marker := range []string{"exceed", "too long", "too large", "maximum", "limit", "length"} {
+			if strings.Contains(text, marker) {
+				return true
+			}
+		}
+	}
+	for _, marker := range []string{
+		"prompt is too long",
+		"input is too long",
+		"too many input tokens",
+		"input tokens exceed",
+		"input tokens exceeded",
+		"input tokens too large",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	if strings.Contains(text, "too many tokens") && !strings.Contains(text, "output") && !strings.Contains(text, "completion") {
+		return true
+	}
+	return false
 }
 
 func renderMessages(messages []message.Message) string {

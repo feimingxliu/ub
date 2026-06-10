@@ -88,10 +88,11 @@ type ActivityPayload struct {
 
 // SummaryPayload stores an automatic context summary.
 type SummaryPayload struct {
-	Text               string `json:"text"`
-	CompressedMessages int    `json:"compressed_messages,omitempty"`
-	KeptMessages       int    `json:"kept_messages,omitempty"`
-	EstimatedTokens    int    `json:"estimated_tokens,omitempty"`
+	Text               string            `json:"text"`
+	CompressedMessages int               `json:"compressed_messages,omitempty"`
+	KeptMessages       int               `json:"kept_messages,omitempty"`
+	EstimatedTokens    int               `json:"estimated_tokens,omitempty"`
+	Messages           []message.Message `json:"messages,omitempty"`
 }
 
 // MemoryWritePayload stores one durable memory write for audit/debugging.
@@ -172,11 +173,26 @@ func Activity(sessionID string, turn int, payload ActivityPayload) (Event, error
 
 // Summary creates a summary event.
 func Summary(sessionID string, turn int, text string, compressedMessages, keptMessages, estimatedTokens int) (Event, error) {
+	return SummaryWithMessages(sessionID, turn, text, nil, compressedMessages, keptMessages, estimatedTokens)
+}
+
+// SummaryWithMessages creates a summary event with the complete compacted
+// provider context used after summarization. The messages normally contain the
+// summary system message followed by the kept recent turn suffix.
+func SummaryWithMessages(sessionID string, turn int, text string, messages []message.Message, compressedMessages, keptMessages, estimatedTokens int) (Event, error) {
+	cloned := make([]message.Message, 0, len(messages))
+	for _, msg := range messages {
+		if len(msg.Content) == 0 {
+			continue
+		}
+		cloned = append(cloned, msg.Clone())
+	}
 	return NewEvent(sessionID, turn, TypeSummary, SummaryPayload{
 		Text:               text,
 		CompressedMessages: compressedMessages,
 		KeptMessages:       keptMessages,
 		EstimatedTokens:    estimatedTokens,
+		Messages:           cloned,
 	})
 }
 
@@ -223,17 +239,46 @@ func MessageFromEvent(event Event) (message.Message, bool, error) {
 		}
 		return message.New(message.RoleTool, message.ToolResultBlock(payload.ToolUseID, payload.Output, payload.IsError)), true, nil
 	case TypeSummary:
-		var payload SummaryPayload
-		if err := json.Unmarshal(event.Payload, &payload); err != nil {
-			return message.Message{}, false, fmt.Errorf("decode rollout summary event %s: %w", event.ID, err)
+		msgs, ok, err := SummaryMessagesFromEvent(event)
+		if err != nil {
+			return message.Message{}, false, err
 		}
-		if payload.Text == "" {
+		if !ok || len(msgs) == 0 {
 			return message.Message{}, false, nil
 		}
-		return SummaryMessage(payload.Text), true, nil
+		return msgs[0], true, nil
 	default:
 		return message.Message{}, false, nil
 	}
+}
+
+// SummaryMessagesFromEvent extracts the full compacted provider context from a
+// summary event. Older events do not have Messages, so they fall back to the
+// single summary system message.
+func SummaryMessagesFromEvent(event Event) ([]message.Message, bool, error) {
+	if event.Type != TypeSummary {
+		return nil, false, nil
+	}
+	var payload SummaryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return nil, false, fmt.Errorf("decode rollout summary event %s: %w", event.ID, err)
+	}
+	if len(payload.Messages) > 0 {
+		out := make([]message.Message, 0, len(payload.Messages))
+		for _, msg := range payload.Messages {
+			if len(msg.Content) == 0 {
+				continue
+			}
+			out = append(out, msg.Clone())
+		}
+		if len(out) > 0 {
+			return out, true, nil
+		}
+	}
+	if payload.Text == "" {
+		return nil, false, nil
+	}
+	return []message.Message{SummaryMessage(payload.Text)}, true, nil
 }
 
 // ActivityFromEvent extracts a display-only activity payload.

@@ -272,7 +272,7 @@ func TestTUIRunnerSetProviderKeepsCurrentModelWhenAvailable(t *testing.T) {
 	}
 }
 
-func TestTUIRunnerSetProviderFallsBackSummaryModelWhenSmallModelUnavailable(t *testing.T) {
+func TestTUIRunnerSetProviderKeepsCompactOnMainModelAndSmallModelForMemory(t *testing.T) {
 	temp := t.TempDir()
 	t.Chdir(temp)
 	cfg := &config.Config{
@@ -303,8 +303,11 @@ func TestTUIRunnerSetProviderFallsBackSummaryModelWhenSmallModelUnavailable(t *t
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
 	defer runner.Close()
-	if runner.summaryModel != "primary/small" || runner.summaryUsesCurrent {
-		t.Fatalf("initial summary model = %q usesCurrent=%v, want primary/small false", runner.summaryModel, runner.summaryUsesCurrent)
+	if runner.summaryModel != "primary/model" {
+		t.Fatalf("initial summary model = %q, want primary/model", runner.summaryModel)
+	}
+	if runner.autoMemoryModel != "primary/small" || runner.smallUsesCurrent {
+		t.Fatalf("initial auto memory model = %q usesCurrent=%v, want primary/small false", runner.autoMemoryModel, runner.smallUsesCurrent)
 	}
 	if runner.approvalProviderName != "primary" || runner.approvalModel != "primary/small" {
 		t.Fatalf("initial approval provider/model = %q/%q, want primary/primary/small", runner.approvalProviderName, runner.approvalModel)
@@ -313,8 +316,11 @@ func TestTUIRunnerSetProviderFallsBackSummaryModelWhenSmallModelUnavailable(t *t
 	if _, err := runner.SetProvider("manual", "manual/model"); err != nil {
 		t.Fatalf("SetProvider: %v", err)
 	}
-	if runner.summaryModel != "manual/model" || !runner.summaryUsesCurrent {
-		t.Fatalf("summary model after switch = %q usesCurrent=%v, want manual/model true", runner.summaryModel, runner.summaryUsesCurrent)
+	if runner.summaryModel != "manual/model" {
+		t.Fatalf("summary model after switch = %q, want manual/model", runner.summaryModel)
+	}
+	if runner.autoMemoryModel != "manual/model" || !runner.smallUsesCurrent {
+		t.Fatalf("auto memory model after switch = %q usesCurrent=%v, want manual/model true", runner.autoMemoryModel, runner.smallUsesCurrent)
 	}
 	if got := runner.SmallModels(); !modelInList(got, "manual/model") || modelInList(got, "primary/small") {
 		t.Fatalf("small model candidates after switch = %#v, want manual provider candidates", got)
@@ -376,7 +382,7 @@ func TestTUIRunnerSetProviderRefreshesApprovalModelsFromProviderCheck(t *testing
 	}
 }
 
-func TestTUIRunnerSetSmallModelUpdatesSummaryModel(t *testing.T) {
+func TestTUIRunnerSetSmallModelUpdatesAutoMemoryModelOnly(t *testing.T) {
 	temp := t.TempDir()
 	t.Chdir(temp)
 	cfg := &config.Config{
@@ -401,15 +407,21 @@ func TestTUIRunnerSetSmallModelUpdatesSummaryModel(t *testing.T) {
 		t.Fatalf("newTUIAgentRunner: %v", err)
 	}
 	defer runner.Close()
-	if runner.summaryModel != "primary/model" || !runner.summaryUsesCurrent {
-		t.Fatalf("initial summary model = %q usesCurrent=%v, want primary/model true", runner.summaryModel, runner.summaryUsesCurrent)
+	if runner.summaryModel != "primary/model" {
+		t.Fatalf("initial summary model = %q, want primary/model", runner.summaryModel)
+	}
+	if runner.autoMemoryModel != "primary/model" || !runner.smallUsesCurrent {
+		t.Fatalf("initial auto memory model = %q usesCurrent=%v, want primary/model true", runner.autoMemoryModel, runner.smallUsesCurrent)
 	}
 
 	if err := runner.SetSmallModel("primary/small"); err != nil {
 		t.Fatalf("SetSmallModel: %v", err)
 	}
-	if runner.summaryModel != "primary/small" || runner.summaryUsesCurrent {
-		t.Fatalf("summary model after small switch = %q usesCurrent=%v, want primary/small false", runner.summaryModel, runner.summaryUsesCurrent)
+	if runner.summaryModel != "primary/model" {
+		t.Fatalf("summary model after small switch = %q, want primary/model", runner.summaryModel)
+	}
+	if runner.autoMemoryModel != "primary/small" || runner.smallUsesCurrent {
+		t.Fatalf("auto memory model after small switch = %q usesCurrent=%v, want primary/small false", runner.autoMemoryModel, runner.smallUsesCurrent)
 	}
 	if got := runner.SmallModels(); !modelInList(got, "primary/other") {
 		t.Fatalf("small model candidates = %#v, want full provider candidates", got)
@@ -418,8 +430,11 @@ func TestTUIRunnerSetSmallModelUpdatesSummaryModel(t *testing.T) {
 	if err := runner.SetModel("primary/other"); err != nil {
 		t.Fatalf("SetModel: %v", err)
 	}
-	if runner.summaryModel != "primary/small" || runner.summaryUsesCurrent {
-		t.Fatalf("summary model after main model switch = %q usesCurrent=%v, want primary/small false", runner.summaryModel, runner.summaryUsesCurrent)
+	if runner.summaryModel != "primary/other" {
+		t.Fatalf("summary model after main model switch = %q, want primary/other", runner.summaryModel)
+	}
+	if runner.autoMemoryModel != "primary/small" || runner.smallUsesCurrent {
+		t.Fatalf("auto memory model after main model switch = %q usesCurrent=%v, want primary/small false", runner.autoMemoryModel, runner.smallUsesCurrent)
 	}
 }
 
@@ -452,8 +467,11 @@ func TestTUIRunnerSetSmallModelRejectsUnavailable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("SetSmallModel error = %v, want not available", err)
 	}
-	if runner.summaryModel != "primary/model" || !runner.summaryUsesCurrent {
-		t.Fatalf("summary model after rejected small switch = %q usesCurrent=%v, want primary/model true", runner.summaryModel, runner.summaryUsesCurrent)
+	if runner.summaryModel != "primary/model" {
+		t.Fatalf("summary model after rejected small switch = %q, want primary/model", runner.summaryModel)
+	}
+	if runner.autoMemoryModel != "primary/model" || !runner.smallUsesCurrent {
+		t.Fatalf("auto memory model after rejected small switch = %q usesCurrent=%v, want primary/model true", runner.autoMemoryModel, runner.smallUsesCurrent)
 	}
 }
 
@@ -947,6 +965,60 @@ func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
 	}
 	if got[1].ActivityKind != "thinking" || got[1].Summary != "checking files" || got[1].Content != "checking files in repo" {
 		t.Fatalf("thinking activity = %#v", got[1])
+	}
+}
+
+func TestMessagesForTUIFromRolloutRestoresSummaryContextMessages(t *testing.T) {
+	oldEvent, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "old prompt"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	keptEvent, err := rollout.AssistantMessage("sess_1", 1, message.Text(message.RoleAssistant, "kept answer"))
+	if err != nil {
+		t.Fatalf("AssistantMessage kept: %v", err)
+	}
+	currentEvent, err := rollout.UserMessage("sess_1", 2, message.Text(message.RoleUser, "current prompt"))
+	if err != nil {
+		t.Fatalf("UserMessage current: %v", err)
+	}
+	compacted := []message.Message{
+		rollout.SummaryMessage("Earlier summary."),
+		message.Text(message.RoleUser, "current prompt"),
+	}
+	summaryEvent, err := rollout.SummaryWithMessages("sess_1", 2, "Earlier summary.", compacted, 4, 2, 120)
+	if err != nil {
+		t.Fatalf("SummaryWithMessages: %v", err)
+	}
+	finalEvent, err := rollout.AssistantMessage("sess_1", 2, message.Text(message.RoleAssistant, "final answer"))
+	if err != nil {
+		t.Fatalf("AssistantMessage: %v", err)
+	}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{
+		events: []rollout.Event{oldEvent, keptEvent, currentEvent, summaryEvent, finalEvent},
+	}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("messages len = %d, want 4: %#v", len(got), got)
+	}
+	if got[0].Role != string(message.RoleUser) || got[0].Text != "old prompt" {
+		t.Fatalf("old user message = %#v", got[0])
+	}
+	if got[1].Role != string(message.RoleAssistant) || got[1].Text != "kept answer" {
+		t.Fatalf("kept assistant message = %#v", got[1])
+	}
+	if got[2].Role != string(message.RoleUser) || got[2].Text != "current prompt" {
+		t.Fatalf("current user message = %#v", got[2])
+	}
+	if got[3].Role != string(message.RoleAssistant) || got[3].Text != "final answer" || strings.Contains(got[3].Text, "Earlier summary.") {
+		t.Fatalf("final message = %#v", got[3])
+	}
+	for _, msg := range got {
+		if strings.Contains(msg.Text, "Earlier summary.") {
+			t.Fatalf("TUI messages rendered summary event: %#v", got)
+		}
 	}
 }
 

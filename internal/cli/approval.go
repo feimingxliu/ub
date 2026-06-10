@@ -57,7 +57,7 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 	}
 	if model == "" {
 		smallModel := strings.TrimSpace(cfg.SmallModel)
-		if smallModel != "" && summaryModelAvailable(ctx, providerName, providerCfg, smallModel) {
+		if smallModel != "" && smallModelAvailable(ctx, providerName, providerCfg, smallModel) {
 			model = smallModel
 		}
 	}

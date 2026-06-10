@@ -383,12 +383,13 @@ type chatOptions struct {
 }
 
 type chatSessionState struct {
-	store     *store.Store
-	rollout   *rollout.SQLite
-	session   store.Session
-	history   []message.Message
-	nextTurn  int
-	sessionID string
+	store          *store.Store
+	rollout        *rollout.SQLite
+	session        store.Session
+	history        []message.Message
+	contextHistory []message.Message
+	nextTurn       int
+	sessionID      string
 }
 
 func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error {
@@ -432,6 +433,10 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		return err
 	}
 	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	if err != nil {
+		return err
+	}
+	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model)
 	if err != nil {
 		return err
 	}
@@ -488,6 +493,8 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		MaxContextTokens:    chatMaxContextTokens(providerName, providerCfg, model),
 		SummaryProvider:     summarySetup.Provider,
 		SummaryModel:        summarySetup.Model,
+		AutoMemoryProvider:  autoMemorySetup.Provider,
+		AutoMemoryModel:     autoMemorySetup.Model,
 		Context:             cfg.Context,
 		Prompt:              cfg.Prompt,
 		Runtime:             agentRuntimeContext(tools.Workspace),
@@ -503,10 +510,11 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		return err
 	}
 	result, err := a.Run(cmd.Context(), agent.Request{
-		SessionID: state.sessionID,
-		Turn:      state.nextTurn,
-		History:   state.history,
-		Prompt:    prompt,
+		SessionID:      state.sessionID,
+		Turn:           state.nextTurn,
+		History:        state.history,
+		ContextHistory: state.contextHistory,
+		Prompt:         prompt,
 	})
 	if err != nil {
 		_ = finishChatSession(cmd, state, prompt, providerName, model)
@@ -702,7 +710,7 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 		return err
 	}
 
-	requestMessages := append(cloneMessages(state.history), userMsg)
+	requestMessages := append(cloneMessages(state.contextHistory), userMsg)
 	stream, err := p.Chat(cmd.Context(), provider.Request{
 		Model:     model,
 		Messages:  requestMessages,
@@ -816,18 +824,19 @@ func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, op
 			_ = st.Close()
 			return nil, err
 		}
-		history, nextTurn, err := readChatHistory(cmd, ro, sessionID)
+		history, contextHistory, nextTurn, err := readChatHistory(cmd, ro, sessionID)
 		if err != nil {
 			_ = st.Close()
 			return nil, err
 		}
 		return &chatSessionState{
-			store:     st,
-			rollout:   ro,
-			session:   *sess,
-			history:   history,
-			nextTurn:  nextTurn,
-			sessionID: sessionID,
+			store:          st,
+			rollout:        ro,
+			session:        *sess,
+			history:        history,
+			contextHistory: contextHistory,
+			nextTurn:       nextTurn,
+			sessionID:      sessionID,
 		}, nil
 	}
 
@@ -847,16 +856,18 @@ func startChatRollout(cmd *cobra.Command, prompt, providerName, model string, op
 		return nil, err
 	}
 	return &chatSessionState{
-		store:     st,
-		rollout:   ro,
-		session:   sess,
-		nextTurn:  1,
-		sessionID: sessionID,
+		store:          st,
+		rollout:        ro,
+		session:        sess,
+		contextHistory: nil,
+		nextTurn:       1,
+		sessionID:      sessionID,
 	}, nil
 }
 
-func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, int, error) {
+func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) ([]message.Message, []message.Message, int, error) {
 	var history []message.Message
+	var contextHistory []message.Message
 	maxTurn := 0
 	ctx := context.Background()
 	if cmd != nil && cmd.Context() != nil {
@@ -866,24 +877,29 @@ func readChatHistory(cmd *cobra.Command, ro *rollout.SQLite, sessionID string) (
 		if event.Turn > maxTurn {
 			maxTurn = event.Turn
 		}
+		if event.Type == rollout.TypeSummary {
+			msgs, ok, err := rollout.SummaryMessagesFromEvent(event)
+			if err != nil {
+				return err
+			}
+			if ok {
+				contextHistory = msgs
+			}
+			return nil
+		}
 		msg, ok, err := rollout.MessageFromEvent(event)
 		if err != nil {
 			return err
 		}
-		if event.Type == rollout.TypeSummary {
-			if ok {
-				history = []message.Message{msg}
-			}
-			return nil
-		}
 		if ok {
 			history = append(history, msg)
+			contextHistory = append(contextHistory, msg)
 		}
 		return nil
 	}); err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
-	return history, maxTurn + 1, nil
+	return history, contextHistory, maxTurn + 1, nil
 }
 
 func finishChatSession(cmd *cobra.Command, state *chatSessionState, prompt, providerName, model string) error {

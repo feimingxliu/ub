@@ -67,6 +67,8 @@ type Options struct {
 	MaxContextTokens     int
 	SummaryProvider      provider.Provider
 	SummaryModel         string
+	AutoMemoryProvider   provider.Provider
+	AutoMemoryModel      string
 	Context              config.ContextConfig
 	Prompt               config.PromptConfig
 	Runtime              RuntimeContext
@@ -97,6 +99,8 @@ type Agent struct {
 	maxContextTokens     int
 	summaryProvider      provider.Provider
 	summaryModel         string
+	autoMemoryProvider   provider.Provider
+	autoMemoryModel      string
 	contextCfg           config.ContextConfig
 	promptCfg            config.PromptConfig
 	runtime              RuntimeContext
@@ -114,16 +118,18 @@ type Agent struct {
 
 // Request is one Agent run input.
 type Request struct {
-	SessionID string
-	Turn      int
-	History   []message.Message
-	Prompt    string
+	SessionID      string
+	Turn           int
+	History        []message.Message
+	ContextHistory []message.Message
+	Prompt         string
 }
 
 // Result is the final Agent run output.
 type Result struct {
-	Text     string
-	Messages []message.Message
+	Text            string
+	Messages        []message.Message
+	ContextMessages []message.Message
 }
 
 type toolCall struct {
@@ -196,6 +202,8 @@ func New(opts Options) (*Agent, error) {
 		maxContextTokens:     opts.MaxContextTokens,
 		summaryProvider:      opts.SummaryProvider,
 		summaryModel:         strings.TrimSpace(opts.SummaryModel),
+		autoMemoryProvider:   opts.AutoMemoryProvider,
+		autoMemoryModel:      strings.TrimSpace(opts.AutoMemoryModel),
 		contextCfg:           opts.Context,
 		promptCfg:            promptCfg,
 		runtime:              runtime,
@@ -234,8 +242,13 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	}))
 
 	userMsg := message.Text(message.RoleUser, req.Prompt)
-	messages := cloneMessages(req.History)
-	messages = append(messages, userMsg)
+	transcriptMessages := cloneMessages(req.History)
+	transcriptMessages = append(transcriptMessages, userMsg)
+	contextMessages := cloneMessages(req.ContextHistory)
+	if len(contextMessages) == 0 {
+		contextMessages = cloneMessages(req.History)
+	}
+	contextMessages = append(contextMessages, userMsg)
 	if a.fileHistory != nil && !a.fileHistoryToolsOnly {
 		if err := a.fileHistory.MakeSnapshot(ctx, req.Turn); err != nil {
 			a.emit(Event{Type: EventError, Content: fmt.Sprintf("file history snapshot: %v", err), IsError: true, Err: err})
@@ -250,6 +263,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 	turn := 0
 	limit := a.maxTurns
 	outputTokensRecoveryCount := 0
+	contextOverflowRecoveryUsed := false
 	loopDetector := newToolLoopDetector(repeatedToolWindowSize, repeatedToolMaxRepeats)
 loop:
 	for {
@@ -258,11 +272,11 @@ loop:
 			if err != nil {
 				return Result{}, err
 			}
-			prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, messages, tools)
+			prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, contextMessages, tools)
 			if err != nil {
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 			}
-			messages = prepared.messages
+			contextMessages = prepared.messages
 			stream, err := a.provider.Chat(ctx, provider.Request{
 				Model:     a.model,
 				Messages:  cloneMessages(prepared.requestMessages),
@@ -270,14 +284,41 @@ loop:
 				Reasoning: cloneReasoning(a.reasoning),
 			})
 			if err != nil {
+				recovered, recoveryErr := a.recoverContextOverflow(ctx, req.SessionID, req.Turn, contextMessages, prepared.estimatedTokens, tools, err, contextOverflowRecoveryUsed)
+				if recoveryErr != nil {
+					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, recoveryErr)
+				}
+				if recovered.recovered {
+					contextOverflowRecoveryUsed = true
+					contextMessages = recovered.messages
+					continue
+				}
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 			}
 			consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
 			closeErr := stream.Close()
 			if err != nil {
+				recovered, recoveryErr := a.recoverContextOverflow(ctx, req.SessionID, req.Turn, contextMessages, prepared.estimatedTokens, tools, err, contextOverflowRecoveryUsed)
+				if recoveryErr != nil {
+					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, recoveryErr)
+				}
+				if recovered.recovered {
+					contextOverflowRecoveryUsed = true
+					contextMessages = recovered.messages
+					continue
+				}
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 			}
 			if closeErr != nil {
+				recovered, recoveryErr := a.recoverContextOverflow(ctx, req.SessionID, req.Turn, contextMessages, prepared.estimatedTokens, tools, closeErr, contextOverflowRecoveryUsed)
+				if recoveryErr != nil {
+					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, recoveryErr)
+				}
+				if recovered.recovered {
+					contextOverflowRecoveryUsed = true
+					contextMessages = recovered.messages
+					continue
+				}
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, closeErr)
 			}
 			if len(consumed.toolCalls) == 0 && len(consumed.message.Content) == 0 && consumed.reasoningLen > 0 && outputTokensRecoveryCount < maxOutputTokensRecoveryLimit {
@@ -289,11 +330,12 @@ loop:
 					Summary:      fmt.Sprintf("output token limit hit during reasoning; recovery attempt %d/%d", outputTokensRecoveryCount, maxOutputTokensRecoveryLimit),
 				})
 				recoveryMsg := message.Text(message.RoleUser, outputTokensRecoveryInstruction)
-				messages = append(messages, recoveryMsg)
+				contextMessages = append(contextMessages, recoveryMsg)
 				continue
 			}
 			if len(consumed.message.Content) > 0 {
-				messages = append(messages, consumed.message)
+				transcriptMessages = append(transcriptMessages, consumed.message)
+				contextMessages = append(contextMessages, consumed.message)
 				if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 					return rollout.AssistantMessage(req.SessionID, req.Turn, consumed.message)
 				}); err != nil {
@@ -304,8 +346,8 @@ loop:
 				if len(consumed.message.Content) == 0 {
 					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, emptyResponseError(consumed.reasoningLen))
 				}
-				a.finishSuccessfulTurn(ctx, req.SessionID, req.Turn, messages, consumed.text)
-				return Result{Text: consumed.text, Messages: messages}, nil
+				a.finishSuccessfulTurn(ctx, req.SessionID, req.Turn, transcriptMessages, consumed.text)
+				return Result{Text: consumed.text, Messages: transcriptMessages, ContextMessages: contextMessages}, nil
 			}
 			// Execute tool calls concurrently, then collect results in order.
 			type indexedResult struct {
@@ -329,7 +371,9 @@ loop:
 			toolResults := make([]tool.Result, 0, len(results))
 			for _, ir := range results {
 				toolResults = append(toolResults, ir.result)
-				messages = append(messages, message.New(message.RoleTool, message.ToolResultBlock(ir.call.ID, ir.result.Content, ir.result.IsError)))
+				toolResultMessage := message.New(message.RoleTool, message.ToolResultBlock(ir.call.ID, ir.result.Content, ir.result.IsError))
+				transcriptMessages = append(transcriptMessages, toolResultMessage)
+				contextMessages = append(contextMessages, toolResultMessage)
 				if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
 					return rollout.ToolResult(req.SessionID, req.Turn, ir.call.ID, ir.call.Name, ir.result)
 				}); err != nil {
@@ -338,7 +382,7 @@ loop:
 			}
 			turn++
 			if loopDetector.Record(consumed.toolCalls, toolResults) {
-				return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages, "repeated tool loop detected; finalizing without tools")
+				return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, "repeated tool loop detected; finalizing without tools")
 			}
 		}
 		// Hit the limit. Ask the host whether to keep going before falling
@@ -361,10 +405,10 @@ loop:
 		}
 		break
 	}
-	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, messages, fmt.Sprintf("tool loop reached %d turns; finalizing without tools", limit))
+	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, fmt.Sprintf("tool loop reached %d turns; finalizing without tools", limit))
 }
 
-func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn int, messages []message.Message, summary string) (Result, error) {
+func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn int, contextMessages, transcriptMessages []message.Message, summary string) (Result, error) {
 	if strings.TrimSpace(summary) == "" {
 		summary = "tool loop finalizing without tools"
 	}
@@ -375,7 +419,7 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 		Summary:      summary,
 	})
 
-	requestMessages := cloneMessages(messages)
+	requestMessages := cloneMessages(contextMessages)
 	requestMessages = append(requestMessages, message.Text(message.RoleSystem, maxTurnsFinalInstruction))
 	providerMessages := a.withRuntimeContext(requestMessages)
 	estimated := contextmgr.EstimateRequest(providerMessages, nil, a.model)
@@ -406,14 +450,15 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 	if len(consumed.message.Content) == 0 {
 		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool response was empty", ErrMaxTurns))
 	}
-	messages = append(messages, consumed.message)
+	transcriptMessages = append(transcriptMessages, consumed.message)
+	contextMessages = append(contextMessages, consumed.message)
 	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
 		return rollout.AssistantMessage(sessionID, turn, consumed.message)
 	}); err != nil {
 		return Result{}, err
 	}
-	a.finishSuccessfulTurn(ctx, sessionID, turn, messages, consumed.text)
-	return Result{Text: consumed.text, Messages: messages}, nil
+	a.finishSuccessfulTurn(ctx, sessionID, turn, transcriptMessages, consumed.text)
+	return Result{Text: consumed.text, Messages: transcriptMessages, ContextMessages: contextMessages}, nil
 }
 
 func cloneReasoning(cfg *reasoning.Config) *reasoning.Config {

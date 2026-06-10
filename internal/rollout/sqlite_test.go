@@ -214,6 +214,42 @@ func TestSummaryEventAndMessageFromEvent(t *testing.T) {
 	}
 }
 
+func TestSummaryWithMessagesRestoresCompactedContext(t *testing.T) {
+	compacted := []message.Message{
+		SummaryMessage("Earlier work summary."),
+		message.Text(message.RoleUser, "current prompt"),
+		message.Text(message.RoleAssistant, "kept answer"),
+	}
+	event, err := SummaryWithMessages("sess_summary", 4, "Earlier work summary.", compacted, 8, 2, 1200)
+	if err != nil {
+		t.Fatalf("SummaryWithMessages: %v", err)
+	}
+
+	var payload SummaryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if len(payload.Messages) != len(compacted) {
+		t.Fatalf("payload messages len = %d, want %d", len(payload.Messages), len(compacted))
+	}
+
+	msgs, ok, err := SummaryMessagesFromEvent(event)
+	if err != nil {
+		t.Fatalf("SummaryMessagesFromEvent: %v", err)
+	}
+	if !ok || !reflect.DeepEqual(msgs, compacted) {
+		t.Fatalf("summary messages = %#v, ok=%v, want %#v", msgs, ok, compacted)
+	}
+
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if !ok || !reflect.DeepEqual(msg, compacted[0]) {
+		t.Fatalf("message = %#v, ok=%v, want first compacted message %#v", msg, ok, compacted[0])
+	}
+}
+
 func TestMemoryWriteEvent(t *testing.T) {
 	event, err := MemoryWrite("sess_memory", 5, MemoryWritePayload{
 		Scope:    "auto",

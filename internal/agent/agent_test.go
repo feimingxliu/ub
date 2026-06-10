@@ -33,9 +33,11 @@ import (
 )
 
 type scriptProvider struct {
-	scripts  []fake.Script
-	requests []provider.Request
-	caps     provider.Caps
+	scripts    []fake.Script
+	chatErrors []error
+	requests   []provider.Request
+	caps       provider.Caps
+	scriptIdx  int
 }
 
 func (p *scriptProvider) Name() string { return "script" }
@@ -54,10 +56,15 @@ func (p *scriptProvider) Chat(_ context.Context, req provider.Request) (provider
 		Reasoning: cloneReasoning(req.Reasoning),
 	})
 	idx := len(p.requests) - 1
-	if idx >= len(p.scripts) {
+	if idx < len(p.chatErrors) && p.chatErrors[idx] != nil {
+		return nil, p.chatErrors[idx]
+	}
+	if p.scriptIdx >= len(p.scripts) {
 		return nil, errors.New("unexpected extra chat call")
 	}
-	return fake.New(p.scripts[idx]).Chat(context.Background(), req)
+	script := p.scripts[p.scriptIdx]
+	p.scriptIdx++
+	return fake.New(script).Chat(context.Background(), req)
 }
 
 func TestAgentPassesReasoningConfig(t *testing.T) {
@@ -1781,6 +1788,310 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 	if !hasEventType(writer.events, rollout.TypeSummary) {
 		t.Fatalf("events missing summary: %#v", writer.events)
 	}
+	if !containsText(res.Messages, "user 1") || !containsText(res.Messages, "user 2") || containsText(res.Messages, "summary of early work") {
+		t.Fatalf("result transcript = %#v, want original messages without summary injection", res.Messages)
+	}
+	if !containsText(res.ContextMessages, "summary of early work") || containsText(res.ContextMessages, "user 1") || containsText(res.ContextMessages, "user 2") {
+		t.Fatalf("result context messages = %#v, want compacted provider context", res.ContextMessages)
+	}
+}
+
+func TestAgentUsesContextHistoryWithoutShrinkingTranscript(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps: provider.Caps{MaxContextTokens: 1_000_000},
+		scripts: []fake.Script{
+			{fake.TextDelta("resume answer"), fake.Done()},
+		},
+	}
+	a, err := New(Options{
+		Provider:   main,
+		Tools:      reg,
+		Permission: perm,
+		Model:      "fake/model",
+		Mode:       execution.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	history := turnHistory(5)
+	contextHistory := []message.Message{
+		rollout.SummaryMessage("resume summary"),
+		message.Text(message.RoleUser, "user 5"),
+		message.Text(message.RoleAssistant, "assistant 5"),
+	}
+	res, err := a.Run(context.Background(), Request{
+		SessionID:      "sess_resume_ctx",
+		Turn:           6,
+		History:        history,
+		ContextHistory: contextHistory,
+		Prompt:         "current prompt",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(main.requests) != 1 {
+		t.Fatalf("main requests = %d, want 1", len(main.requests))
+	}
+	gotRequest := main.requests[0].Messages
+	if !containsText(gotRequest, "resume summary") || containsText(gotRequest, "user 1") || !containsText(gotRequest, "current prompt") {
+		t.Fatalf("provider request messages = %#v, want compacted context plus current prompt", gotRequest)
+	}
+	if !containsText(res.Messages, "user 1") || containsText(res.Messages, "resume summary") {
+		t.Fatalf("result transcript = %#v, want full history without summary message", res.Messages)
+	}
+	if !containsText(res.ContextMessages, "resume summary") || containsText(res.ContextMessages, "user 1") {
+		t.Fatalf("result context messages = %#v, want compacted context retained", res.ContextMessages)
+	}
+}
+
+func TestAgentCompactsAndRetriesAfterContextOverflowChatError(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps:       provider.Caps{MaxContextTokens: 1_000_000},
+		chatErrors: []error{errors.New("context_length_exceeded: maximum context length exceeded")},
+		scripts: []fake.Script{
+			{fake.TextDelta("final after retry"), fake.Done()},
+		},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("summary after overflow"), fake.Done()},
+	}}
+	writer := &recordingRollout{}
+	var events []Event
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		SummaryModel:    "small",
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_overflow", Prompt: "current prompt", Turn: 7, History: turnHistory(5)})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "final after retry" {
+		t.Fatalf("text = %q, want final after retry", res.Text)
+	}
+	if len(main.requests) != 2 {
+		t.Fatalf("main requests = %d, want initial + retry", len(main.requests))
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("summary requests = %d, want 1", len(summary.requests))
+	}
+	retryMessages := main.requests[1].Messages
+	if !containsText(retryMessages, "summary after overflow") {
+		t.Fatalf("retry request missing summary: %#v", retryMessages)
+	}
+	if containsText(retryMessages, "user 1") || containsText(retryMessages, "user 2") {
+		t.Fatalf("retry request kept compacted messages: %#v", retryMessages)
+	}
+	if !hasEventType(writer.events, rollout.TypeSummary) || hasEventType(writer.events, rollout.TypeError) {
+		t.Fatalf("rollout events = %#v, want summary and no error", writer.events)
+	}
+	if !hasActivity(events, ActivityNotice, "compacted") {
+		t.Fatalf("events missing compact retry notice: %#v", events)
+	}
+	if !hasContextResetEvent(events) {
+		t.Fatalf("events missing context reset after recovery: %#v", events)
+	}
+}
+
+func TestAgentCompactsAndRetriesAfterContextOverflowStreamError(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps: provider.Caps{MaxContextTokens: 1_000_000},
+		scripts: []fake.Script{
+			{fake.Error("This model's maximum context length is 8192 tokens. Reduce the prompt.")},
+			{fake.TextDelta("final after stream retry"), fake.Done()},
+		},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("stream overflow summary"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_stream_overflow", Prompt: "current prompt", Turn: 7, History: turnHistory(5)})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "final after stream retry" {
+		t.Fatalf("text = %q, want final after stream retry", res.Text)
+	}
+	if len(main.requests) != 2 {
+		t.Fatalf("main requests = %d, want initial + retry", len(main.requests))
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("summary requests = %d, want 1", len(summary.requests))
+	}
+}
+
+func TestAgentContextOverflowRecoveryRetriesOnlyOnce(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	overflowErr := errors.New("context_length_exceeded: maximum context length exceeded")
+	main := &scriptProvider{
+		caps:       provider.Caps{MaxContextTokens: 1_000_000},
+		chatErrors: []error{overflowErr, overflowErr},
+	}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("one retry summary"), fake.Done()},
+	}}
+	writer := &recordingRollout{}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Rollout:         writer,
+		Model:           "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = a.Run(context.Background(), Request{SessionID: "sess_overflow_twice", Prompt: "current prompt", Turn: 7, History: turnHistory(5)})
+	if err == nil || !strings.Contains(err.Error(), "context_length_exceeded") {
+		t.Fatalf("Run error = %v, want second provider overflow error", err)
+	}
+	if len(main.requests) != 2 {
+		t.Fatalf("main requests = %d, want one retry", len(main.requests))
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("summary requests = %d, want 1", len(summary.requests))
+	}
+	if !hasEventType(writer.events, rollout.TypeSummary) || !hasEventType(writer.events, rollout.TypeError) {
+		t.Fatalf("rollout events = %#v, want summary then final error", writer.events)
+	}
+}
+
+func TestAgentContextOverflowRecoveryChunksSummaryInput(t *testing.T) {
+	reg := tool.New()
+	perm := newPermissionManager(t, nil)
+	main := &scriptProvider{
+		caps:       provider.Caps{MaxContextTokens: 1_000_000},
+		chatErrors: []error{errors.New("context_length_exceeded: maximum context length exceeded")},
+		scripts: []fake.Script{
+			{fake.TextDelta("final after bounded summary"), fake.Done()},
+		},
+	}
+	summaryScripts := make([]fake.Script, 40)
+	for i := range summaryScripts {
+		summaryScripts[i] = fake.Script{fake.TextDelta("bounded summary"), fake.Done()}
+	}
+	summary := &scriptProvider{
+		caps:    provider.Caps{MaxContextTokens: 2500},
+		scripts: summaryScripts,
+	}
+	a, err := New(Options{
+		Provider:        main,
+		SummaryProvider: summary,
+		Tools:           reg,
+		Permission:      perm,
+		Model:           "fake/model",
+		SummaryModel:    "fake/model",
+		Mode:            execution.ModeWork,
+		Context:         config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_overflow_chunked", Prompt: "current prompt", Turn: 7, History: hugeTurnHistory(40, 300)})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Text != "final after bounded summary" {
+		t.Fatalf("text = %q, want final after bounded summary", res.Text)
+	}
+	if len(summary.requests) <= 1 {
+		t.Fatalf("summary requests = %d, want chunked summary requests", len(summary.requests))
+	}
+	budget := a.summaryInputBudget(summary, "fake/model")
+	for i, req := range summary.requests {
+		estimated := contextmgr.Estimate(req.Messages, "fake/model")
+		if estimated > budget {
+			t.Fatalf("summary request %d estimate = %d, budget = %d", i, estimated, budget)
+		}
+	}
+}
+
+func TestSplitSummaryMessageChunksRejectsOversizedTurn(t *testing.T) {
+	budget := summaryPromptEstimate(summaryPromptTemplate, "", "fake/model") + 1200
+	_, err := splitSummaryMessageChunks(summaryPromptTemplate, hugeTurnHistory(1, 10000), "fake/model", budget)
+	if err == nil || !strings.Contains(err.Error(), "single user turn exceeds summary input budget") {
+		t.Fatalf("splitSummaryMessageChunks error = %v, want oversized turn error", err)
+	}
+}
+
+func TestSummaryInputBudgetDoesNotExceedModelContext(t *testing.T) {
+	a := &Agent{}
+	p := &scriptProvider{caps: provider.Caps{MaxContextTokens: 1000}}
+
+	budget := a.summaryInputBudget(p, "fake/model")
+	if budget <= 0 || budget > 1000 {
+		t.Fatalf("summaryInputBudget = %d, want within model context 1..1000", budget)
+	}
+}
+
+func TestSummaryChunkingRejectsBudgetBelowPromptOverhead(t *testing.T) {
+	emptyPrompt := summaryPromptEstimate(summaryPromptTemplate, "", "fake/model")
+
+	_, err := splitSummaryMessageChunks(summaryPromptTemplate, turnHistory(1), "fake/model", emptyPrompt)
+	if err == nil || !strings.Contains(err.Error(), "cannot fit summary prompt overhead") {
+		t.Fatalf("splitSummaryMessageChunks error = %v, want prompt overhead error", err)
+	}
+
+	_, err = splitSummaryTextUnits(summaryPromptTemplate, []string{"summary"}, "fake/model", emptyPrompt)
+	if err == nil || !strings.Contains(err.Error(), "cannot fit summary prompt overhead") {
+		t.Fatalf("splitSummaryTextUnits error = %v, want prompt overhead error", err)
+	}
+}
+
+func TestIsContextOverflowError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "openai code", err: errors.New("context_length_exceeded"), want: true},
+		{name: "maximum context", err: errors.New("maximum context length is 8192 tokens"), want: true},
+		{name: "prompt too long", err: errors.New("prompt is too long: 202000 tokens > 200000 maximum"), want: true},
+		{name: "input tokens", err: errors.New("too many input tokens for this model"), want: true},
+		{name: "output limit", err: errors.New("tool call arguments truncated mid-stream (likely hit max_output_tokens before tool call completed)"), want: false},
+		{name: "rate limit", err: errors.New("rate limit exceeded"), want: false},
+		{name: "deadline", err: context.DeadlineExceeded, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isContextOverflowError(tt.err); got != tt.want {
+				t.Fatalf("isContextOverflowError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestAgentSummaryPromptCanUseShortStyle(t *testing.T) {
@@ -1857,7 +2168,7 @@ func TestAgentManualCompactSummarizesHistory(t *testing.T) {
 		t.Fatalf("Compact returned noop")
 	}
 	if len(summary.requests) != 1 || summary.requests[0].Model != "small" {
-		t.Fatalf("summary requests = %#v", summary.requests)
+		t.Fatalf("auto memory requests = %#v", summary.requests)
 	}
 	if len(result.Messages) == 0 || result.Messages[0].Role != message.RoleSystem || !strings.Contains(result.Messages[0].Text(), "manual summary") {
 		t.Fatalf("result first message = %#v", result.Messages)
@@ -1892,14 +2203,14 @@ func TestAgentManualCompactNoopsWithoutPrefix(t *testing.T) {
 	writer := &recordingRollout{}
 	var events []Event
 	a, err := New(Options{
-		Provider:        main,
-		SummaryProvider: summary,
-		Tools:           reg,
-		Permission:      perm,
-		Rollout:         writer,
-		Model:           "fake/model",
-		Mode:            execution.ModeWork,
-		Context:         config.ContextConfig{KeepRecentTurns: 3},
+		Provider:           main,
+		AutoMemoryProvider: summary,
+		Tools:              reg,
+		Permission:         perm,
+		Rollout:            writer,
+		Model:              "fake/model",
+		Mode:               execution.ModeWork,
+		Context:            config.ContextConfig{KeepRecentTurns: 3},
 		Events: func(event Event) {
 			events = append(events, event)
 		},
@@ -1916,7 +2227,7 @@ func TestAgentManualCompactNoopsWithoutPrefix(t *testing.T) {
 		t.Fatalf("result = %#v, want noop reason", result)
 	}
 	if len(summary.requests) != 0 {
-		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+		t.Fatalf("auto memory requests = %d, want 0", len(summary.requests))
 	}
 	if !reflect.DeepEqual(result.Messages, history) {
 		t.Fatalf("messages changed: %#v", result.Messages)
@@ -1988,7 +2299,7 @@ func TestAgentDoesNotSummarizeBelowThreshold(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(summary.requests) != 0 {
-		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+		t.Fatalf("auto memory requests = %d, want 0", len(summary.requests))
 	}
 	if got := main.requests[0].Messages; containsText(got, "summary should not run") {
 		t.Fatalf("main request unexpectedly summarized: %#v", got)
@@ -2126,6 +2437,19 @@ func turnHistory(turns int) []message.Message {
 	return out
 }
 
+func hugeTurnHistory(turns int, charsPerMessage int) []message.Message {
+	out := make([]message.Message, 0, turns*2)
+	body := strings.Repeat("x", charsPerMessage)
+	for i := 1; i <= turns; i++ {
+		out = append(
+			out,
+			message.Text(message.RoleUser, fmt.Sprintf("user %d %s", i, body)),
+			message.Text(message.RoleAssistant, fmt.Sprintf("assistant %d %s", i, body)),
+		)
+	}
+	return out
+}
+
 func containsText(messages []message.Message, text string) bool {
 	for _, msg := range messages {
 		if strings.Contains(msg.Text(), text) {
@@ -2169,6 +2493,15 @@ func firstContextEvent(events []Event) (Event, bool) {
 		}
 	}
 	return Event{}, false
+}
+
+func hasContextResetEvent(events []Event) bool {
+	for _, event := range events {
+		if event.Type == EventContext && event.ContextReset {
+			return true
+		}
+	}
+	return false
 }
 
 func newTestAgent(t *testing.T, p provider.Provider, reg *tool.Registry, perm *permission.Manager, mode execution.Mode) *Agent {
@@ -2802,15 +3135,15 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 	}}
 	enabled := true
 	a, err := New(Options{
-		Provider:        main,
-		Tools:           reg,
-		Permission:      perm,
-		Rollout:         writer,
-		Model:           "fake/model",
-		Mode:            execution.ModeWork,
-		SummaryProvider: summary,
-		SummaryModel:    "small",
-		WorkspaceRoot:   ws,
+		Provider:           main,
+		Tools:              reg,
+		Permission:         perm,
+		Rollout:            writer,
+		Model:              "fake/model",
+		Mode:               execution.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
 		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
 			Enabled:       &enabled,
 			MaxCandidates: 3,
@@ -2864,12 +3197,12 @@ func TestAgentAutoMemorySkipsPlanMode(t *testing.T) {
 	}}
 	enabled := true
 	a, err := New(Options{
-		Provider:        main,
-		Tools:           reg,
-		Model:           "fake/model",
-		Mode:            execution.ModePlan,
-		SummaryProvider: summary,
-		WorkspaceRoot:   ws,
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execution.ModePlan,
+		AutoMemoryProvider: summary,
+		WorkspaceRoot:      ws,
 		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
 			Enabled: &enabled,
 		}},
@@ -2881,7 +3214,7 @@ func TestAgentAutoMemorySkipsPlanMode(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if len(summary.requests) != 0 {
-		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+		t.Fatalf("auto memory requests = %d, want 0", len(summary.requests))
 	}
 	if got := memory.Read(ws, 0); got != "" {
 		t.Fatalf("plan mode should not write memory:\n%s", got)
@@ -2901,13 +3234,13 @@ func TestAgentAutoMemoryDoesNotRunForSimpleSingleTurn(t *testing.T) {
 	}}
 	enabled := true
 	a, err := New(Options{
-		Provider:        main,
-		Tools:           reg,
-		Model:           "fake/model",
-		Mode:            execution.ModeWork,
-		SummaryProvider: summary,
-		SummaryModel:    "small",
-		WorkspaceRoot:   ws,
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execution.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
 		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
 			Enabled: &enabled,
 		}},
@@ -2943,13 +3276,13 @@ func TestAgentAutoMemoryBatchesTurnsBeforeExtraction(t *testing.T) {
 	}}
 	enabled := true
 	a, err := New(Options{
-		Provider:        main,
-		Tools:           reg,
-		Model:           "fake/model",
-		Mode:            execution.ModeWork,
-		SummaryProvider: summary,
-		SummaryModel:    "small",
-		WorkspaceRoot:   ws,
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execution.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
 		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
 			Enabled:                 &enabled,
 			MinTurnsSinceExtraction: 2,
@@ -2967,7 +3300,7 @@ func TestAgentAutoMemoryBatchesTurnsBeforeExtraction(t *testing.T) {
 		t.Fatalf("DrainAutoMemory turn 1: %v", err)
 	}
 	if len(summary.requests) != 0 {
-		t.Fatalf("summary requests after turn 1 = %d, want 0", len(summary.requests))
+		t.Fatalf("auto memory requests after turn 1 = %d, want 0", len(summary.requests))
 	}
 	if _, err := a.Run(context.Background(), Request{
 		SessionID: "sess_batch_mem",
@@ -2981,7 +3314,7 @@ func TestAgentAutoMemoryBatchesTurnsBeforeExtraction(t *testing.T) {
 		t.Fatalf("DrainAutoMemory turn 2: %v", err)
 	}
 	if len(summary.requests) != 1 {
-		t.Fatalf("summary requests after turn 2 = %d, want 1", len(summary.requests))
+		t.Fatalf("auto memory requests after turn 2 = %d, want 1", len(summary.requests))
 	}
 	rendered := renderMessages(summary.requests[0].Messages)
 	if !strings.Contains(rendered, "first answer") || !strings.Contains(rendered, "second answer") {
@@ -3007,13 +3340,13 @@ func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
 	enabled := true
 	disableExternal := true
 	a, err := New(Options{
-		Provider:        main,
-		Tools:           reg,
-		Model:           "fake/model",
-		Mode:            execution.ModeWork,
-		SummaryProvider: summary,
-		SummaryModel:    "small",
-		WorkspaceRoot:   ws,
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execution.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
 		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
 			Enabled:                  &enabled,
 			DisableOnExternalContext: &disableExternal,
@@ -3029,7 +3362,7 @@ func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
 		t.Fatalf("DrainAutoMemory: %v", err)
 	}
 	if len(summary.requests) != 0 {
-		t.Fatalf("summary requests = %d, want 0", len(summary.requests))
+		t.Fatalf("auto memory requests = %d, want 0", len(summary.requests))
 	}
 }
 
