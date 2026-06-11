@@ -2745,6 +2745,8 @@ func (m *Model) applySessionState(state SessionState) {
 	} else if strings.TrimSpace(state.Model) != "" {
 		m.refreshEffortFromRunner()
 	}
+	m.refreshApprovalModelFromRunner()
+	m.refreshSmallModelFromRunner()
 	m.status.turn = state.Turn
 	m.status.contextUsedTokens = 0
 	m.status.contextMaxTokens = 0

@@ -4786,6 +4786,85 @@ func TestSlashResumeSwitchesExplicitSession(t *testing.T) {
 	}
 }
 
+func TestSlashResumeSyncsApprovalAndSmallModelState(t *testing.T) {
+	runner := &scriptedRunner{
+		provider:  "default",
+		providers: []string{"default", "manual"},
+		providerModels: map[string][]string{
+			"default": {"default/main"},
+			"manual":  {"manual/main"},
+		},
+		providerApprovalModels: map[string][]string{
+			"default": {"default/review"},
+			"manual":  {"manual/review", "manual/review-plus"},
+		},
+		providerSmallModels: map[string][]string{
+			"default": {"default/small"},
+			"manual":  {"manual/small"},
+		},
+		model:          "default/main",
+		models:         []string{"default/main"},
+		approvalModel:  "default/review",
+		approvalModels: []string{"default/review"},
+		smallModel:     "default/small",
+		smallModels:    []string{"default/small"},
+		sessionStates: map[string]SessionState{
+			"s2": {
+				ID:       "s2",
+				Provider: "manual",
+				Model:    "manual/main",
+				Models:   []string{"manual/main"},
+				Messages: []InitialMessage{
+					{Role: userRole, Text: "restored prompt"},
+				},
+			},
+		},
+	}
+	model := NewModel(Options{
+		Runner:         runner,
+		Provider:       runner.provider,
+		Providers:      runner.providers,
+		Model:          runner.model,
+		Models:         runner.models,
+		ApprovalModel:  runner.approvalModel,
+		ApprovalModels: runner.approvalModels,
+		SmallModel:     runner.smallModel,
+		SmallModels:    runner.smallModels,
+	})
+
+	model = sendText(t, model, "/resume s2")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd != nil {
+		t.Fatalf("slash resume id returned unexpected command")
+	}
+	model = assertModel(t, updated)
+	model = sendText(t, model, "/config")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	texts := model.MessageTexts()
+	if len(texts) < 3 || !strings.Contains(texts[len(texts)-1], "provider=manual model=manual/main") || !strings.Contains(texts[len(texts)-1], "approval_model=manual/review small_model=manual/small") {
+		t.Fatalf("config did not sync resumed approval/small models: %#v", texts)
+	}
+
+	model = sendText(t, model, "/approval-model")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	view := viewString(model)
+	if !strings.Contains(view, "> manual/review") || !strings.Contains(view, "  manual/review-plus") || strings.Contains(view, "default/review") {
+		t.Fatalf("approval picker not synced after resume:\n%s", view)
+	}
+	updated, _ = model.Update(keyPress(tea.KeyEsc))
+	model = assertModel(t, updated)
+
+	model = sendText(t, model, "/small-model")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	view = viewString(model)
+	if !strings.Contains(view, "> manual/small") || strings.Contains(view, "default/small") {
+		t.Fatalf("small picker not synced after resume:\n%s", view)
+	}
+}
+
 func TestSlashResumeDoesNotSearchSessions(t *testing.T) {
 	runner := &scriptedRunner{}
 	model := NewModel(Options{Runner: runner})
@@ -5615,6 +5694,20 @@ func (r *scriptedRunner) SwitchSession(_ context.Context, id string) (SessionSta
 	r.currentSessionID = id
 	if state.Provider != "" {
 		r.provider = state.Provider
+		if candidates, ok := r.providerApprovalModels[state.Provider]; ok {
+			r.approvalModels = append([]string(nil), candidates...)
+			r.approvalModel = ""
+			if len(r.approvalModels) > 0 {
+				r.approvalModel = r.approvalModels[0]
+			}
+		}
+		if candidates, ok := r.providerSmallModels[state.Provider]; ok {
+			r.smallModels = append([]string(nil), candidates...)
+			r.smallModel = ""
+			if len(r.smallModels) > 0 {
+				r.smallModel = r.smallModels[0]
+			}
+		}
 	}
 	if state.Model != "" {
 		r.model = state.Model
