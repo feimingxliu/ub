@@ -983,6 +983,42 @@ func TestMessagesForTUIFromRolloutRestoresThinkingActivity(t *testing.T) {
 	}
 }
 
+func TestMessagesForTUIFromRolloutRestoresSubagentActivityMetadata(t *testing.T) {
+	userEvent, err := rollout.UserMessage("sess_1", 3, message.Text(message.RoleUser, "delegate"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	childToolEvent, err := rollout.Activity("sess_1", 3, rollout.ActivityPayload{
+		ActivityKind:    "tool",
+		ToolUseID:       "subagent:call_task:call_read",
+		ToolName:        "read",
+		ParentToolUseID: "call_task",
+		SubagentID:      "subagent-1",
+		Status:          "done",
+		Summary:         "path=README.md",
+		Content:         "file content",
+	})
+	if err != nil {
+		t.Fatalf("Activity: %v", err)
+	}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{
+		events: []rollout.Event{userEvent, childToolEvent},
+	}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("messages len = %d, want 2: %#v", len(got), got)
+	}
+	if got[1].Turn != 3 || got[1].ActivityKind != "tool" || got[1].ToolName != "read" {
+		t.Fatalf("subagent activity = %#v", got[1])
+	}
+	if got[1].ParentToolUseID != "call_task" || got[1].SubagentID != "subagent-1" || got[1].ToolUseID != "subagent:call_task:call_read" {
+		t.Fatalf("subagent metadata = %#v", got[1])
+	}
+}
+
 func TestMessagesForTUIFromRolloutRestoresSummaryContextMessages(t *testing.T) {
 	oldEvent, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "old prompt"))
 	if err != nil {

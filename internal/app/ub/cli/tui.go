@@ -145,6 +145,7 @@ type tuiAgentRunner struct {
 	cmd                  *cobra.Command
 	cfg                  *config.Config
 	provider             provider.Provider
+	providerCache        *providerCache
 	providerName         string
 	providerCfg          config.ProviderConfig
 	model                string
@@ -198,7 +199,8 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	p, err := provider.New(providerName, providerCfg)
+	providers := newProviderCache()
+	p, err := providers.Get(providerName, providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
@@ -214,15 +216,15 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	approvalSetup, err := newApprovalAgentSetup(cmd.Context(), cfg, providerName, model)
+	approvalSetup, err := newApprovalAgentSetup(cmd.Context(), cfg, providerName, model, providers)
 	if err != nil {
 		return nil, err
 	}
-	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model, providers)
 	if err != nil {
 		return nil, err
 	}
-	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model, providers)
 	if err != nil {
 		return nil, err
 	}
@@ -250,6 +252,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		cmd:                  cmd,
 		cfg:                  cfg,
 		provider:             p,
+		providerCache:        providers,
 		providerName:         providerName,
 		providerCfg:          providerCfg,
 		model:                model,
@@ -623,25 +626,8 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 	if err != nil {
 		return nil, err
 	}
-	subRunner := &cliSubagentRunner{
-		provider:         r.provider,
-		tools:            r.tools.Registry,
-		permission:       r.permission,
-		model:            r.model,
-		mode:             r.currentMode(),
-		modeFunc:         r.currentMode,
-		reasoningCfg:     cloneReasoningConfig(r.reasoning),
-		maxContextTokens: maxContext,
-		contextCfg:       r.contextCfg,
-		promptCfg:        r.cfg.Prompt,
-		runtime:          runtime,
-		hooks:            hooksRunner,
-		defaultMaxTurns:  r.maxTurns,
-		workspaceRoot:    r.tools.Workspace,
-		memoryMaxChars:   r.cfg.Memory.MaxChars,
-		fileHistory:      fileHistory,
-	}
-	a, err := agent.New(agent.Options{
+	var parentEvents agent.EventSink
+	factory := agent.NewFactory(agent.Options{
 		Provider:            r.provider,
 		Tools:               r.tools.Registry,
 		Permission:          r.permission,
@@ -665,12 +651,40 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		MemoryMaxChars:      r.cfg.Memory.MaxChars,
 		Memory:              r.cfg.Memory,
 		MemoryAutoScheduler: r.memoryAutoScheduler,
-		SubagentRunner:      subRunner,
 		FileHistory:         fileHistory,
-		Events: func(event agent.Event) {
-			sendTUIEvent(ctx, events, convertAgentEvent(event))
+		BackgroundEvents:    r.backgroundEventSink(ctx),
+	})
+	subRunner := &cliSubagentRunner{
+		factory:          factory,
+		provider:         r.provider,
+		tools:            r.tools.Registry,
+		permission:       r.permission,
+		model:            r.model,
+		mode:             r.currentMode(),
+		modeFunc:         r.currentMode,
+		reasoningCfg:     cloneReasoningConfig(r.reasoning),
+		maxContextTokens: maxContext,
+		contextCfg:       r.contextCfg,
+		promptCfg:        r.cfg.Prompt,
+		runtime:          runtime,
+		hooks:            hooksRunner,
+		defaultMaxTurns:  r.maxTurns,
+		workspaceRoot:    r.tools.Workspace,
+		memoryMaxChars:   r.cfg.Memory.MaxChars,
+		fileHistory:      fileHistory,
+		rollout:          r.state.rollout,
+		events: func(event agent.Event) {
+			if parentEvents != nil {
+				parentEvents(event)
+			}
 		},
-		BackgroundEvents: r.backgroundEventSink(ctx),
+	}
+	parentEvents = func(event agent.Event) {
+		sendTUIEvent(ctx, events, convertAgentEvent(event))
+	}
+	a, err := factory.New(func(opts *agent.Options) {
+		opts.SubagentRunner = subRunner
+		opts.Events = parentEvents
 	})
 	if err != nil {
 		return nil, err
@@ -1016,21 +1030,21 @@ func (r *tuiAgentRunner) setProviderModel(ctx context.Context, providerName, mod
 	if err != nil {
 		return tui.ProviderSelection{}, err
 	}
-	p, err := provider.New(providerName, providerCfg)
+	p, err := cachedProvider(r.providerCache, providerName, providerCfg)
 	if err != nil {
 		return tui.ProviderSelection{}, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
 	models := r.providerModels(r.cmd.Context(), providerName, providerCfg, selectedModel)
 	info := modelinfo.Resolve(providerName, providerCfg, selectedModel)
-	summarySetup, err := newSummarySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel)
+	summarySetup, err := newSummarySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel, r.providerCache)
 	if err != nil {
 		return tui.ProviderSelection{}, err
 	}
-	autoMemorySetup, err := newAutoMemorySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel)
+	autoMemorySetup, err := newAutoMemorySetup(r.cmd.Context(), r.cfg, providerName, providerCfg, selectedModel, r.providerCache)
 	if err != nil {
 		return tui.ProviderSelection{}, err
 	}
-	approvalSetup, err := newApprovalAgentSetup(r.cmd.Context(), r.cfg, providerName, selectedModel)
+	approvalSetup, err := newApprovalAgentSetup(r.cmd.Context(), r.cfg, providerName, selectedModel, r.providerCache)
 	if err != nil {
 		return tui.ProviderSelection{}, err
 	}
@@ -1258,7 +1272,7 @@ func (r *tuiAgentRunner) SmallModels() []string {
 }
 
 func (r *tuiAgentRunner) newApprovalAgent(model string) (approval.Agent, error) {
-	p, err := provider.New(r.approvalProviderName, r.approvalProviderCfg)
+	p, err := cachedProvider(r.providerCache, r.approvalProviderName, r.approvalProviderCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create approval provider %q: %w", r.approvalProviderName, err)
 	}
@@ -1652,18 +1666,20 @@ func appendToolResultForTUI(out []tui.InitialMessage, toolUses map[string]messag
 
 func activityMessageForTUI(activity rollout.ActivityPayload, turn int) tui.InitialMessage {
 	return tui.InitialMessage{
-		Turn:         turn,
-		ActivityKind: activity.ActivityKind,
-		ToolUseID:    activity.ToolUseID,
-		ToolName:     activity.ToolName,
-		Status:       activity.Status,
-		Summary:      activity.Summary,
-		Content:      activity.Content,
-		Decision:     activity.Decision,
-		Source:       activity.Source,
-		Reason:       activity.Reason,
-		Allowed:      activity.Allowed,
-		IsError:      activity.IsError,
+		Turn:            turn,
+		ActivityKind:    activity.ActivityKind,
+		ToolUseID:       activity.ToolUseID,
+		ToolName:        activity.ToolName,
+		ParentToolUseID: activity.ParentToolUseID,
+		SubagentID:      activity.SubagentID,
+		Status:          activity.Status,
+		Summary:         activity.Summary,
+		Content:         activity.Content,
+		Decision:        activity.Decision,
+		Source:          activity.Source,
+		Reason:          activity.Reason,
+		Allowed:         activity.Allowed,
+		IsError:         activity.IsError,
 	}
 }
 
@@ -1680,18 +1696,20 @@ func convertAgentEvent(event agent.Event) tui.Event {
 		return tui.Event{Type: tui.EventDeltaText, Text: event.Text}
 	case agent.EventActivity:
 		return tui.Event{
-			Type:         tui.EventActivity,
-			ToolUseID:    event.ToolUseID,
-			ToolName:     event.ToolName,
-			Content:      event.Content,
-			ActivityKind: string(event.ActivityKind),
-			Status:       event.Status,
-			Summary:      event.Summary,
-			Decision:     event.Decision,
-			Source:       event.Source,
-			Reason:       event.Reason,
-			Allowed:      event.Allowed,
-			IsError:      event.IsError,
+			Type:            tui.EventActivity,
+			ToolUseID:       event.ToolUseID,
+			ToolName:        event.ToolName,
+			ParentToolUseID: event.ParentToolUseID,
+			SubagentID:      event.SubagentID,
+			Content:         event.Content,
+			ActivityKind:    string(event.ActivityKind),
+			Status:          event.Status,
+			Summary:         event.Summary,
+			Decision:        event.Decision,
+			Source:          event.Source,
+			Reason:          event.Reason,
+			Allowed:         event.Allowed,
+			IsError:         event.IsError,
 		}
 	case agent.EventContext:
 		return tui.Event{
@@ -1704,13 +1722,15 @@ func convertAgentEvent(event agent.Event) tui.Event {
 		}
 	case agent.EventToolPartialOutput:
 		return tui.Event{
-			Type:      tui.EventToolPartialOutput,
-			ToolUseID: event.ToolUseID,
-			ToolName:  event.ToolName,
-			Status:    event.Status,
-			Summary:   event.Summary,
-			Content:   event.Content,
-			IsError:   event.IsError,
+			Type:            tui.EventToolPartialOutput,
+			ToolUseID:       event.ToolUseID,
+			ToolName:        event.ToolName,
+			ParentToolUseID: event.ParentToolUseID,
+			SubagentID:      event.SubagentID,
+			Status:          event.Status,
+			Summary:         event.Summary,
+			Content:         event.Content,
+			IsError:         event.IsError,
 		}
 	case agent.EventToolCallStart:
 		return tui.Event{Type: tui.EventToolCallStart, ToolName: event.ToolName}

@@ -8,7 +8,6 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/core/config"
 	"github.com/feimingxliu/ub/internal/pkg/core/reasoning"
 	"github.com/feimingxliu/ub/internal/pkg/llm/modelinfo"
-	"github.com/feimingxliu/ub/internal/pkg/llm/provider"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/approval"
 )
 
@@ -21,15 +20,15 @@ type approvalAgentSetup struct {
 	Reasoning      *reasoning.Config
 }
 
-func newApprovalAgentFromConfig(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string) (approval.Agent, error) {
-	setup, err := newApprovalAgentSetup(ctx, cfg, fallbackProvider, fallbackModel)
+func newApprovalAgentFromConfig(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string, caches ...*providerCache) (approval.Agent, error) {
+	setup, err := newApprovalAgentSetup(ctx, cfg, fallbackProvider, fallbackModel, caches...)
 	if err != nil {
 		return nil, err
 	}
 	return setup.Agent, nil
 }
 
-func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string) (approvalAgentSetup, error) {
+func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string, caches ...*providerCache) (approvalAgentSetup, error) {
 	if cfg == nil {
 		return approvalAgentSetup{}, nil
 	}
@@ -75,7 +74,7 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 	if model == "" {
 		return approvalAgentSetup{}, nil
 	}
-	p, err := provider.New(providerName, providerCfg)
+	p, err := cachedProvider(firstProviderCache(caches), providerName, providerCfg)
 	if err != nil {
 		return approvalAgentSetup{}, fmt.Errorf("create approval provider %q: %w", providerName, err)
 	}

@@ -456,12 +456,13 @@ max_turns: 80
 - "去 grep 一下 internal/pkg/integration/lsp/ 里所有用到 deprecated API 的地方,列出 file:line 给我"
 - "调研一下 docker-compose 里这两个服务的依赖关系,写一段 200 字总结"
 
-子 agent 与主 agent **共享 provider 与工具集**,但**独立 conversation context**(因此可以隔离掉调研期间的中间状态,避免污染主 prompt)。本版本是最小可用版,有以下取舍:
+子 agent 与主 agent **共享 provider 与工具集**,但**独立 conversation context**(因此可以隔离掉调研期间的中间状态,避免污染主 prompt)。agent 执行器本身保持轻量无状态:provider/client 通过 CLI runtime cache 复用,主/子 Agent 通过 `agent.Factory` 从共享构造模板新建,状态通过父 session / rollout / tool result 外置保存。本版本有以下取舍:
 
 - **深度上限 = 1**:子 agent 里再调 `task` 会被工具直接拒绝(避免递归 token 爆炸)
 - **`max_turns` 只限制子 agent**:省略时继承当前 agent 默认,即默认不按步数截断;传入正整数时只对该子任务生效
-- **不持久化 rollout**:子 agent 不写 store(避免 session 列表被刷屏);完整结果只通过 tool result 返回
-- **不显示在 TUI 活动流里**:子 agent 的 tool call 不会逐步显示;你只看到主 agent 的 `task` 工具调用摘要和最终 markdown 结果
+- **不创建独立 session**:子 agent 不刷 session 列表;最终回答仍作为父 `task` tool result 返回
+- **父 turn 可观测**:子 agent 的 start/done、tool lifecycle、permission 等 display-only activity 会镜像进父 rollout/TUI,带 `subagent:` 前缀并用 `subagent:<parent-task>:<child-tool>` 命名空间隔离;恢复 session 时这些 activity 仍可见
+- **reasoning 只 live 展示**:子 agent reasoning delta 只走 TUI live activity,不逐片持久化进 rollout,避免长推理把父 session 数据库刷大
 
 后续 §4-01 agent loop 解耦完成后,会扩成"子 agent 独立模型 / 工具集 / TUI 多 pane"等完整能力。
 

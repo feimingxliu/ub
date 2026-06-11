@@ -3020,9 +3020,11 @@ func TestAgentPreToolCallHookCanBlockExecution(t *testing.T) {
 // captureSubagentTool records whether the SubagentRunner was visible in
 // the ctx that the agent passed into Execute.
 type captureSubagentTool struct {
-	gotRunner bool
-	gotDepth  int
-	schema    *jsonschema.Schema
+	gotRunner    bool
+	gotDepth     int
+	gotTurn      int
+	gotToolUseID string
+	schema       *jsonschema.Schema
 }
 
 func (t *captureSubagentTool) Name() string        { return "captureSubagent" }
@@ -3037,6 +3039,8 @@ func (t *captureSubagentTool) Risk() tool.Risk { return tool.RiskSafe }
 func (t *captureSubagentTool) Execute(ctx context.Context, _ json.RawMessage) (tool.Result, error) {
 	t.gotRunner = tool.SubagentRunnerFromContext(ctx) != nil
 	t.gotDepth = tool.SubagentDepthFromContext(ctx)
+	t.gotTurn = tool.AgentTurnFromContext(ctx)
+	t.gotToolUseID = tool.ToolUseIDFromContext(ctx)
 	return tool.Result{Content: "ok"}, nil
 }
 
@@ -3054,7 +3058,7 @@ func TestAgent_InjectsSubagentRunnerIntoToolContext(t *testing.T) {
 	}
 	perm := newPermissionManager(t, nil)
 	p := &scriptProvider{scripts: []fake.Script{
-		{fake.ToolCall("captureSubagent", map[string]any{}), fake.Done()},
+		{{Type: provider.EventToolCall, ToolUseID: "call_capture", ToolName: "captureSubagent", Input: json.RawMessage(`{}`)}, fake.Done()},
 		{fake.TextDelta("done"), fake.Done()},
 	}}
 	a, err := New(Options{
@@ -3068,7 +3072,7 @@ func TestAgent_InjectsSubagentRunnerIntoToolContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := a.Run(context.Background(), Request{Prompt: "go", Turn: 1}); err != nil {
+	if _, err := a.Run(context.Background(), Request{Prompt: "go", Turn: 4}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if !cap.gotRunner {
@@ -3076,6 +3080,12 @@ func TestAgent_InjectsSubagentRunnerIntoToolContext(t *testing.T) {
 	}
 	if cap.gotDepth != 0 {
 		t.Fatalf("depth in tool ctx = %d, want 0 (root call)", cap.gotDepth)
+	}
+	if cap.gotTurn != 4 {
+		t.Fatalf("turn in tool ctx = %d, want 4", cap.gotTurn)
+	}
+	if cap.gotToolUseID != "call_capture" {
+		t.Fatalf("tool use id in ctx = %q, want call_capture", cap.gotToolUseID)
 	}
 }
 

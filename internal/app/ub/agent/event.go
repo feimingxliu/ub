@@ -28,20 +28,22 @@ const (
 
 // Event reports Agent progress to interactive callers such as the TUI.
 type Event struct {
-	Type         EventType
-	Text         string
-	ToolUseID    string
-	ToolName     string
-	Content      string
-	ActivityKind ActivityKind
-	Status       string
-	Summary      string
-	Decision     string
-	Source       string
-	Reason       string
-	Allowed      bool
-	IsError      bool
-	Err          error
+	Type            EventType
+	Text            string
+	ToolUseID       string
+	ToolName        string
+	ParentToolUseID string
+	SubagentID      string
+	Content         string
+	ActivityKind    ActivityKind
+	Status          string
+	Summary         string
+	Decision        string
+	Source          string
+	Reason          string
+	Allowed         bool
+	IsError         bool
+	Err             error
 
 	ContextUsedTokens int
 	ContextMaxTokens  int

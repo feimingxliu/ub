@@ -15,11 +15,11 @@ type summarySetup struct {
 	UsesCurrentModel bool
 }
 
-func newSummarySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (summarySetup, error) {
-	return newProviderModelSetup(ctx, providerName, providerCfg, strings.TrimSpace(fallbackModel), true, "summary")
+func newSummarySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, caches ...*providerCache) (summarySetup, error) {
+	return newProviderModelSetup(ctx, providerName, providerCfg, strings.TrimSpace(fallbackModel), true, "summary", firstProviderCache(caches))
 }
 
-func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (summarySetup, error) {
+func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, caches ...*providerCache) (summarySetup, error) {
 	if cfg == nil {
 		return summarySetup{}, nil
 	}
@@ -27,10 +27,10 @@ func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName st
 	if err != nil {
 		return summarySetup{}, err
 	}
-	return newProviderModelSetup(ctx, providerName, providerCfg, model, usesCurrent, "auto memory")
+	return newProviderModelSetup(ctx, providerName, providerCfg, model, usesCurrent, "auto memory", firstProviderCache(caches))
 }
 
-func newProviderModelSetup(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string, usesCurrent bool, purpose string) (summarySetup, error) {
+func newProviderModelSetup(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string, usesCurrent bool, purpose string, cache *providerCache) (summarySetup, error) {
 	model, err := selectProviderModel(ctx, providerName, providerCfg, model)
 	if err != nil {
 		return summarySetup{}, fmt.Errorf("select %s model: %w", purpose, err)
@@ -38,7 +38,7 @@ func newProviderModelSetup(ctx context.Context, providerName string, providerCfg
 	if strings.TrimSpace(model) == "" {
 		return summarySetup{}, nil
 	}
-	p, err := provider.New(providerName, providerCfg)
+	p, err := cachedProvider(cache, providerName, providerCfg)
 	if err != nil {
 		return summarySetup{}, fmt.Errorf("create %s provider %q: %w", purpose, providerName, err)
 	}
@@ -47,6 +47,15 @@ func newProviderModelSetup(ctx context.Context, providerName string, providerCfg
 		Model:            model,
 		UsesCurrentModel: usesCurrent,
 	}, nil
+}
+
+func firstProviderCache(caches []*providerCache) *providerCache {
+	for _, cache := range caches {
+		if cache != nil {
+			return cache
+		}
+	}
+	return nil
 }
 
 func selectSmallModel(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (string, bool, error) {

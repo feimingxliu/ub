@@ -93,6 +93,7 @@
 - F-TOOL-5：Agent loop MUST NOT 使用小的固定默认轮数截断正常工具链路；`max_turns` 未设置时默认不按步数截断，只有 `max_turns > 0` 才启用 hard guard。系统 MUST 对重复相同 tool-call/result 的循环做基础检测，并在命中时发起一次禁用工具的收尾请求，避免无限重复。
 - F-TOOL-6：系统 MUST 提供 `todo_write` / `todo_update` 维护当前 session 的执行清单；todo 状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`，同一清单最多一个 `in_progress`。todo 工具 MUST 与 plan artifact 分离，不直接修改 plan markdown checkbox；其 tool result MUST 进入 rollout，并且 TUI MUST 将其渲染为独立 Todo view 而不是只藏在 tool block 详情中，以便 live view、resume 和调试重建清单。
 - F-TOOL-7：TUI MUST 提供 plan artifact review/edit 入口，允许用户从 plan tool 完成摘要中看到 `plan_id`，也允许通过当前 workspace 的 plan picker 选择 artifact，或按 `plan_id` 打开 state-root 下的 plan markdown 并在外部编辑器中修改，编辑完成后返回 TUI。
+- F-TOOL-8：`task` 子 agent MUST 使用独立 conversation context 并把最终回答作为父 tool result 返回。子 agent MUST NOT 创建独立 session 列表项；其 start/done、tool lifecycle、permission 等 display-only activity MUST 镜像进父 session 的当前 turn，并携带父 `task` tool id 与子 agent id，便于 TUI live view、resume 和 rollout 调试重建子任务 trace。
 
 ### 4.4 执行模式
 

@@ -1591,6 +1591,79 @@ func TestTaskToolActivityUsesReadableTitle(t *testing.T) {
 	}
 }
 
+func TestSubagentActivityUsesPrefixAndScopedKeys(t *testing.T) {
+	tool := activityMessage(Event{
+		Type:            EventActivity,
+		ActivityKind:    "tool",
+		ToolUseID:       "subagent:call_task:call_read",
+		ToolName:        "read",
+		ParentToolUseID: "call_task",
+		SubagentID:      "subagent-1",
+		Status:          "done",
+		Summary:         "path=README.md",
+	})
+	if !strings.HasPrefix(tool.title, "subagent: ") {
+		t.Fatalf("tool title = %q, want subagent prefix", tool.title)
+	}
+	if tool.key != "tool:subagent:call_task:call_read" {
+		t.Fatalf("tool key = %q, want namespaced key", tool.key)
+	}
+
+	thinking := activityMessage(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		SubagentID:   "subagent-1",
+		Summary:      "checking files",
+	})
+	if thinking.key != "subagent:subagent-1:thinking" {
+		t.Fatalf("thinking key = %q, want subagent scoped key", thinking.key)
+	}
+	if !strings.HasPrefix(thinking.title, "subagent: thinking") {
+		t.Fatalf("thinking title = %q, want subagent thinking prefix", thinking.title)
+	}
+
+	partial := toolPartialActivity(Event{
+		Type:            EventToolPartialOutput,
+		ToolUseID:       "subagent:call_task:call_bash",
+		ToolName:        "bash",
+		ParentToolUseID: "call_task",
+		SubagentID:      "subagent-1",
+		Summary:         "cmd=go test",
+		Content:         "ok\n",
+	})
+	if partial.ParentToolUseID != "call_task" || partial.SubagentID != "subagent-1" {
+		t.Fatalf("partial metadata = parent %q subagent %q, want preserved", partial.ParentToolUseID, partial.SubagentID)
+	}
+}
+
+func TestSubagentThinkingMergeKeepsPrefix(t *testing.T) {
+	first := activityMessage(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		SubagentID:   "subagent-1",
+		Summary:      "checking",
+		Content:      "checking",
+	})
+	second := activityMessage(Event{
+		Type:         EventActivity,
+		ActivityKind: "thinking",
+		SubagentID:   "subagent-1",
+		Summary:      " files",
+		Content:      " files",
+	})
+
+	merged := mergeActivityMessage(first, second)
+	if !strings.HasPrefix(merged.title, "subagent: thinking: ") {
+		t.Fatalf("merged title = %q, want subagent thinking prefix", merged.title)
+	}
+	if !strings.HasPrefix(merged.text, "subagent: thinking: ") {
+		t.Fatalf("merged text = %q, want subagent thinking prefix", merged.text)
+	}
+	if merged.detail != "checking files" {
+		t.Fatalf("merged detail = %q, want concatenated reasoning", merged.detail)
+	}
+}
+
 func TestLoadedLegacyTaskActivityUsesCurrentReadableTitle(t *testing.T) {
 	model := NewModel(Options{Messages: []InitialMessage{{
 		Turn:         1,

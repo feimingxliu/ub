@@ -500,19 +500,21 @@ func (l *messageList) load(messages []InitialMessage) {
 	for _, msg := range messages {
 		if strings.TrimSpace(msg.ActivityKind) != "" {
 			event := Event{
-				Type:         EventActivity,
-				Text:         msg.Text,
-				ToolUseID:    msg.ToolUseID,
-				ToolName:     msg.ToolName,
-				Content:      msg.Content,
-				ActivityKind: msg.ActivityKind,
-				Status:       msg.Status,
-				Summary:      msg.Summary,
-				Decision:     msg.Decision,
-				Source:       msg.Source,
-				Reason:       msg.Reason,
-				Allowed:      msg.Allowed,
-				IsError:      msg.IsError,
+				Type:            EventActivity,
+				Text:            msg.Text,
+				ToolUseID:       msg.ToolUseID,
+				ToolName:        msg.ToolName,
+				ParentToolUseID: msg.ParentToolUseID,
+				SubagentID:      msg.SubagentID,
+				Content:         msg.Content,
+				ActivityKind:    msg.ActivityKind,
+				Status:          msg.Status,
+				Summary:         msg.Summary,
+				Decision:        msg.Decision,
+				Source:          msg.Source,
+				Reason:          msg.Reason,
+				Allowed:         msg.Allowed,
+				IsError:         msg.IsError,
 			}
 			l.appendOrUpdateLoadedActivity(event, msg.Turn)
 			continue
@@ -1731,9 +1733,36 @@ func mergeThinkingMessage(existing, incoming message) message {
 	}
 	summary := thinkingSummary(detail)
 	incoming.detail = detail
-	incoming.title = "thinking: " + summary
+	incoming.title = thinkingTitlePrefix(incoming, existing) + summary
 	incoming.text = incoming.title
 	return incoming
+}
+
+func thinkingTitlePrefix(items ...message) string {
+	fallback := "thinking: "
+	for _, item := range items {
+		for _, text := range []string{item.title, item.text} {
+			prefix, ok := titlePrefixBeforeThinking(text)
+			if ok {
+				titlePrefix := prefix + "thinking: "
+				if strings.TrimSpace(prefix) != "" {
+					return titlePrefix
+				}
+				fallback = titlePrefix
+			}
+		}
+	}
+	return fallback
+}
+
+func titlePrefixBeforeThinking(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	lower := strings.ToLower(text)
+	idx := strings.Index(lower, "thinking:")
+	if idx < 0 {
+		return "", false
+	}
+	return text[:idx], true
 }
 
 func thinkingDetail(item message) string {
@@ -1783,7 +1812,11 @@ func thinkingSummary(detail string) string {
 
 func stripThinkingPrefix(text string) string {
 	text = strings.TrimSpace(text)
-	if strings.HasPrefix(strings.ToLower(text), "thinking:") {
+	lower := strings.ToLower(text)
+	if strings.HasPrefix(lower, "subagent: thinking:") {
+		return strings.TrimSpace(text[len("subagent: thinking:"):])
+	}
+	if strings.HasPrefix(lower, "thinking:") {
 		return strings.TrimSpace(text[len("thinking:"):])
 	}
 	return text
@@ -1813,13 +1846,17 @@ func activityEntryKey(event Event) string {
 	if key := activityEventKey(event); strings.TrimSpace(key) != "" {
 		return key
 	}
+	prefix := ""
+	if subagentID := strings.TrimSpace(event.SubagentID); subagentID != "" {
+		prefix = "subagent:" + subagentID + ":"
+	}
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "permission":
 		source := defaultString(event.Source, "permission")
 		toolName := defaultString(event.ToolName, "tool")
-		return "permission:" + source + ":" + toolName
+		return prefix + "permission:" + source + ":" + toolName
 	case "notice":
-		return "notice:" + defaultString(event.Summary, event.Text)
+		return prefix + "notice:" + defaultString(event.Summary, event.Text)
 	default:
 		return ""
 	}
@@ -2153,13 +2190,13 @@ func activityMessage(event Event) message {
 			text:      activityEventText(event),
 			key:       activityEventKey(event),
 			kind:      thinkingMessage,
-			title:     "thinking: " + thinkingSummary(summary),
+			title:     subagentActivityPrefix(event) + "thinking: " + thinkingSummary(summary),
 			status:    "running",
 			detail:    detail,
 			collapsed: true,
 		}
 	case "tool":
-		text := toolActivityText(event)
+		text := subagentActivityPrefix(event) + toolActivityText(event)
 		detail := event.Content
 		if toolDetailUsesTodoStyle(event.ToolName) {
 			detail = ""
@@ -2176,7 +2213,7 @@ func activityMessage(event Event) message {
 			collapsed: true,
 		}
 	case "permission":
-		text := permissionEventText(event)
+		text := subagentActivityPrefix(event) + permissionEventText(event)
 		return message{
 			role:      activityRole,
 			text:      text,

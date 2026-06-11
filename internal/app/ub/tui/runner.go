@@ -124,19 +124,21 @@ type InitialMessage struct {
 	// Turn is the agent loop turn this message belongs to. Used during resume
 	// to namespace activity groups so tools/thinking from different turns do
 	// not collapse into a single block.
-	Turn         int
-	Text         string
-	ToolUseID    string
-	ToolName     string
-	Content      string
-	ActivityKind string
-	Status       string
-	Summary      string
-	Decision     string
-	Source       string
-	Reason       string
-	Allowed      bool
-	IsError      bool
+	Turn            int
+	Text            string
+	ToolUseID       string
+	ToolName        string
+	ParentToolUseID string
+	SubagentID      string
+	Content         string
+	ActivityKind    string
+	Status          string
+	Summary         string
+	Decision        string
+	Source          string
+	Reason          string
+	Allowed         bool
+	IsError         bool
 }
 
 // SessionInfo is one selectable persisted session.
@@ -232,20 +234,22 @@ const (
 
 // Event is one Agent-to-TUI progress message.
 type Event struct {
-	Type         EventType
-	Text         string
-	ToolUseID    string
-	ToolName     string
-	Content      string
-	ActivityKind string
-	Status       string
-	Summary      string
-	Decision     string
-	Source       string
-	Reason       string
-	Allowed      bool
-	IsError      bool
-	Err          error
+	Type            EventType
+	Text            string
+	ToolUseID       string
+	ToolName        string
+	ParentToolUseID string
+	SubagentID      string
+	Content         string
+	ActivityKind    string
+	Status          string
+	Summary         string
+	Decision        string
+	Source          string
+	Reason          string
+	Allowed         bool
+	IsError         bool
+	Err             error
 
 	ContextUsedTokens int
 	ContextMaxTokens  int

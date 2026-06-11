@@ -124,17 +124,19 @@ func (a *Agent) emitPermissionActivity(toolName, source, decision, reason string
 
 func rolloutActivityPayload(event Event) rollout.ActivityPayload {
 	return rollout.ActivityPayload{
-		ActivityKind: string(event.ActivityKind),
-		ToolUseID:    event.ToolUseID,
-		ToolName:     event.ToolName,
-		Status:       event.Status,
-		Summary:      event.Summary,
-		Content:      event.Content,
-		Decision:     event.Decision,
-		Source:       event.Source,
-		Reason:       event.Reason,
-		Allowed:      event.Allowed,
-		IsError:      event.IsError,
+		ActivityKind:    string(event.ActivityKind),
+		ToolUseID:       event.ToolUseID,
+		ToolName:        event.ToolName,
+		ParentToolUseID: event.ParentToolUseID,
+		SubagentID:      event.SubagentID,
+		Status:          event.Status,
+		Summary:         event.Summary,
+		Content:         event.Content,
+		Decision:        event.Decision,
+		Source:          event.Source,
+		Reason:          event.Reason,
+		Allowed:         event.Allowed,
+		IsError:         event.IsError,
 	}
 }
 

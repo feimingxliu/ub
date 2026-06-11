@@ -60,3 +60,31 @@ func TestSubagentDepth_RoundTrip(t *testing.T) {
 		t.Fatalf("depth = %d, want 1", got)
 	}
 }
+
+func TestAgentTurn_RoundTrip(t *testing.T) {
+	ctx := WithAgentTurn(context.Background(), 3)
+	if got := AgentTurnFromContext(ctx); got != 3 {
+		t.Fatalf("turn = %d, want 3", got)
+	}
+}
+
+func TestAgentTurn_NonPositiveDropped(t *testing.T) {
+	ctx := WithAgentTurn(context.Background(), 0)
+	if got := AgentTurnFromContext(ctx); got != 0 {
+		t.Fatalf("non-positive turn leaked: %d", got)
+	}
+}
+
+func TestToolUseID_RoundTrip(t *testing.T) {
+	ctx := WithToolUseID(context.Background(), "call_1")
+	if got := ToolUseIDFromContext(ctx); got != "call_1" {
+		t.Fatalf("tool use id = %q, want call_1", got)
+	}
+}
+
+func TestToolUseID_EmptyDropped(t *testing.T) {
+	ctx := WithToolUseID(context.Background(), "")
+	if got := ToolUseIDFromContext(ctx); got != "" {
+		t.Fatalf("empty tool use id leaked: %q", got)
+	}
+}

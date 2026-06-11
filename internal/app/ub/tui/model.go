@@ -1723,14 +1723,16 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 
 func toolPartialActivity(event Event) Event {
 	return Event{
-		Type:         EventActivity,
-		ActivityKind: "tool",
-		ToolUseID:    event.ToolUseID,
-		ToolName:     event.ToolName,
-		Status:       "running",
-		Summary:      event.Summary,
-		Content:      event.Content,
-		IsError:      event.IsError,
+		Type:            EventActivity,
+		ActivityKind:    "tool",
+		ToolUseID:       event.ToolUseID,
+		ToolName:        event.ToolName,
+		ParentToolUseID: event.ParentToolUseID,
+		SubagentID:      event.SubagentID,
+		Status:          "running",
+		Summary:         event.Summary,
+		Content:         event.Content,
+		IsError:         event.IsError,
 	}
 }
 
@@ -1753,30 +1755,42 @@ func permissionEventText(event Event) string {
 }
 
 func activityEventText(event Event) string {
+	prefix := subagentActivityPrefix(event)
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "thinking":
-		return "thinking: " + defaultString(event.Summary, event.Text)
+		return prefix + "thinking: " + defaultString(event.Summary, event.Text)
 	case "tool":
-		return toolActivityText(event)
+		return prefix + toolActivityText(event)
 	case "permission":
-		return permissionEventText(event)
+		return prefix + permissionEventText(event)
 	case "notice":
-		return "notice: " + defaultString(event.Summary, event.Text)
+		return prefix + "notice: " + defaultString(event.Summary, event.Text)
 	default:
-		return defaultString(event.Summary, defaultString(event.Content, "activity"))
+		return prefix + defaultString(event.Summary, defaultString(event.Content, "activity"))
 	}
 }
 
 func activityEventKey(event Event) string {
+	subagentID := strings.TrimSpace(event.SubagentID)
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "tool":
 		if strings.TrimSpace(event.ToolUseID) != "" {
 			return "tool:" + event.ToolUseID
 		}
 	case "thinking":
+		if subagentID != "" {
+			return "subagent:" + subagentID + ":thinking"
+		}
 		return "thinking"
 	}
 	return ""
+}
+
+func subagentActivityPrefix(event Event) string {
+	if strings.TrimSpace(event.SubagentID) == "" {
+		return ""
+	}
+	return "subagent: "
 }
 
 func thinkingActivityKey(runID int) string {

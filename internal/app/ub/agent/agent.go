@@ -670,6 +670,8 @@ func usagePayload(usage *provider.Usage) rollout.UsagePayload {
 
 func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call toolCall) tool.Result {
 	ctx = tool.WithSessionID(ctx, sessionID)
+	ctx = tool.WithAgentTurn(ctx, turn)
+	ctx = tool.WithToolUseID(ctx, call.ID)
 	if a.subagentRunner != nil {
 		ctx = tool.WithSubagentRunner(ctx, a.subagentRunner)
 	}

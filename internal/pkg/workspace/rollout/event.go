@@ -73,17 +73,19 @@ type ToolResultPayload struct {
 
 // ActivityPayload stores a display-only activity event for TUI restoration.
 type ActivityPayload struct {
-	ActivityKind string `json:"activity_kind,omitempty"`
-	ToolUseID    string `json:"tool_use_id,omitempty"`
-	ToolName     string `json:"tool_name,omitempty"`
-	Status       string `json:"status,omitempty"`
-	Summary      string `json:"summary,omitempty"`
-	Content      string `json:"content,omitempty"`
-	Decision     string `json:"decision,omitempty"`
-	Source       string `json:"source,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	Allowed      bool   `json:"allowed,omitempty"`
-	IsError      bool   `json:"is_error,omitempty"`
+	ActivityKind    string `json:"activity_kind,omitempty"`
+	ToolUseID       string `json:"tool_use_id,omitempty"`
+	ToolName        string `json:"tool_name,omitempty"`
+	ParentToolUseID string `json:"parent_tool_use_id,omitempty"`
+	SubagentID      string `json:"subagent_id,omitempty"`
+	Status          string `json:"status,omitempty"`
+	Summary         string `json:"summary,omitempty"`
+	Content         string `json:"content,omitempty"`
+	Decision        string `json:"decision,omitempty"`
+	Source          string `json:"source,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+	Allowed         bool   `json:"allowed,omitempty"`
+	IsError         bool   `json:"is_error,omitempty"`
 }
 
 // SummaryPayload stores an automatic context summary.

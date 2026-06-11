@@ -414,7 +414,8 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
-	p, err := provider.New(providerName, providerCfg)
+	providers := newProviderCache()
+	p, err := providers.Get(providerName, providerCfg)
 	if err != nil {
 		return fmt.Errorf("create provider %q: %w", providerName, err)
 	}
@@ -428,15 +429,15 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	}
 	defer tools.Close()
 	writeToolWarnings(cmd.ErrOrStderr(), tools.Warnings)
-	approvalAgent, err := newApprovalAgentFromConfig(cmd.Context(), cfg, providerName, model)
+	approvalAgent, err := newApprovalAgentFromConfig(cmd.Context(), cfg, providerName, model, providers)
 	if err != nil {
 		return err
 	}
-	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	summarySetup, err := newSummarySetup(cmd.Context(), cfg, providerName, providerCfg, model, providers)
 	if err != nil {
 		return err
 	}
-	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model)
+	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model, providers)
 	if err != nil {
 		return err
 	}
@@ -463,25 +464,8 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	}
 
 	hooksRunner := hook.New(cfg.Hooks)
-	subRunner := &cliSubagentRunner{
-		provider:         p,
-		tools:            tools.Registry,
-		permission:       perm,
-		model:            model,
-		mode:             mode,
-		reasoningCfg:     chatReasoningConfig(cfg, providerName, providerCfg, model),
-		maxContextTokens: chatMaxContextTokens(providerName, providerCfg, model),
-		contextCfg:       cfg.Context,
-		promptCfg:        cfg.Prompt,
-		runtime:          agentRuntimeContext(tools.Workspace),
-		hooks:            hooksRunner,
-		defaultMaxTurns:  cfg.MaxTurns,
-		workspaceRoot:    tools.Workspace,
-		memoryMaxChars:   cfg.Memory.MaxChars,
-		fileHistory:      fileHistory,
-	}
 	memoryAutoScheduler := agent.NewMemoryAutoScheduler()
-	a, err := agent.New(agent.Options{
+	factory := agent.NewFactory(agent.Options{
 		Provider:            p,
 		Tools:               tools.Registry,
 		Permission:          perm,
@@ -503,8 +487,29 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		MemoryMaxChars:      cfg.Memory.MaxChars,
 		Memory:              cfg.Memory,
 		MemoryAutoScheduler: memoryAutoScheduler,
-		SubagentRunner:      subRunner,
 		FileHistory:         fileHistory,
+	})
+	subRunner := &cliSubagentRunner{
+		factory:          factory,
+		provider:         p,
+		tools:            tools.Registry,
+		permission:       perm,
+		model:            model,
+		mode:             mode,
+		reasoningCfg:     chatReasoningConfig(cfg, providerName, providerCfg, model),
+		maxContextTokens: chatMaxContextTokens(providerName, providerCfg, model),
+		contextCfg:       cfg.Context,
+		promptCfg:        cfg.Prompt,
+		runtime:          agentRuntimeContext(tools.Workspace),
+		hooks:            hooksRunner,
+		defaultMaxTurns:  cfg.MaxTurns,
+		workspaceRoot:    tools.Workspace,
+		memoryMaxChars:   cfg.Memory.MaxChars,
+		fileHistory:      fileHistory,
+		rollout:          state.rollout,
+	}
+	a, err := factory.New(func(opts *agent.Options) {
+		opts.SubagentRunner = subRunner
 	})
 	if err != nil {
 		return err
@@ -690,7 +695,8 @@ func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts
 	if err != nil {
 		return err
 	}
-	p, err := provider.New(providerName, providerCfg)
+	providers := newProviderCache()
+	p, err := providers.Get(providerName, providerCfg)
 	if err != nil {
 		return fmt.Errorf("create provider %q: %w", providerName, err)
 	}

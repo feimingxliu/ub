@@ -10,6 +10,8 @@ const (
 	sessionIDKey ctxKey = iota
 	subagentRunnerKey
 	subagentDepthKey
+	agentTurnKey
+	toolUseIDKey
 )
 
 // SubagentRunner is implemented by the agent runtime layer to dispatch a
@@ -53,6 +55,45 @@ func SubagentDepthFromContext(ctx context.Context) int {
 		return 0
 	}
 	v, _ := ctx.Value(subagentDepthKey).(int)
+	return v
+}
+
+// WithAgentTurn returns a child context that carries the current agent turn.
+// Non-positive turns are dropped so callers can blindly forward unset turn
+// values without making downstream tools special-case them.
+func WithAgentTurn(ctx context.Context, turn int) context.Context {
+	if turn <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, agentTurnKey, turn)
+}
+
+// AgentTurnFromContext returns the current agent turn, or 0 if none has been
+// installed.
+func AgentTurnFromContext(ctx context.Context) int {
+	if ctx == nil {
+		return 0
+	}
+	v, _ := ctx.Value(agentTurnKey).(int)
+	return v
+}
+
+// WithToolUseID returns a child context that carries the current tool call id.
+// Empty ids are dropped.
+func WithToolUseID(ctx context.Context, toolUseID string) context.Context {
+	if toolUseID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, toolUseIDKey, toolUseID)
+}
+
+// ToolUseIDFromContext returns the current tool call id, or "" if none has
+// been installed.
+func ToolUseIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(toolUseIDKey).(string)
 	return v
 }
 
