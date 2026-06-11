@@ -185,7 +185,7 @@ type Tool interface {
     Name() string
     Description() string
     Schema() jsonschema.Definition
-    Risk() Risk                              // safe / write / exec
+    Risk() Risk                              // safe / write / exec / network
     Execute(ctx context.Context, args json.RawMessage) (Result, error)
 }
 
@@ -225,6 +225,7 @@ type FileChange struct {
 - `safe`：read / ls / grep / glob / ask / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / todo_write / todo_update / remember / recall / task
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
+- `network`：web_search / web_fetch
 
 `ask`:让模型在确有用户偏好分叉时发起结构化问题。schema 为 `questions[]`(header、question、options、multi_select),TUI 渲染单选/多选 chooser,把选择摘要回灌为 tool result 并写入 transcript;headless `ub run` 无交互 asker 时不阻塞,而是返回让模型自行判断并说明假设的 tool result。它是 `RiskSafe`,不走 permission approval,plan 模式也可用;子 agent 默认不继承 asker。
 
@@ -236,6 +237,8 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 
 `tool_result(tool_use_id, offset?, limit?)`：从 `<state-root>/tool_outputs/<sessionID>/<toolUseID>.txt` 读回曾被 `tooloutput.LimitResult` 截断/落盘的完整工具输出。sessionID 由 agent 调用前通过 `tool.WithSessionID(ctx)` 注入到 context；工具自身不接受任意路径,只能读 spillover 目录,跨 session 不可见
 
+`web_search(query, recency?, domains?, limit?)` / `web_fetch(url, max_chars?)`：内置联网检索工具,由 `tools.web.enabled` 显式开启,plan 模式不广告也不执行。两者都是 `RiskNetwork`,默认走与 exec 同级的人类/approval-agent 审批路径,permission rule 使用 `WebSearch(domain:golang.org)` 或 `WebFetch(docs.python.org:*)` 这样的目标。`web_search` 支持 Brave/Tavily/SerpAPI/SearXNG provider,输出 provider-neutral 的 title/url/summary/date,缺少 provider/key/base_url 时返回清晰 tool error;`web_fetch` 仅抓 HTTP(S),默认拒绝 file/local/private 网段,检查 robots.txt,限制 timeout/redirect/source bytes,对 HTML/PDF/text 做最小正文提取。结果进入统一 `context.tool_results` 限幅和 spillover,rollout `tool_result.metadata` 记录 query/url/final_url/provider/parser/content_type/source_bytes 等审计字段,不记录 API key。
+
 **Registry**：本地工具静态注册，MCP 工具运行时注册。同名冲突时 MCP 走 `mcp__<server>__<tool>` 前缀（Anthropic 规范）。
 
 **Streaming tools**：工具可选择实现 `StreamingTool` 接口(继承 `Tool` 之上多一个 `ExecuteStream(ctx, args, events chan<- StreamEvent)`)。agent runtime 检测到该接口时,在新 goroutine 跑 `ExecuteStream`,把每条 `StreamEvent{Kind,Data}` 转成 `EventToolPartialOutput` 推到 EventSink,让 TUI 在工具未结束前看到滚动预览。`bash` 已接入 stdout/stderr streaming;`job_output` 在 `follow=true` 时先推当前 ring buffer 快照,再追踪新增 stdout/stderr,直到 job 退出、`timeout_ms` 到期或请求取消。其他工具仍同步 `Execute`,不发 partial 事件。chunk 在 emit 前截到 4KB。
@@ -246,10 +249,11 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 2. tool := registry.Get(name)
 3. mode gate:
      - plan + write risk: 拒绝，回灌 ToolResult{IsError, Content="plan mode is read-only"}
-     - work / auto / full-access + write risk: 继续
+     - plan + exec/network risk: 拒绝，回灌对应只读错误
+     - work / auto / full-access + write/exec/network risk: 继续
 4. if pt, ok := tool.(PreviewableTool); ok:
        preview = pt.Preview(ctx, args)
-5. exec risk:
+5. exec/network risk:
      - allow-rule match: 直接 Allow（黑名单除外）
      - work / plan: permission.AskHuman(call, preview)
      - auto: permission.AskApprovalAgent(call)；拒绝 / 不确定 / 错误时回退 AskHuman
@@ -487,6 +491,23 @@ lsp_servers:
     command: typescript-language-server
     args: [--stdio]
     file_types: [".ts", ".tsx"]
+
+tools:
+  job:
+    max_concurrent: 50
+    retention: 8h
+    cleanup_interval: 5m
+  web:
+    enabled: false
+    provider: searxng      # brave / tavily / serpapi / searxng
+    api_key: ${WEB_API_KEY}
+    base_url: https://search.example.com
+    user_agent: ub-web/1.0
+    timeout: 15s
+    max_fetch_bytes: 2097152
+    allow_domains: []
+    deny_domains: []
+    allow_private_network: false
 
 tui:
   theme: dark

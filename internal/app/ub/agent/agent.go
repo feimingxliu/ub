@@ -743,7 +743,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 			a.emitToolActivity(call, "failed", summary, detail, true)
 			return result
 		}
-		if (t.Risk() == tool.RiskExec || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
+		if (t.Risk() == tool.RiskExec || t.Risk() == tool.RiskNetwork || !result.Allowed) && !(approvalObserved && result.Source == permission.SourceApprovalAgent) {
 			a.recordPermissionActivity(ctx, sessionID, turn, call.Name, string(result.Source), string(result.Decision), result.Reason, result.Allowed)
 		}
 		if !result.Allowed {

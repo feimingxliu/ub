@@ -510,6 +510,57 @@
       "properties": {
         "job": {
           "$ref": "#/$defs/JobToolConfig"
+        },
+        "web": {
+          "$ref": "#/$defs/WebToolConfig"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "WebToolConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "brave",
+            "tavily",
+            "serpapi",
+            "searxng"
+          ]
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "user_agent": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "integer"
+        },
+        "max_fetch_bytes": {
+          "type": "integer"
+        },
+        "allow_domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deny_domains": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allow_private_network": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

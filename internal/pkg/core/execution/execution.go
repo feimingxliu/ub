@@ -42,6 +42,8 @@ func Gate(mode Mode, risk tool.Risk) error {
 			return fmt.Errorf("plan mode is read-only: write tools are disabled")
 		case tool.RiskExec:
 			return fmt.Errorf("plan mode is read-only: exec tools are disabled")
+		case tool.RiskNetwork:
+			return fmt.Errorf("plan mode is read-only: network tools are disabled")
 		}
 	}
 	return nil

@@ -112,6 +112,18 @@ func TestMergeDefaults(t *testing.T) {
 				Retention:       4 * time.Hour,
 				CleanupInterval: time.Minute,
 			},
+			Web: WebToolConfig{
+				Enabled:             true,
+				Provider:            "brave",
+				APIKey:              "web-key",
+				BaseURL:             "https://search.example.test",
+				UserAgent:           "ub-test/1.0",
+				Timeout:             3 * time.Second,
+				MaxFetchBytes:       4096,
+				AllowDomains:        []string{"docs.python.org"},
+				DenyDomains:         []string{"private.example.test"},
+				AllowPrivateNetwork: true,
+			},
 		},
 		Cleanup: CleanupConfig{
 			Enabled:  &cleanupEnabled,
@@ -172,6 +184,20 @@ func TestMergeDefaults(t *testing.T) {
 		got.Tools.Job.Retention != 4*time.Hour ||
 		got.Tools.Job.CleanupInterval != time.Minute {
 		t.Fatalf("tools.job = %#v", got.Tools.Job)
+	}
+	if !got.Tools.Web.Enabled ||
+		got.Tools.Web.Provider != "brave" ||
+		got.Tools.Web.APIKey != "web-key" ||
+		got.Tools.Web.BaseURL != "https://search.example.test" ||
+		got.Tools.Web.UserAgent != "ub-test/1.0" ||
+		got.Tools.Web.Timeout != 3*time.Second ||
+		got.Tools.Web.MaxFetchBytes != 4096 ||
+		len(got.Tools.Web.AllowDomains) != 1 ||
+		got.Tools.Web.AllowDomains[0] != "docs.python.org" ||
+		len(got.Tools.Web.DenyDomains) != 1 ||
+		got.Tools.Web.DenyDomains[0] != "private.example.test" ||
+		!got.Tools.Web.AllowPrivateNetwork {
+		t.Fatalf("tools.web = %#v", got.Tools.Web)
 	}
 	if got.Cleanup.CleanupEnabled() {
 		t.Fatalf("cleanup enabled = true, want false")

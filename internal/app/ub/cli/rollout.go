@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -311,6 +312,18 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 		if payload.Truncated {
 			if _, err := fmt.Fprintf(w, "  output: %s original_bytes=%d full_output_path=%s\n", style.mutedText("truncated"), payload.OriginalBytes, payload.FullOutputPath); err != nil {
 				return err
+			}
+		}
+		if len(payload.Metadata) > 0 {
+			keys := make([]string, 0, len(payload.Metadata))
+			for key := range payload.Metadata {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				if _, err := fmt.Fprintf(w, "  metadata: %s=%s\n", key, payload.Metadata[key]); err != nil {
+					return err
+				}
 			}
 		}
 		if err := writeIndentedBlock(w, "output:", payload.Output, style); err != nil {

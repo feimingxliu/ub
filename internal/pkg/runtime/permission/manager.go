@@ -79,7 +79,7 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 	if err := execution.Gate(mode, req.Risk); err != nil {
 		return Result{Decision: DecisionDeny, Allowed: false, Source: SourceMode, Reason: err.Error()}, nil
 	}
-	if req.Risk != tool.RiskExec {
+	if !requiresExplicitApproval(req.Risk) {
 		return Result{Decision: DecisionAllow, Allowed: true, Source: SourceAuto}, nil
 	}
 
@@ -152,6 +152,15 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 	return m.applyHumanDecision(decision, req, command)
+}
+
+func requiresExplicitApproval(risk tool.Risk) bool {
+	switch risk {
+	case tool.RiskExec, tool.RiskNetwork:
+		return true
+	default:
+		return false
+	}
 }
 
 func notifyApprovalObserver(req Request, decision approval.Decision, reason string, err error) {

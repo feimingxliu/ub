@@ -1171,6 +1171,12 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if err := reg.Register(&namedRiskTool{name: "bash", risk: tool.RiskExec}); err != nil {
 		t.Fatalf("register bash: %v", err)
 	}
+	if err := reg.Register(&namedRiskTool{name: "web_search", risk: tool.RiskNetwork}); err != nil {
+		t.Fatalf("register web_search: %v", err)
+	}
+	if err := reg.Register(&namedRiskTool{name: "web_fetch", risk: tool.RiskNetwork}); err != nil {
+		t.Fatalf("register web_fetch: %v", err)
+	}
 	tools, err := toolDefinitions(reg, execution.ModeAuto)
 	if err != nil {
 		t.Fatalf("toolDefinitions auto: %v", err)
@@ -1190,8 +1196,8 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "read") {
 		t.Fatalf("auto mode should keep non-plan tools: %#v", tools)
 	}
-	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") {
-		t.Fatalf("auto mode should keep write and exec tools: %#v", tools)
+	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") || !toolNamesContain(tools, "web_search") || !toolNamesContain(tools, "web_fetch") {
+		t.Fatalf("auto mode should keep write, exec, and network tools: %#v", tools)
 	}
 	tools, err = toolDefinitions(reg, execution.ModeFullAccess)
 	if err != nil {
@@ -1200,8 +1206,8 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if toolNamesContain(tools, "plan_write") || toolNamesContain(tools, "plan_update") {
 		t.Fatalf("full-access mode should not advertise plan tools: %#v", tools)
 	}
-	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") {
-		t.Fatalf("full-access mode should keep write and exec tools: %#v", tools)
+	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") || !toolNamesContain(tools, "web_search") || !toolNamesContain(tools, "web_fetch") {
+		t.Fatalf("full-access mode should keep write, exec, and network tools: %#v", tools)
 	}
 	tools, err = toolDefinitions(reg, execution.ModePlan)
 	if err != nil {
@@ -1213,7 +1219,7 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "plan_update") {
 		t.Fatalf("plan mode should advertise plan_update: %#v", tools)
 	}
-	for _, hidden := range []string{"plan_update_step", "todo_write", "todo_update", "edit", "bash", "remember"} {
+	for _, hidden := range []string{"plan_update_step", "todo_write", "todo_update", "edit", "bash", "web_search", "web_fetch", "remember"} {
 		if toolNamesContain(tools, hidden) {
 			t.Fatalf("plan mode should not advertise %s: %#v", hidden, tools)
 		}

@@ -89,3 +89,34 @@ func TestToolRuntimeUsesConfiguredSpilloverDirForReadTools(t *testing.T) {
 		t.Fatalf("tool_result = %q, want custom spillover content", res.Content)
 	}
 }
+
+func TestToolRuntimeRegistersWebToolsOnlyWhenEnabled(t *testing.T) {
+	cfg := config.Defaults()
+	runtime, err := newToolRuntime(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("newToolRuntime disabled: %v", err)
+	}
+	defer runtime.Close()
+	if _, ok := runtime.Registry.Get("web_search"); ok {
+		t.Fatalf("web_search registered while tools.web.enabled=false")
+	}
+	if _, ok := runtime.Registry.Get("web_fetch"); ok {
+		t.Fatalf("web_fetch registered while tools.web.enabled=false")
+	}
+
+	cfg = config.Defaults()
+	cfg.Tools.Web.Enabled = true
+	cfg.Tools.Web.Provider = "searxng"
+	cfg.Tools.Web.BaseURL = "https://search.example.test"
+	runtime, err = newToolRuntime(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("newToolRuntime enabled: %v", err)
+	}
+	defer runtime.Close()
+	if _, ok := runtime.Registry.Get("web_search"); !ok {
+		t.Fatalf("web_search missing while enabled")
+	}
+	if _, ok := runtime.Registry.Get("web_fetch"); !ok {
+		t.Fatalf("web_fetch missing while enabled")
+	}
+}

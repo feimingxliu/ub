@@ -53,6 +53,13 @@ func TestGatePlanRejectsExec(t *testing.T) {
 	}
 }
 
+func TestGatePlanRejectsNetwork(t *testing.T) {
+	err := Gate(ModePlan, tool.RiskNetwork)
+	if err == nil || !strings.Contains(err.Error(), "network tools are disabled") {
+		t.Fatalf("Gate error = %v", err)
+	}
+}
+
 func TestGateAllowsExecOutsidePlan(t *testing.T) {
 	for _, mode := range []Mode{ModeWork, ModeAuto, ModeFullAccess} {
 		if err := Gate(mode, tool.RiskExec); err != nil {

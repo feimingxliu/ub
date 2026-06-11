@@ -69,6 +69,7 @@ type ToolResultPayload struct {
 	Truncated      bool              `json:"truncated,omitempty"`
 	OriginalBytes  int               `json:"original_bytes,omitempty"`
 	FullOutputPath string            `json:"full_output_path,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
 // ActivityPayload stores a display-only activity event for TUI restoration.
@@ -165,7 +166,19 @@ func ToolResult(sessionID string, turn int, toolUseID, toolName string, result t
 		Truncated:      result.Truncated,
 		OriginalBytes:  result.OriginalBytes,
 		FullOutputPath: result.FullOutputPath,
+		Metadata:       cloneStringMap(result.Metadata),
 	})
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // Activity creates a display-only activity event.

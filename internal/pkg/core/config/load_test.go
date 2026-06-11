@@ -47,6 +47,12 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Tools.Job.CleanupInterval.String() != "5m0s" {
 		t.Fatalf("job tool defaults not applied: %#v", cfg.Tools.Job)
 	}
+	if cfg.Tools.Web.Enabled ||
+		cfg.Tools.Web.Timeout.String() != "15s" ||
+		cfg.Tools.Web.MaxFetchBytes != 2*1024*1024 ||
+		cfg.Tools.Web.UserAgent != "ub-web/1.0" {
+		t.Fatalf("web tool defaults not applied: %#v", cfg.Tools.Web)
+	}
 	if cfg.Memory.MaxChars != DefaultMemoryMaxChars ||
 		cfg.Memory.Auto.Enabled == nil ||
 		!*cfg.Memory.Auto.Enabled ||
@@ -162,6 +168,48 @@ func TestLoadFromDirsParsesJobToolConfig(t *testing.T) {
 		cfg.Tools.Job.Retention.String() != "2h0m0s" ||
 		cfg.Tools.Job.CleanupInterval.String() != "30s" {
 		t.Fatalf("tools.job = %#v", cfg.Tools.Job)
+	}
+}
+
+func TestLoadFromDirsParsesWebToolConfig(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `tools:
+  web:
+    enabled: true
+    provider: searxng
+    api_key: ${UB_WEB_TEST_KEY}
+    base_url: https://search.example.test
+    user_agent: ub-test/1.0
+    timeout: 3s
+    max_fetch_bytes: 4096
+    allow_domains:
+      - docs.python.org
+    deny_domains:
+      - private.example.test
+    allow_private_network: true
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("UB_WEB_TEST_KEY", "web-secret")
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if !cfg.Tools.Web.Enabled ||
+		cfg.Tools.Web.Provider != "searxng" ||
+		cfg.Tools.Web.APIKey != "web-secret" ||
+		cfg.Tools.Web.BaseURL != "https://search.example.test" ||
+		cfg.Tools.Web.UserAgent != "ub-test/1.0" ||
+		cfg.Tools.Web.Timeout.String() != "3s" ||
+		cfg.Tools.Web.MaxFetchBytes != 4096 ||
+		len(cfg.Tools.Web.AllowDomains) != 1 ||
+		cfg.Tools.Web.AllowDomains[0] != "docs.python.org" ||
+		len(cfg.Tools.Web.DenyDomains) != 1 ||
+		cfg.Tools.Web.DenyDomains[0] != "private.example.test" ||
+		!cfg.Tools.Web.AllowPrivateNetwork {
+		t.Fatalf("tools.web = %#v", cfg.Tools.Web)
 	}
 }
 

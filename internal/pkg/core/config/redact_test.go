@@ -26,6 +26,13 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 				},
 			},
 		},
+		Tools: ToolsConfig{
+			Web: WebToolConfig{
+				Enabled:  true,
+				Provider: "brave",
+				APIKey:   "web-real-key",
+			},
+		},
 		Unknown: map[string]any{
 			"future": map[string]any{"dev": "ignored"},
 		},
@@ -52,6 +59,9 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 	}
 	if got.Profiles["dev"].Providers["openai"].APIKey != redactedMask {
 		t.Fatalf("profile api_key = %q", got.Profiles["dev"].Providers["openai"].APIKey)
+	}
+	if got.Tools.Web.APIKey != redactedMask {
+		t.Fatalf("web api_key = %q", got.Tools.Web.APIKey)
 	}
 	if got.Unknown["future"] == nil {
 		t.Fatalf("unknown fields were not copied")

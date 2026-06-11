@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -40,6 +41,7 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/tool/shell"
 	tasktool "github.com/feimingxliu/ub/internal/pkg/tool/task"
 	todotool "github.com/feimingxliu/ub/internal/pkg/tool/todo"
+	webtool "github.com/feimingxliu/ub/internal/pkg/tool/web"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/rollout"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/store"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/tooloutput"
@@ -605,6 +607,22 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		memorytool.Register,
 	} {
 		if err := register(reg, cwd); err != nil {
+			return nil, err
+		}
+	}
+	if cfg != nil && cfg.Tools.Web.Enabled {
+		if err := webtool.Register(reg, webtool.Options{
+			Enabled:             cfg.Tools.Web.Enabled,
+			Provider:            cfg.Tools.Web.Provider,
+			APIKey:              cfg.Tools.Web.APIKey,
+			BaseURL:             cfg.Tools.Web.BaseURL,
+			UserAgent:           cfg.Tools.Web.UserAgent,
+			Timeout:             cfg.Tools.Web.Timeout,
+			MaxFetchBytes:       cfg.Tools.Web.MaxFetchBytes,
+			AllowDomains:        cfg.Tools.Web.AllowDomains,
+			DenyDomains:         cfg.Tools.Web.DenyDomains,
+			AllowPrivateNetwork: cfg.Tools.Web.AllowPrivateNetwork,
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -1246,7 +1264,19 @@ func rolloutEventSearchText(event rollout.Event) (string, error) {
 	if msg, ok, err := rollout.MessageFromEvent(event); err != nil {
 		return "", err
 	} else if ok {
-		return msg.Text(), nil
+		text := msg.Text()
+		if event.Type == rollout.TypeToolResult {
+			var payload rollout.ToolResultPayload
+			if err := json.Unmarshal(event.Payload, &payload); err == nil && len(payload.Metadata) > 0 {
+				var metadata []string
+				for key, value := range payload.Metadata {
+					metadata = append(metadata, key+"="+value)
+				}
+				sort.Strings(metadata)
+				text = strings.TrimSpace(text + " " + strings.Join(metadata, " "))
+			}
+		}
+		return text, nil
 	}
 	switch event.Type {
 	case rollout.TypeError:

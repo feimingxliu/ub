@@ -238,6 +238,36 @@ func mergeTools(dst *ToolsConfig, src ToolsConfig) {
 	if src.Job.CleanupInterval != 0 {
 		dst.Job.CleanupInterval = src.Job.CleanupInterval
 	}
+	if src.Web.Enabled {
+		dst.Web.Enabled = true
+	}
+	if src.Web.Provider != "" {
+		dst.Web.Provider = src.Web.Provider
+	}
+	if src.Web.APIKey != "" {
+		dst.Web.APIKey = src.Web.APIKey
+	}
+	if src.Web.BaseURL != "" {
+		dst.Web.BaseURL = src.Web.BaseURL
+	}
+	if src.Web.UserAgent != "" {
+		dst.Web.UserAgent = src.Web.UserAgent
+	}
+	if src.Web.Timeout != 0 {
+		dst.Web.Timeout = src.Web.Timeout
+	}
+	if src.Web.MaxFetchBytes != 0 {
+		dst.Web.MaxFetchBytes = src.Web.MaxFetchBytes
+	}
+	if len(src.Web.AllowDomains) > 0 {
+		dst.Web.AllowDomains = append([]string(nil), src.Web.AllowDomains...)
+	}
+	if len(src.Web.DenyDomains) > 0 {
+		dst.Web.DenyDomains = append([]string(nil), src.Web.DenyDomains...)
+	}
+	if src.Web.AllowPrivateNetwork {
+		dst.Web.AllowPrivateNetwork = true
+	}
 }
 
 func mergeContext(dst *ContextConfig, src ContextConfig) {

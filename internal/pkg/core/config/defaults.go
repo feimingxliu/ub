@@ -52,6 +52,12 @@ func Defaults() *Config {
 				Retention:       8 * time.Hour,
 				CleanupInterval: 5 * time.Minute,
 			},
+			Web: WebToolConfig{
+				Enabled:       false,
+				Timeout:       15 * time.Second,
+				MaxFetchBytes: 2 * 1024 * 1024,
+				UserAgent:     "ub-web/1.0",
+			},
 		},
 		Context: ContextConfig{
 			TriggerRatio:        0.8,

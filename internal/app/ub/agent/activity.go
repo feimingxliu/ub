@@ -281,6 +281,13 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 		add("pattern", "pattern")
 		add("path", "path")
 		add("include", "include")
+	case "web_search":
+		add("query", "query")
+		addCount("domains", "domains")
+		add("limit", "limit")
+	case "web_fetch":
+		add("url", "url")
+		add("max_chars", "max_chars")
 	case "job_output", "job_kill":
 		add("job_id", "job_id")
 	default:
@@ -365,6 +372,12 @@ func ToolInputDetail(name string, raw json.RawMessage) string {
 				writeDetailBlock(&b, "questions", strings.Join(lines, "\n"))
 			}
 		}
+	case "web_search":
+		addBlock("query", "query")
+		addLine("limit", "limit")
+	case "web_fetch":
+		addBlock("url", "url")
+		addLine("max_chars", "max_chars")
 	default:
 		if _, hasCommand := body["command"]; hasCommand {
 			addBlock("command", "command")

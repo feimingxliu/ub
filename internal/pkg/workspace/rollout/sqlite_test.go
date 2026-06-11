@@ -160,6 +160,10 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 		Truncated:      true,
 		OriginalBytes:  1234,
 		FullOutputPath: "/tmp/full.txt",
+		Metadata: map[string]string{
+			"final_url": "https://example.test/page",
+			"parser":    "html",
+		},
 	})
 	if err != nil {
 		t.Fatalf("ToolResult: %v", err)
@@ -176,6 +180,9 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 	}
 	if !payload.Truncated || payload.OriginalBytes != 1234 || payload.FullOutputPath != "/tmp/full.txt" {
 		t.Fatalf("payload metadata = %#v", payload)
+	}
+	if payload.Metadata["final_url"] != "https://example.test/page" || payload.Metadata["parser"] != "html" {
+		t.Fatalf("payload tool metadata = %#v", payload.Metadata)
 	}
 	msg, ok, err := MessageFromEvent(event)
 	if err != nil {

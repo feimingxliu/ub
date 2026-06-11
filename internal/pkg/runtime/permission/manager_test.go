@@ -80,6 +80,20 @@ func execReq(t *testing.T, mode execution.Mode, command string) Request {
 	}
 }
 
+func networkReq(t *testing.T, mode execution.Mode, toolName string, args map[string]any) Request {
+	t.Helper()
+	raw, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	return Request{
+		Tool: toolName,
+		Args: raw,
+		Risk: tool.RiskNetwork,
+		Mode: mode,
+	}
+}
+
 func TestManagerHumanDecisionPaths(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -165,6 +179,28 @@ func TestManagerPlanRejectsExecWithoutAsker(t *testing.T) {
 	}
 }
 
+func TestManagerPlanRejectsNetworkWithoutAsker(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	manager, err := NewManager(Options{
+		Asker: asker,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), networkReq(t, execution.ModePlan, "web_fetch", map[string]any{
+		"url": "https://docs.python.org/3/",
+	}))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if res.Allowed || res.Decision != DecisionDeny || res.Source != SourceMode || !strings.Contains(res.Reason, "network tools are disabled") {
+		t.Fatalf("result = %#v, want mode denial", res)
+	}
+	if asker.calls != 0 {
+		t.Fatalf("asker calls = %d, want 0", asker.calls)
+	}
+}
+
 func TestManagerDefaultExecUsesHumanAsker(t *testing.T) {
 	asker := &mockAsker{decision: DecisionAllow}
 	manager, err := NewManager(Options{
@@ -174,6 +210,28 @@ func TestManagerDefaultExecUsesHumanAsker(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 	res, err := manager.Ask(context.Background(), execReq(t, execution.ModeWork, "git status"))
+	if err != nil {
+		t.Fatalf("Ask: %v", err)
+	}
+	if !res.Allowed || res.Source != SourceHuman {
+		t.Fatalf("result = %#v, want human allow", res)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	}
+}
+
+func TestManagerDefaultNetworkUsesHumanAsker(t *testing.T) {
+	asker := &mockAsker{decision: DecisionAllow}
+	manager, err := NewManager(Options{
+		Asker: asker,
+	})
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	res, err := manager.Ask(context.Background(), networkReq(t, execution.ModeWork, "web_fetch", map[string]any{
+		"url": "https://docs.python.org/3/?q=ignored",
+	}))
 	if err != nil {
 		t.Fatalf("Ask: %v", err)
 	}
@@ -297,6 +355,55 @@ func TestManagerAgentApproveAllowSkipsHuman(t *testing.T) {
 	if asker.calls != 0 {
 		t.Fatalf("asker calls = %d, want 0", asker.calls)
 	}
+}
+
+func TestManagerNetworkRulesUseWebTargets(t *testing.T) {
+	t.Run("web_fetch host path", func(t *testing.T) {
+		asker := &mockAsker{decision: DecisionDeny}
+		manager, err := NewManager(Options{
+			Asker:      asker,
+			AllowRules: []Rule{mustRule(t, "WebFetch(docs.python.org:*)", RuleAllow)},
+		})
+		if err != nil {
+			t.Fatalf("NewManager: %v", err)
+		}
+		res, err := manager.Ask(context.Background(), networkReq(t, execution.ModeWork, "web_fetch", map[string]any{
+			"url": "https://docs.python.org/3/library/http.html?highlight=client",
+		}))
+		if err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+		if !res.Allowed || res.Source != SourceRule {
+			t.Fatalf("result = %#v, want rule allow", res)
+		}
+		if asker.calls != 0 {
+			t.Fatalf("asker calls = %d, want 0", asker.calls)
+		}
+	})
+
+	t.Run("web_search domain", func(t *testing.T) {
+		asker := &mockAsker{decision: DecisionDeny}
+		manager, err := NewManager(Options{
+			Asker:      asker,
+			AllowRules: []Rule{mustRule(t, "WebSearch(domain:golang.org)", RuleAllow)},
+		})
+		if err != nil {
+			t.Fatalf("NewManager: %v", err)
+		}
+		res, err := manager.Ask(context.Background(), networkReq(t, execution.ModeWork, "web_search", map[string]any{
+			"query":   "release notes",
+			"domains": []string{"https://golang.org/"},
+		}))
+		if err != nil {
+			t.Fatalf("Ask: %v", err)
+		}
+		if !res.Allowed || res.Source != SourceRule {
+			t.Fatalf("result = %#v, want rule allow", res)
+		}
+		if asker.calls != 0 {
+			t.Fatalf("asker calls = %d, want 0", asker.calls)
+		}
+	})
 }
 
 func TestManagerLogsApprovalAgentDecision(t *testing.T) {

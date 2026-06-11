@@ -28,6 +28,8 @@ const (
 	RiskWrite Risk = "write"
 	// RiskExec tools spawn external processes (bash, job_run).
 	RiskExec Risk = "exec"
+	// RiskNetwork tools send requests to external network targets (web_fetch, web_search).
+	RiskNetwork Risk = "network"
 )
 
 // Tool is the contract every local or MCP-backed tool implements.

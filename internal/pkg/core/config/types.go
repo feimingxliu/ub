@@ -174,6 +174,7 @@ type LSPServerConfig struct {
 // ToolsConfig controls built-in tool behavior.
 type ToolsConfig struct {
 	Job JobToolConfig `yaml:"job,omitempty" json:"job,omitempty"`
+	Web WebToolConfig `yaml:"web,omitempty" json:"web,omitempty"`
 }
 
 // JobToolConfig controls background job lifecycle limits.
@@ -181,6 +182,20 @@ type JobToolConfig struct {
 	MaxConcurrent   int           `yaml:"max_concurrent,omitempty"  json:"max_concurrent,omitempty"`
 	Retention       time.Duration `yaml:"retention,omitempty"       json:"retention,omitempty"`
 	CleanupInterval time.Duration `yaml:"cleanup_interval,omitempty" json:"cleanup_interval,omitempty"`
+}
+
+// WebToolConfig controls built-in web_search and web_fetch tools.
+type WebToolConfig struct {
+	Enabled             bool          `yaml:"enabled,omitempty"               json:"enabled,omitempty"`
+	Provider            string        `yaml:"provider,omitempty"              json:"provider,omitempty" jsonschema:"enum=brave,enum=tavily,enum=serpapi,enum=searxng"`
+	APIKey              string        `yaml:"api_key,omitempty"               json:"api_key,omitempty" secret:"true"`
+	BaseURL             string        `yaml:"base_url,omitempty"              json:"base_url,omitempty"`
+	UserAgent           string        `yaml:"user_agent,omitempty"            json:"user_agent,omitempty"`
+	Timeout             time.Duration `yaml:"timeout,omitempty"               json:"timeout,omitempty"`
+	MaxFetchBytes       int64         `yaml:"max_fetch_bytes,omitempty"       json:"max_fetch_bytes,omitempty"`
+	AllowDomains        []string      `yaml:"allow_domains,omitempty"         json:"allow_domains,omitempty"`
+	DenyDomains         []string      `yaml:"deny_domains,omitempty"          json:"deny_domains,omitempty"`
+	AllowPrivateNetwork bool          `yaml:"allow_private_network,omitempty" json:"allow_private_network,omitempty"`
 }
 
 // ContextConfig controls auto-summarization (used by I-28).

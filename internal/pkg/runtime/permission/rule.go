@@ -3,6 +3,7 @@ package permission
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -43,12 +44,31 @@ func commandFromRequest(req Request) string {
 	if strings.TrimSpace(req.Command) != "" {
 		return strings.TrimSpace(req.Command)
 	}
+	if len(req.Args) == 0 {
+		return ""
+	}
+	switch strings.TrimSpace(req.Tool) {
+	case "web_fetch":
+		var body struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal(req.Args, &body); err != nil {
+			return ""
+		}
+		return webFetchRuleTarget(body.URL)
+	case "web_search":
+		var body struct {
+			Query   string   `json:"query"`
+			Domains []string `json:"domains"`
+		}
+		if err := json.Unmarshal(req.Args, &body); err != nil {
+			return ""
+		}
+		return webSearchRuleTarget(body.Query, body.Domains)
+	}
 	var body struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
-	}
-	if len(req.Args) == 0 {
-		return ""
 	}
 	if err := json.Unmarshal(req.Args, &body); err != nil {
 		return ""
@@ -233,9 +253,56 @@ func permissionToolName(toolName string) string {
 		return "Bash"
 	case "job_kill", "jobkill":
 		return "JobKill"
+	case "web_fetch", "webfetch":
+		return "WebFetch"
+	case "web_search", "websearch":
+		return "WebSearch"
 	default:
 		return strings.TrimSpace(toolName)
 	}
+}
+
+func webFetchRuleTarget(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if target := parsedWebFetchRuleTarget(rawURL); target != "" {
+		return target
+	}
+	if !strings.Contains(rawURL, "://") {
+		if target := parsedWebFetchRuleTarget("https://" + rawURL); target != "" {
+			return target
+		}
+	}
+	return ""
+}
+
+func parsedWebFetchRuleTarget(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || strings.TrimSpace(u.Host) == "" {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(u.Host))
+	path := u.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	return host + ":" + path
+}
+
+func webSearchRuleTarget(query string, domains []string) string {
+	for _, domain := range domains {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		domain = strings.TrimPrefix(domain, "http://")
+		domain = strings.TrimPrefix(domain, "https://")
+		domain = strings.TrimPrefix(domain, "*.")
+		domain = strings.Trim(domain, "/")
+		if domain != "" {
+			return "domain:" + domain
+		}
+	}
+	return strings.TrimSpace(query)
 }
 
 func formatPermissionRule(toolName, pattern string) string {
