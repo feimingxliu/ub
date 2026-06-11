@@ -1,0 +1,437 @@
+package rollout
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/feimingxliu/ub/internal/pkg/core/message"
+	"github.com/feimingxliu/ub/internal/pkg/tool"
+	"github.com/feimingxliu/ub/internal/pkg/workspace/store"
+)
+
+func TestAppendValidatesRequiredFields(t *testing.T) {
+	ro := openRollout(t)
+	err := ro.Append(context.Background(), Event{})
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if got := err.Error(); got == "" {
+		t.Fatal("validation error should be readable")
+	}
+}
+
+func TestAppendAndReadHundredEventsInOrder(t *testing.T) {
+	ctx := context.Background()
+	st, ro := openStoreRollout(t)
+	sessionID := createSession(t, st, "order")
+
+	base := time.Unix(100, 0).UTC()
+	for i := 99; i >= 0; i-- {
+		payload, err := MarshalPayload(map[string]int{"i": i})
+		if err != nil {
+			t.Fatal(err)
+		}
+		event := Event{
+			ID:        "evt_" + strconv.Itoa(i),
+			SessionID: sessionID,
+			Turn:      i/10 + 1,
+			Time:      base.Add(time.Duration(i) * time.Millisecond),
+			Type:      TypeUserMessage,
+			Payload:   payload,
+		}
+		if err := ro.Append(ctx, event); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	var got []Event
+	if err := ro.ForEach(ctx, sessionID, func(event Event) error {
+		got = append(got, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	if len(got) != 100 {
+		t.Fatalf("events len = %d, want 100", len(got))
+	}
+	for i, event := range got {
+		var payload map[string]int
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("payload %d: %v", i, err)
+		}
+		if payload["i"] != i {
+			t.Fatalf("event %d payload = %#v", i, payload)
+		}
+	}
+}
+
+func TestReaderFiltersSession(t *testing.T) {
+	ctx := context.Background()
+	st, ro := openStoreRollout(t)
+	first := createSession(t, st, "first")
+	second := createSession(t, st, "second")
+	appendMessage(t, ro, first, "first")
+	appendMessage(t, ro, second, "second")
+
+	var got []Event
+	if err := ro.ForEach(ctx, first, func(event Event) error {
+		got = append(got, event)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	if len(got) != 1 || got[0].SessionID != first {
+		t.Fatalf("filtered events = %#v", got)
+	}
+}
+
+func TestForEachFromTurnAndDeleteFromTurn(t *testing.T) {
+	ctx := context.Background()
+	st, ro := openStoreRollout(t)
+	sessionID := createSession(t, st, "rewind")
+	otherID := createSession(t, st, "rewind_other")
+	for turn := 1; turn <= 3; turn++ {
+		event, err := UserMessage(sessionID, turn, message.Text(message.RoleUser, "turn "+strconv.Itoa(turn)))
+		if err != nil {
+			t.Fatalf("UserMessage %d: %v", turn, err)
+		}
+		if err := ro.Append(ctx, event); err != nil {
+			t.Fatalf("Append %d: %v", turn, err)
+		}
+	}
+	appendMessage(t, ro, otherID, "other")
+
+	var fromTwo []int
+	if err := ro.ForEachFromTurn(ctx, sessionID, 2, func(event Event) error {
+		fromTwo = append(fromTwo, event.Turn)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEachFromTurn: %v", err)
+	}
+	if got, want := fromTwo, []int{2, 3}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("turns from two = %#v, want %#v", got, want)
+	}
+
+	deleted, err := ro.DeleteFromTurn(ctx, sessionID, 2)
+	if err != nil {
+		t.Fatalf("DeleteFromTurn: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+	var remaining []int
+	if err := ro.ForEach(ctx, sessionID, func(event Event) error {
+		remaining = append(remaining, event.Turn)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach remaining: %v", err)
+	}
+	if got, want := remaining, []int{1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("remaining turns = %#v, want %#v", got, want)
+	}
+	var otherCount int
+	if err := ro.ForEach(ctx, otherID, func(Event) error {
+		otherCount++
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach other: %v", err)
+	}
+	if otherCount != 1 {
+		t.Fatalf("other count = %d, want 1", otherCount)
+	}
+}
+
+func TestToolResultEventAndMessageFromEvent(t *testing.T) {
+	event, err := ToolResult("sess_tool", 2, "call_1", "read", tool.Result{
+		Content: "file content",
+		IsError: true,
+		Files: []tool.FileChange{{
+			Path: "main.go",
+			Kind: tool.KindModify,
+		}},
+		Truncated:      true,
+		OriginalBytes:  1234,
+		FullOutputPath: "/tmp/full.txt",
+	})
+	if err != nil {
+		t.Fatalf("ToolResult: %v", err)
+	}
+	if event.Type != TypeToolResult {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeToolResult)
+	}
+	var payload ToolResultPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.ToolUseID != "call_1" || payload.ToolName != "read" || payload.Output != "file content" || !payload.IsError {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if !payload.Truncated || payload.OriginalBytes != 1234 || payload.FullOutputPath != "/tmp/full.txt" {
+		t.Fatalf("payload metadata = %#v", payload)
+	}
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if !ok || msg.Role != message.RoleTool || len(msg.Content) != 1 {
+		t.Fatalf("message = %#v, ok=%v", msg, ok)
+	}
+	block := msg.Content[0]
+	if block.Type != message.BlockToolResult || block.ToolUseID != "call_1" || block.Output != "file content" || !block.IsError {
+		t.Fatalf("block = %#v", block)
+	}
+}
+
+func TestSummaryEventAndMessageFromEvent(t *testing.T) {
+	event, err := Summary("sess_summary", 4, "Earlier work summary.", 8, 6, 1200)
+	if err != nil {
+		t.Fatalf("Summary: %v", err)
+	}
+	if event.Type != TypeSummary {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeSummary)
+	}
+	var payload SummaryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.Text != "Earlier work summary." || payload.CompressedMessages != 8 || payload.KeptMessages != 6 || payload.EstimatedTokens != 1200 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if !ok || msg.Role != message.RoleSystem || msg.Text() != "Conversation summary:\nEarlier work summary." {
+		t.Fatalf("message = %#v, ok=%v", msg, ok)
+	}
+}
+
+func TestSummaryWithMessagesRestoresCompactedContext(t *testing.T) {
+	compacted := []message.Message{
+		SummaryMessage("Earlier work summary."),
+		message.Text(message.RoleUser, "current prompt"),
+		message.Text(message.RoleAssistant, "kept answer"),
+	}
+	event, err := SummaryWithMessages("sess_summary", 4, "Earlier work summary.", compacted, 8, 2, 1200)
+	if err != nil {
+		t.Fatalf("SummaryWithMessages: %v", err)
+	}
+
+	var payload SummaryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if len(payload.Messages) != len(compacted) {
+		t.Fatalf("payload messages len = %d, want %d", len(payload.Messages), len(compacted))
+	}
+
+	msgs, ok, err := SummaryMessagesFromEvent(event)
+	if err != nil {
+		t.Fatalf("SummaryMessagesFromEvent: %v", err)
+	}
+	if !ok || !reflect.DeepEqual(msgs, compacted) {
+		t.Fatalf("summary messages = %#v, ok=%v, want %#v", msgs, ok, compacted)
+	}
+
+	msg, ok, err := MessageFromEvent(event)
+	if err != nil {
+		t.Fatalf("MessageFromEvent: %v", err)
+	}
+	if !ok || !reflect.DeepEqual(msg, compacted[0]) {
+		t.Fatalf("message = %#v, ok=%v, want first compacted message %#v", msg, ok, compacted[0])
+	}
+}
+
+func TestMemoryWriteEvent(t *testing.T) {
+	event, err := MemoryWrite("sess_memory", 5, MemoryWritePayload{
+		Scope:    "auto",
+		Category: "project",
+		Text:     "build is `make build`",
+		Path:     "/state/ub/memory/key/memory.md",
+		Source:   "auto",
+		Action:   "merged",
+	})
+	if err != nil {
+		t.Fatalf("MemoryWrite: %v", err)
+	}
+	if event.Type != TypeMemoryWrite {
+		t.Fatalf("event type = %q, want %q", event.Type, TypeMemoryWrite)
+	}
+	var payload MemoryWritePayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if payload.Scope != "auto" || payload.Category != "project" || payload.Text != "build is `make build`" || payload.Source != "auto" || payload.Action != "merged" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if msg, ok, err := MessageFromEvent(event); err != nil || ok || len(msg.Content) != 0 {
+		t.Fatalf("memory write should not become chat history: msg=%#v ok=%v err=%v", msg, ok, err)
+	}
+}
+
+func TestAppendVisibleAfterReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ub.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	sessionID := createSession(t, st, "durable")
+	ro, err := New(st)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	appendMessage(t, ro, sessionID, "durable")
+	if err := st.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st.Close()
+	ro, err = New(st)
+	if err != nil {
+		t.Fatalf("New reopened: %v", err)
+	}
+	var count int
+	if err := ro.ForEach(ctx, sessionID, func(event Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach reopened: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+}
+
+func TestAppendSurvivesProcessExit(t *testing.T) {
+	if os.Getenv("UB_ROLLOUT_CRASH_CHILD") == "1" {
+		crashChild(t)
+		return
+	}
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "ub.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	sessionID := createSession(t, st, "crash")
+	if err := st.Close(); err != nil {
+		t.Fatalf("close parent setup: %v", err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestAppendSurvivesProcessExit$")
+	cmd.Env = append(
+		os.Environ(),
+		"UB_ROLLOUT_CRASH_CHILD=1",
+		"UB_ROLLOUT_CRASH_DB="+path,
+		"UB_ROLLOUT_CRASH_SESSION="+sessionID,
+	)
+	err = cmd.Run()
+	if err == nil {
+		t.Fatal("child should exit non-zero")
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer st.Close()
+	ro, err := New(st)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var count int
+	if err := ro.ForEach(ctx, sessionID, func(event Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("count = %d, want 1", count)
+	}
+}
+
+func TestForEachCallbackError(t *testing.T) {
+	st, ro := openStoreRollout(t)
+	sessionID := createSession(t, st, "callback")
+	appendMessage(t, ro, sessionID, "callback")
+	want := errors.New("stop")
+	err := ro.ForEach(context.Background(), sessionID, func(event Event) error {
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("ForEach error = %v, want %v", err, want)
+	}
+}
+
+func crashChild(t *testing.T) {
+	t.Helper()
+	st, err := store.Open(os.Getenv("UB_ROLLOUT_CRASH_DB"))
+	if err != nil {
+		t.Fatalf("child open: %v", err)
+	}
+	ro, err := New(st)
+	if err != nil {
+		t.Fatalf("child rollout: %v", err)
+	}
+	appendMessage(t, ro, os.Getenv("UB_ROLLOUT_CRASH_SESSION"), "crash")
+	os.Exit(1)
+}
+
+func openRollout(t *testing.T) *SQLite {
+	t.Helper()
+	_, ro := openStoreRollout(t)
+	return ro
+}
+
+func openStoreRollout(t *testing.T) (*store.Store, *SQLite) {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "ub.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	ro, err := New(st)
+	if err != nil {
+		t.Fatalf("New rollout: %v", err)
+	}
+	return st, ro
+}
+
+func createSession(t *testing.T, st *store.Store, suffix string) string {
+	t.Helper()
+	id := "sess_" + suffix
+	if err := st.CreateSession(context.Background(), store.Session{
+		ID:        id,
+		Workspace: "/workspace",
+		Title:     suffix,
+		Model:     "fake/model",
+	}); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	return id
+}
+
+func appendMessage(t *testing.T, ro *SQLite, sessionID, text string) {
+	t.Helper()
+	event, err := UserMessage(sessionID, 1, message.Text(message.RoleUser, text))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	if err := ro.Append(context.Background(), event); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+}

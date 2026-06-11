@@ -6,7 +6,7 @@ Define tool permission decisions, approval routing, allow-rules, and dangerous c
 ## Requirements
 ### Requirement: 权限决策模型
 
-系统 SHALL 在 `internal/permission` 中定义 `Decision`，包含 `Allow`、`Deny`、`AlwaysCmd`、`AlwaysTool`、`AlwaysGlobal` 五种值。系统 MUST 定义 `Request`，包含 tool 名称、args、risk、execution mode、可选 preview、command/cwd、上下文摘要以及可选 approval agent 回退原因。系统 MUST 定义 `Asker` 接口用于 human approval。
+系统 SHALL 在 `internal/pkg/runtime/permission` 中定义 `Decision`，包含 `Allow`、`Deny`、`AlwaysCmd`、`AlwaysTool`、`AlwaysGlobal` 五种值。系统 MUST 定义 `Request`，包含 tool 名称、args、risk、execution mode、可选 preview、command/cwd、上下文摘要以及可选 approval agent 回退原因。系统 MUST 定义 `Asker` 接口用于 human approval。
 
 #### Scenario: human allow once
 

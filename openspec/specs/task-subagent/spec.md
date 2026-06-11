@@ -5,7 +5,7 @@ TBD - created by archiving change add-task-subagent. Update Purpose after archiv
 ## Requirements
 ### Requirement: SubagentRunner ctx 助手
 
-`internal/tool` 包 SHALL 暴露 `SubagentRunner` 接口与配套的 ctx 助手:
+`internal/pkg/tool` 包 SHALL 暴露 `SubagentRunner` 接口与配套的 ctx 助手:
 
 ```go
 type SubagentRunner interface {

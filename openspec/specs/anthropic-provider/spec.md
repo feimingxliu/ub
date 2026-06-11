@@ -8,7 +8,7 @@ Define the Anthropic provider adapter for Messages API calls, configuration hand
 
 ### Requirement: Anthropic provider 创建
 
-系统 SHALL 提供 `internal/provider/anthropic` provider，并通过 provider 工厂注册 `type: anthropic`。provider MUST 支持配置中的 `api_key`、`base_url`、`headers` 和 `timeout`。
+系统 SHALL 提供 `internal/pkg/llm/provider/anthropic` provider，并通过 provider 工厂注册 `type: anthropic`。provider MUST 支持配置中的 `api_key`、`base_url`、`headers` 和 `timeout`。
 
 #### Scenario: 工厂创建 anthropic provider
 

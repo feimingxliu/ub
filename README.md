@@ -78,7 +78,7 @@ ub doctor --plain                   # check connectivity
             mcp / jobs)    + blocklist)
 ```
 
-Follow one keystroke from `internal/tui/model.go` through `internal/agent/`, `internal/tool/`, `internal/permission/`, into `internal/rollout/` and back. That's the whole control flow.
+Follow one keystroke from `internal/app/ub/tui/model.go` through `internal/app/ub/agent/`, `internal/pkg/tool/`, `internal/pkg/runtime/permission/`, into `internal/pkg/workspace/rollout/` and back. That's the whole control flow.
 
 See [`docs/design.md`](docs/design.md) for the long version.
 

@@ -8,7 +8,7 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 
 ### Requirement: Provider 接口与事件流
 
-系统 SHALL 在 `internal/provider` 中提供 SDK 无关的 provider 抽象。Provider MUST 暴露名称、能力描述和 `Chat(ctx, Request) (Stream, error)`；Stream MUST 通过 `Next(ctx)` 顺序返回事件，并支持 `Close()`。
+系统 SHALL 在 `internal/pkg/llm/provider` 中提供 SDK 无关的 provider 抽象。Provider MUST 暴露名称、能力描述和 `Chat(ctx, Request) (Stream, error)`；Stream MUST 通过 `Next(ctx)` 顺序返回事件，并支持 `Close()`。
 
 #### Scenario: Provider 返回顺序事件
 
@@ -38,7 +38,7 @@ Define the SDK-neutral provider runtime, deterministic fake provider, provider f
 
 ### Requirement: Fake provider 脚本
 
-系统 SHALL 提供 `internal/provider/fake`，可按预设脚本顺序产生 `text_delta`、`reasoning_delta`、`tool_call`、`usage`、`done` 和 `error` 事件。fake provider MUST 支持通过 Go 代码直接构造，也 MUST 支持从配置脚本构造。
+系统 SHALL 提供 `internal/pkg/llm/provider/fake`，可按预设脚本顺序产生 `text_delta`、`reasoning_delta`、`tool_call`、`usage`、`done` 和 `error` 事件。fake provider MUST 支持通过 Go 代码直接构造，也 MUST 支持从配置脚本构造。
 
 #### Scenario: Go 代码构造脚本
 

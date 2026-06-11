@@ -135,16 +135,16 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 
 ### Requirement: JSON Schema 生成
 
-仓库 MUST 提供 `make schema` target，运行后生成 / 更新 `schema/config.schema.json`，内容由 `Config` Go 结构体反射得到。schema 文件 MUST 提交到 git 仓库。
+仓库 MUST 提供 `make schema` target，运行后生成 / 更新 `api/config.schema.json`，内容由 `Config` Go 结构体反射得到。schema 文件 MUST 提交到 git 仓库。
 
 #### Scenario: 生成 schema 文件
 
 - **WHEN** 用户在仓库根运行 `make schema`
-- **THEN** `schema/config.schema.json` 被创建或更新，且是合法 JSON Schema（含 `$schema`、`properties`）
+- **THEN** `api/config.schema.json` 被创建或更新，且是合法 JSON Schema（含 `$schema`、`properties`）
 
 #### Scenario: schema 覆盖关键字段
 
-- **WHEN** 检查生成的 `schema/config.schema.json`
+- **WHEN** 检查生成的 `api/config.schema.json`
 - **THEN** schema `properties` 至少包含 `default_model`、`default_provider`、`small_model`、`execution_mode`、`approval_agent`、`profiles`、`providers`、`tui`、`context`、`permissions`、`mcp_servers`、`lsp_servers`
 
 ### Requirement: Fake provider 脚本配置
@@ -197,4 +197,4 @@ Define how `ub` discovers, loads, merges, displays, and documents YAML configura
 #### Scenario: schema 覆盖 reasoning 字段
 
 - **WHEN** 用户运行 `make schema`
-- **THEN** `schema/config.schema.json` MUST 包含 `reasoning`、`approval_agent.reasoning`、`providers.*.models` 和 `max_context_tokens` 相关字段
+- **THEN** `api/config.schema.json` MUST 包含 `reasoning`、`approval_agent.reasoning`、`providers.*.models` 和 `max_context_tokens` 相关字段

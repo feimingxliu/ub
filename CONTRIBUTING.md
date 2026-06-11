@@ -6,9 +6,15 @@ product spec, so code changes and spec changes should stay aligned.
 ## Project Layout
 
 - `cmd/ub/`: CLI entrypoint.
-- `cmd/gen-schema/`: regenerates `schema/config.schema.json`.
-- `internal/`: application packages.
-- `schema/`: generated JSON Schema.
+- `tools/gen-schema/`: regenerates `api/config.schema.json`.
+- `internal/app/ub/`: ub application packages.
+- `internal/pkg/core/`: config, message, execution, and reasoning foundations.
+- `internal/pkg/llm/`: provider adapters, model metadata, token context, and VCR.
+- `internal/pkg/runtime/`: permissions, approval, hooks, logging, and maintenance.
+- `internal/pkg/workspace/`: paths, session storage, rollout logs, memory, and file history.
+- `internal/pkg/integration/`: MCP and LSP protocol clients.
+- `internal/pkg/tool/`: tool registry plus built-in tool implementations.
+- `api/`: generated JSON Schema.
 - `docs/requirements.md`, `docs/design.md`, `docs/roadmap.md`, and
   `docs/roadmap-v2.md`: maintained product and implementation specs.
 - `.references/`: ignored local research material.
@@ -24,7 +30,7 @@ make vet        # or: go vet ./...
 make lint       # vet + strict gofumpt check
 make fmt        # format Go with gofumpt
 make check      # CI-equivalent gate: lint + race tests + build
-make schema     # regenerate schema/config.schema.json after config changes
+make schema     # regenerate api/config.schema.json after config changes
 ```
 
 Useful smoke checks:

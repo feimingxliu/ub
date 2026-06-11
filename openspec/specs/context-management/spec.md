@@ -8,7 +8,7 @@
 
 ### Requirement: Token 估算 API
 
-系统 SHALL 在 `internal/context` 中提供 `Estimate(msgs []message.Message, model string) int`。该函数 MUST 接受 provider-neutral message 列表和模型名，并返回发起请求前可用的非负 token 估算值。
+系统 SHALL 在 `internal/pkg/llm/context` 中提供 `Estimate(msgs []message.Message, model string) int`。该函数 MUST 接受 provider-neutral message 列表和模型名，并返回发起请求前可用的非负 token 估算值。
 
 #### Scenario: 已知 OpenAI 字符串估算
 

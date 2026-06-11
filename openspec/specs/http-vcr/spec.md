@@ -8,7 +8,7 @@ Define HTTP request recording and replay behavior for provider integration tests
 
 ### Requirement: RoundTripper 模式
 
-系统 SHALL 在 `internal/vcr` 中提供实现 `http.RoundTripper` 的 recorder。recorder MUST 支持 `record`、`replay`、`disabled` 三种模式；`UB_VCR` MUST 能解析为对应模式，未设置时默认为 `disabled`。
+系统 SHALL 在 `internal/pkg/llm/vcr` 中提供实现 `http.RoundTripper` 的 recorder。recorder MUST 支持 `record`、`replay`、`disabled` 三种模式；`UB_VCR` MUST 能解析为对应模式，未设置时默认为 `disabled`。
 
 #### Scenario: disabled 模式透传
 

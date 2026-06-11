@@ -128,7 +128,7 @@ make test       # 运行所有测试
 make vet
 make lint       # vet + 格式检查
 make fmt        # 使用 gofumpt 格式化
-make schema     # 重新生成 schema/config.schema.json
+make schema     # 重新生成 api/config.schema.json
 ```
 
 把构建产物放到 PATH：

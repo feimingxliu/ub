@@ -15,7 +15,7 @@
 
 - [ ] Tests added or updated for behavior changes.
 - [ ] Documentation updated for user-visible behavior or config changes.
-- [ ] `schema/config.schema.json` regenerated after config type changes.
+- [ ] `api/config.schema.json` regenerated after config type changes.
 - [ ] TUI-visible changes include a screenshot, cast, or terminal output.
 - [ ] Breaking changes are called out below and in `CHANGELOG.md`.
 

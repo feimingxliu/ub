@@ -7,7 +7,7 @@ Define the headless provider/tool loop and `ub run -p` behavior.
 
 ### Requirement: Agent loop 执行模型
 
-系统 SHALL 在 `internal/agent` 中提供 Agent，使用 provider、tool Registry、permission Manager、execution mode 和 rollout writer 执行单个用户请求。Agent MUST 按顺序处理 provider stream，最多执行 25 轮 provider/tool 循环；没有 tool_call 时 MUST 结束并返回最终 assistant 文本。
+系统 SHALL 在 `internal/app/ub/agent` 中提供 Agent，使用 provider、tool Registry、permission Manager、execution mode 和 rollout writer 执行单个用户请求。Agent MUST 按顺序处理 provider stream，最多执行 25 轮 provider/tool 循环；没有 tool_call 时 MUST 结束并返回最终 assistant 文本。
 
 #### Scenario: fake provider 调用 read 后回答
 

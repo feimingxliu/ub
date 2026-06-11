@@ -8,7 +8,7 @@ Define `ub`'s provider-neutral internal message representation, JSON shape, and 
 
 ### Requirement: 内部 Message 类型
 
-系统 SHALL 在 `internal/message` 中提供 SDK 无关的消息类型。`Message` MUST 至少包含 `Role` 和有序的 `ContentBlock` 列表；`Role` MUST 支持 `user`、`assistant`、`system`、`tool`。
+系统 SHALL 在 `internal/pkg/core/message` 中提供 SDK 无关的消息类型。`Message` MUST 至少包含 `Role` 和有序的 `ContentBlock` 列表；`Role` MUST 支持 `user`、`assistant`、`system`、`tool`。
 
 #### Scenario: 创建用户文本消息
 

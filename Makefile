@@ -56,7 +56,7 @@ install-hooks:
 	@echo "git hooks installed (.githooks/ now active)"
 
 schema:
-	go run ./cmd/gen-schema
+	go run ./tools/gen-schema
 
 changelog:
 	git cliff --output CHANGELOG.md

@@ -453,7 +453,7 @@ max_turns: 80
 
 `task(prompt, max_turns?)` 工具让主 agent 派发一个**子 agent**跑一个 self-contained 子任务,把子任务的最终回答作为 tool result 拿回来。典型用法:
 
-- "去 grep 一下 internal/lsp/ 里所有用到 deprecated API 的地方,列出 file:line 给我"
+- "去 grep 一下 internal/pkg/integration/lsp/ 里所有用到 deprecated API 的地方,列出 file:line 给我"
 - "调研一下 docker-compose 里这两个服务的依赖关系,写一段 200 字总结"
 
 子 agent 与主 agent **共享 provider 与工具集**,但**独立 conversation context**(因此可以隔离掉调研期间的中间状态,避免污染主 prompt)。本版本是最小可用版,有以下取舍:
