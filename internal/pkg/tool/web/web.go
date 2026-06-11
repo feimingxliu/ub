@@ -31,7 +31,7 @@ const (
 	maxFetchChars       = 50000
 	defaultTimeout      = 15 * time.Second
 	defaultMaxFetchSize = 2 * 1024 * 1024
-	defaultUserAgent    = "ub-web/1.0"
+	defaultUserAgent    = "Mozilla/5.0 (compatible; ub-web/1.0)"
 )
 
 // Options configures web_search and web_fetch.
@@ -85,6 +85,9 @@ func normalizeOptions(opts Options) Options {
 		opts.UserAgent = defaultUserAgent
 	}
 	opts.Provider = strings.ToLower(strings.TrimSpace(opts.Provider))
+	if opts.Provider == "" {
+		opts.Provider = "duckduckgo"
+	}
 	opts.BaseURL = strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/")
 	opts.AllowDomains = normalizeDomainList(opts.AllowDomains)
 	opts.DenyDomains = normalizeDomainList(opts.DenyDomains)
@@ -306,7 +309,7 @@ func newSearchTool(opts Options, backend searchBackend) *searchTool {
 func (t *searchTool) Name() string { return "web_search" }
 
 func (t *searchTool) Description() string {
-	return "Search the web for current external information. Returns provider-neutral result titles, URLs, summaries, and dates; use web_fetch on selected URLs when the page content matters. Requires tools.web.enabled and a configured search provider."
+	return "Search the web for current external information. Returns provider-neutral result titles, URLs, summaries, and dates; use web_fetch on selected URLs when the page content matters. Uses the zero-config duckduckgo provider by default when tools.web.enabled is true."
 }
 
 func (t *searchTool) Schema() *jsonschema.Schema { return t.schema }

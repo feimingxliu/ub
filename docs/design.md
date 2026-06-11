@@ -239,7 +239,7 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 
 `tool_result(tool_use_id, offset?, limit?)`：从 `<state-root>/tool_outputs/<sessionID>/<toolUseID>.txt` 读回曾被 `tooloutput.LimitResult` 截断/落盘的完整工具输出。sessionID 由 agent 调用前通过 `tool.WithSessionID(ctx)` 注入到 context；工具自身不接受任意路径,只能读 spillover 目录,跨 session 不可见
 
-`web_search(query, recency?, domains?, limit?)` / `web_fetch(url, max_chars?)`：内置联网检索工具,由 `tools.web.enabled` 显式开启,plan 模式不广告也不执行。两者都是 `RiskNetwork`,默认走与 exec 同级的人类/approval-agent 审批路径,permission rule 使用 `WebSearch(domain:golang.org)` 或 `WebFetch(docs.python.org:*)` 这样的目标。`web_search` 支持 Brave/Tavily/SerpAPI/SearXNG provider,输出 provider-neutral 的 title/url/summary/date,缺少 provider/key/base_url 时返回清晰 tool error;`web_fetch` 仅抓 HTTP(S),默认拒绝 file/local/private 网段,检查 robots.txt,限制 timeout/redirect/source bytes,对 HTML/PDF/text 做最小正文提取。结果进入统一 `context.tool_results` 限幅和 spillover,rollout `tool_result.metadata` 记录 query/url/final_url/provider/parser/content_type/source_bytes 等审计字段,不记录 API key。
+`web_search(query, recency?, domains?, limit?)` / `web_fetch(url, max_chars?)`：内置联网检索工具,`tools.web.enabled` 默认开启,plan 模式不广告也不执行。两者都是 `RiskNetwork`,默认走与 exec 同级的人类/approval-agent 审批路径,permission rule 使用 `WebSearch(domain:golang.org)` 或 `WebFetch(docs.python.org:*)` 这样的目标。`web_search` 默认使用零配置、无需 API key 的 DuckDuckGo HTML provider,也支持 Brave/Tavily/SerpAPI/SearXNG provider,输出 provider-neutral 的 title/url/summary/date;商业 provider 缺 key 或 SearXNG 缺 base_url 时返回清晰 tool error。`web_fetch` 仅抓 HTTP(S),默认拒绝 file/local/private 网段,检查 robots.txt,限制 timeout/redirect/source bytes,对 HTML/PDF/text 做最小正文提取。结果进入统一 `context.tool_results` 限幅和 spillover,rollout `tool_result.metadata` 记录 query/url/final_url/provider/parser/content_type/source_bytes 等审计字段,不记录 API key。默认 `user_agent` 使用浏览器兼容的 crawler 标识(`Mozilla/5.0 (compatible; ub-web/1.0)`),用户可通过 `tools.web.user_agent` 覆盖。
 
 **Registry**：本地工具静态注册，MCP 工具运行时注册。同名冲突时 MCP 走 `mcp__<server>__<tool>` 前缀（Anthropic 规范）。
 
@@ -500,11 +500,11 @@ tools:
     retention: 8h
     cleanup_interval: 5m
   web:
-    enabled: false
-    provider: searxng      # brave / tavily / serpapi / searxng
+    enabled: true
+    provider: duckduckgo   # duckduckgo / brave / tavily / serpapi / searxng
     api_key: ${WEB_API_KEY}
     base_url: https://search.example.com
-    user_agent: ub-web/1.0
+    user_agent: Mozilla/5.0 (compatible; ub-web/1.0)
     timeout: 15s
     max_fetch_bytes: 2097152
     allow_domains: []

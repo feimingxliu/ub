@@ -70,6 +70,7 @@ func TestMergeDefaults(t *testing.T) {
 	promptWorkspaceEnabled := false
 	memoryAutoEnabled := false
 	memoryAutoDisableExternal := false
+	webEnabled := true
 	got := Merge(Defaults(), &Config{
 		TUI:           TUIConfig{Theme: "light"},
 		ExecutionMode: ModePlan,
@@ -113,7 +114,7 @@ func TestMergeDefaults(t *testing.T) {
 				CleanupInterval: time.Minute,
 			},
 			Web: WebToolConfig{
-				Enabled:             true,
+				Enabled:             &webEnabled,
 				Provider:            "brave",
 				APIKey:              "web-key",
 				BaseURL:             "https://search.example.test",
@@ -185,7 +186,8 @@ func TestMergeDefaults(t *testing.T) {
 		got.Tools.Job.CleanupInterval != time.Minute {
 		t.Fatalf("tools.job = %#v", got.Tools.Job)
 	}
-	if !got.Tools.Web.Enabled ||
+	if got.Tools.Web.Enabled == nil ||
+		!*got.Tools.Web.Enabled ||
 		got.Tools.Web.Provider != "brave" ||
 		got.Tools.Web.APIKey != "web-key" ||
 		got.Tools.Web.BaseURL != "https://search.example.test" ||
@@ -201,6 +203,11 @@ func TestMergeDefaults(t *testing.T) {
 	}
 	if got.Cleanup.CleanupEnabled() {
 		t.Fatalf("cleanup enabled = true, want false")
+	}
+	webDisabled := false
+	disabled := Merge(Defaults(), &Config{Tools: ToolsConfig{Web: WebToolConfig{Enabled: &webDisabled}}})
+	if disabled.Tools.Web.Enabled == nil || *disabled.Tools.Web.Enabled {
+		t.Fatalf("tools.web.enabled = %#v, want false override", disabled.Tools.Web.Enabled)
 	}
 	if got.Cleanup.Interval != 12*time.Hour ||
 		got.Cleanup.Sessions.MaxAge != 7*24*time.Hour ||

@@ -186,8 +186,8 @@ type JobToolConfig struct {
 
 // WebToolConfig controls built-in web_search and web_fetch tools.
 type WebToolConfig struct {
-	Enabled             bool          `yaml:"enabled,omitempty"               json:"enabled,omitempty"`
-	Provider            string        `yaml:"provider,omitempty"              json:"provider,omitempty" jsonschema:"enum=brave,enum=tavily,enum=serpapi,enum=searxng"`
+	Enabled             *bool         `yaml:"enabled,omitempty"               json:"enabled,omitempty"`
+	Provider            string        `yaml:"provider,omitempty"              json:"provider,omitempty" jsonschema:"enum=duckduckgo,enum=brave,enum=tavily,enum=serpapi,enum=searxng"`
 	APIKey              string        `yaml:"api_key,omitempty"               json:"api_key,omitempty" secret:"true"`
 	BaseURL             string        `yaml:"base_url,omitempty"              json:"base_url,omitempty"`
 	UserAgent           string        `yaml:"user_agent,omitempty"            json:"user_agent,omitempty"`
@@ -196,6 +196,11 @@ type WebToolConfig struct {
 	AllowDomains        []string      `yaml:"allow_domains,omitempty"         json:"allow_domains,omitempty"`
 	DenyDomains         []string      `yaml:"deny_domains,omitempty"          json:"deny_domains,omitempty"`
 	AllowPrivateNetwork bool          `yaml:"allow_private_network,omitempty" json:"allow_private_network,omitempty"`
+}
+
+// WebEnabled reports whether built-in web tools are enabled after config merge.
+func (c WebToolConfig) WebEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
 }
 
 // ContextConfig controls auto-summarization (used by I-28).

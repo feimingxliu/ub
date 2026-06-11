@@ -2,9 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -99,25 +96,6 @@ func TestNewApprovalAgentFromConfigErrorsForExplicitMissingProvider(t *testing.T
 }
 
 func TestNewApprovalAgentFromConfigSelectsProviderModelWhenUnset(t *testing.T) {
-	var requestBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/models":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"data":[{"id":"z-review"},{"id":"a-review"}]}`))
-		case "/chat/completions":
-			if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
-				t.Fatalf("decode request: %v", err)
-			}
-			w.Header().Set("Content-Type", "text/event-stream")
-			writeOpenAIChatSSE(t, w, `{"id":"chatcmpl_1","object":"chat.completion.chunk","created":0,"model":"a-review","choices":[{"index":0,"delta":{"role":"assistant","content":"{\"decision\":\"allow\",\"reason\":\"selected fallback\"}"},"finish_reason":null}]}`)
-			writeOpenAIChatSSE(t, w, `[DONE]`)
-		default:
-			t.Fatalf("unexpected path %q", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
 	cfg := &config.Config{
 		ExecutionMode: config.ModeAuto,
 		ApprovalAgent: config.ApprovalAgentConfig{
@@ -125,19 +103,29 @@ func TestNewApprovalAgentFromConfigSelectsProviderModelWhenUnset(t *testing.T) {
 		},
 		Providers: map[string]config.ProviderConfig{
 			"reviewer": {
-				Type:    "openai-compat",
-				BaseURL: server.URL,
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"z-review": {},
+					"a-review": {},
+				},
+				Script: []config.ProviderScriptEvent{
+					{Type: string(provider.EventTextDelta), Text: `{"decision":"allow","reason":"selected fallback"}`},
+					{Type: string(provider.EventDone)},
+				},
 			},
 		},
 	}
-	agent, err := newApprovalAgentFromConfig(context.Background(), cfg, "", "")
+	setup, err := newApprovalAgentSetup(context.Background(), cfg, "", "")
 	if err != nil {
-		t.Fatalf("newApprovalAgentFromConfig: %v", err)
+		t.Fatalf("newApprovalAgentSetup: %v", err)
 	}
-	if agent == nil {
+	if setup.Agent == nil {
 		t.Fatal("agent is nil, want provider-backed approval agent")
 	}
-	res, err := agent.ReviewCommand(context.Background(), approval.Request{
+	if setup.Model != "a-review" {
+		t.Fatalf("approval model = %q, want a-review", setup.Model)
+	}
+	res, err := setup.Agent.ReviewCommand(context.Background(), approval.Request{
 		Tool:    "bash",
 		Risk:    tool.RiskExec,
 		Mode:    execution.ModeAuto,
@@ -148,8 +136,5 @@ func TestNewApprovalAgentFromConfigSelectsProviderModelWhenUnset(t *testing.T) {
 	}
 	if res.Decision != approval.DecisionAllow {
 		t.Fatalf("decision = %q, want allow", res.Decision)
-	}
-	if requestBody["model"] != "a-review" {
-		t.Fatalf("approval model = %#v, want a-review", requestBody["model"])
 	}
 }

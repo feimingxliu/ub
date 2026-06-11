@@ -5,10 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+
+	"golang.org/x/net/html"
 )
+
+const defaultDuckDuckGoSearchURL = "https://html.duckduckgo.com/html/"
 
 type searchRequest struct {
 	Query   string
@@ -39,8 +44,8 @@ type httpSearchBackend struct {
 
 func (b httpSearchBackend) Search(ctx context.Context, req searchRequest) ([]searchResult, error) {
 	switch b.opts.Provider {
-	case "":
-		return nil, fmt.Errorf("tools.web.provider is required for web_search (supported: searxng, brave, tavily, serpapi)")
+	case "", "duckduckgo":
+		return b.searchDuckDuckGo(ctx, req)
 	case "searxng":
 		return b.searchSearXNG(ctx, req)
 	case "brave":
@@ -50,8 +55,39 @@ func (b httpSearchBackend) Search(ctx context.Context, req searchRequest) ([]sea
 	case "serpapi":
 		return b.searchSerpAPI(ctx, req)
 	default:
-		return nil, fmt.Errorf("unsupported tools.web.provider %q (supported: searxng, brave, tavily, serpapi)", b.opts.Provider)
+		return nil, fmt.Errorf("unsupported tools.web.provider %q (supported: duckduckgo, searxng, brave, tavily, serpapi)", b.opts.Provider)
 	}
+}
+
+func (b httpSearchBackend) searchDuckDuckGo(ctx context.Context, req searchRequest) ([]searchResult, error) {
+	base := fallback(b.opts.BaseURL, defaultDuckDuckGoSearchURL)
+	u, err := url.Parse(base)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("q", queryWithDomains(req.Query, req.Domains))
+	if req.Recency > 0 {
+		q.Set("df", duckDuckGoTimeRange(req.Recency))
+	}
+	u.RawQuery = q.Encode()
+	httpReq, err := newRequest(ctx, http.MethodGet, u.String(), nil, b.opts.UserAgent)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := b.client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("%s returned HTTP %d", httpReq.URL.String(), resp.StatusCode)
+	}
+	data, _, err := readLimited(resp.Body, b.opts.MaxFetchBytes)
+	if err != nil {
+		return nil, err
+	}
+	return parseDuckDuckGoHTML(data), nil
 }
 
 func (b httpSearchBackend) searchSearXNG(ctx context.Context, req searchRequest) ([]searchResult, error) {
@@ -265,4 +301,134 @@ func braveFreshness(days int) string {
 	default:
 		return "py"
 	}
+}
+
+func duckDuckGoTimeRange(days int) string {
+	switch {
+	case days <= 1:
+		return "d"
+	case days <= 7:
+		return "w"
+	case days <= 31:
+		return "m"
+	default:
+		return "y"
+	}
+}
+
+func parseDuckDuckGoHTML(data []byte) []searchResult {
+	z := html.NewTokenizer(bytes.NewReader(data))
+	var out []searchResult
+	var captureKind string
+	var captureURL string
+	var captureDepth int
+	var text strings.Builder
+	for {
+		tt := z.Next()
+		switch tt {
+		case html.ErrorToken:
+			if z.Err() == io.EOF {
+				return out
+			}
+			return out
+		case html.StartTagToken:
+			tok := z.Token()
+			if captureKind != "" {
+				captureDepth++
+				continue
+			}
+			className := htmlTokenAttr(tok, "class")
+			if strings.EqualFold(tok.Data, "a") && htmlClassContains(className, "result__a") {
+				if decoded := decodeDuckDuckGoURL(htmlTokenAttr(tok, "href")); decoded != "" {
+					captureKind = "title"
+					captureURL = decoded
+					captureDepth = 1
+					text.Reset()
+				}
+				continue
+			}
+			if htmlClassContains(className, "result__snippet") {
+				captureKind = "summary"
+				captureDepth = 1
+				text.Reset()
+			}
+		case html.TextToken:
+			if captureKind != "" {
+				text.Write(z.Text())
+				text.WriteByte(' ')
+			}
+		case html.EndTagToken:
+			if captureKind == "" {
+				continue
+			}
+			captureDepth--
+			if captureDepth > 0 {
+				continue
+			}
+			value := compactWhitespace(html.UnescapeString(text.String()))
+			switch captureKind {
+			case "title":
+				if value != "" && captureURL != "" {
+					out = append(out, searchResult{Title: value, URL: captureURL})
+				}
+			case "summary":
+				if value != "" && len(out) > 0 && out[len(out)-1].Summary == "" {
+					out[len(out)-1].Summary = value
+				}
+			}
+			captureKind = ""
+			captureURL = ""
+			captureDepth = 0
+			text.Reset()
+		}
+	}
+}
+
+func htmlTokenAttr(tok html.Token, name string) string {
+	for _, attr := range tok.Attr {
+		if strings.EqualFold(attr.Key, name) {
+			return strings.TrimSpace(attr.Val)
+		}
+	}
+	return ""
+}
+
+func htmlClassContains(className, want string) bool {
+	for _, field := range strings.Fields(className) {
+		if field == want {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeDuckDuckGoURL(raw string) string {
+	raw = strings.TrimSpace(html.UnescapeString(raw))
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "//") {
+		raw = "https:" + raw
+	}
+	if strings.HasPrefix(raw, "/") {
+		raw = "https://duckduckgo.com" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if encoded := strings.TrimSpace(u.Query().Get("uddg")); encoded != "" {
+		raw = encoded
+		u, err = url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	if u.Host == "" {
+		return ""
+	}
+	return u.String()
 }

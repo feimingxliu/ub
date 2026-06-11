@@ -96,9 +96,24 @@ func TestToolRuntimeUsesConfiguredSpilloverDirForReadTools(t *testing.T) {
 	}
 }
 
-func TestToolRuntimeRegistersWebToolsOnlyWhenEnabled(t *testing.T) {
+func TestToolRuntimeRegistersWebToolsByDefaultAndCanDisable(t *testing.T) {
 	cfg := config.Defaults()
 	runtime, err := newToolRuntime(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("newToolRuntime default: %v", err)
+	}
+	defer runtime.Close()
+	if _, ok := runtime.Registry.Get("web_search"); !ok {
+		t.Fatalf("web_search missing with default tools.web.enabled=true")
+	}
+	if _, ok := runtime.Registry.Get("web_fetch"); !ok {
+		t.Fatalf("web_fetch missing with default tools.web.enabled=true")
+	}
+
+	cfg = config.Defaults()
+	disabled := false
+	cfg.Tools.Web.Enabled = &disabled
+	runtime, err = newToolRuntime(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("newToolRuntime disabled: %v", err)
 	}
@@ -108,21 +123,5 @@ func TestToolRuntimeRegistersWebToolsOnlyWhenEnabled(t *testing.T) {
 	}
 	if _, ok := runtime.Registry.Get("web_fetch"); ok {
 		t.Fatalf("web_fetch registered while tools.web.enabled=false")
-	}
-
-	cfg = config.Defaults()
-	cfg.Tools.Web.Enabled = true
-	cfg.Tools.Web.Provider = "searxng"
-	cfg.Tools.Web.BaseURL = "https://search.example.test"
-	runtime, err = newToolRuntime(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("newToolRuntime enabled: %v", err)
-	}
-	defer runtime.Close()
-	if _, ok := runtime.Registry.Get("web_search"); !ok {
-		t.Fatalf("web_search missing while enabled")
-	}
-	if _, ok := runtime.Registry.Get("web_fetch"); !ok {
-		t.Fatalf("web_fetch missing while enabled")
 	}
 }

@@ -238,8 +238,9 @@ func mergeTools(dst *ToolsConfig, src ToolsConfig) {
 	if src.Job.CleanupInterval != 0 {
 		dst.Job.CleanupInterval = src.Job.CleanupInterval
 	}
-	if src.Web.Enabled {
-		dst.Web.Enabled = true
+	if src.Web.Enabled != nil {
+		enabled := *src.Web.Enabled
+		dst.Web.Enabled = &enabled
 	}
 	if src.Web.Provider != "" {
 		dst.Web.Provider = src.Web.Provider

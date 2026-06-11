@@ -47,10 +47,12 @@ func TestLoadFromDirsEmptyConfigReturnsDefaults(t *testing.T) {
 		cfg.Tools.Job.CleanupInterval.String() != "5m0s" {
 		t.Fatalf("job tool defaults not applied: %#v", cfg.Tools.Job)
 	}
-	if cfg.Tools.Web.Enabled ||
+	if cfg.Tools.Web.Enabled == nil ||
+		!*cfg.Tools.Web.Enabled ||
+		cfg.Tools.Web.Provider != "duckduckgo" ||
 		cfg.Tools.Web.Timeout.String() != "15s" ||
 		cfg.Tools.Web.MaxFetchBytes != 2*1024*1024 ||
-		cfg.Tools.Web.UserAgent != "ub-web/1.0" {
+		cfg.Tools.Web.UserAgent != "Mozilla/5.0 (compatible; ub-web/1.0)" {
 		t.Fatalf("web tool defaults not applied: %#v", cfg.Tools.Web)
 	}
 	if cfg.Memory.MaxChars != DefaultMemoryMaxChars ||
@@ -197,7 +199,8 @@ func TestLoadFromDirsParsesWebToolConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadFromDirs: %v", err)
 	}
-	if !cfg.Tools.Web.Enabled ||
+	if cfg.Tools.Web.Enabled == nil ||
+		!*cfg.Tools.Web.Enabled ||
 		cfg.Tools.Web.Provider != "searxng" ||
 		cfg.Tools.Web.APIKey != "web-secret" ||
 		cfg.Tools.Web.BaseURL != "https://search.example.test" ||
@@ -210,6 +213,28 @@ func TestLoadFromDirsParsesWebToolConfig(t *testing.T) {
 		cfg.Tools.Web.DenyDomains[0] != "private.example.test" ||
 		!cfg.Tools.Web.AllowPrivateNetwork {
 		t.Fatalf("tools.web = %#v", cfg.Tools.Web)
+	}
+}
+
+func TestLoadFromDirsCanDisableDefaultWebTools(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	globalPath := filepath.Join(xdg, "ub", "config.yaml")
+	mustWriteConfig(t, globalPath, `tools:
+  web:
+    enabled: false
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatalf("loadFromDirs: %v", err)
+	}
+	if cfg.Tools.Web.Enabled == nil || *cfg.Tools.Web.Enabled {
+		t.Fatalf("tools.web.enabled = %#v, want false", cfg.Tools.Web.Enabled)
+	}
+	if cfg.Tools.Web.Provider != "duckduckgo" {
+		t.Fatalf("tools.web.provider = %q, want default provider retained", cfg.Tools.Web.Provider)
 	}
 }
 

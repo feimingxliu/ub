@@ -615,9 +615,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 			return nil, err
 		}
 	}
-	if cfg != nil && cfg.Tools.Web.Enabled {
+	if cfg != nil && cfg.Tools.Web.WebEnabled() {
 		if err := webtool.Register(reg, webtool.Options{
-			Enabled:             cfg.Tools.Web.Enabled,
+			Enabled:             cfg.Tools.Web.WebEnabled(),
 			Provider:            cfg.Tools.Web.Provider,
 			APIKey:              cfg.Tools.Web.APIKey,
 			BaseURL:             cfg.Tools.Web.BaseURL,

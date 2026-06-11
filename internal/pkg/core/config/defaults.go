@@ -25,6 +25,7 @@ func Defaults() *Config {
 	promptGitSnapshotEnabled := true
 	memoryAutoEnabled := true
 	memoryAutoDisableOnExternalContext := true
+	webEnabled := true
 	return &Config{
 		ExecutionMode: ModeWork,
 		Prompt: PromptConfig{
@@ -53,10 +54,11 @@ func Defaults() *Config {
 				CleanupInterval: 5 * time.Minute,
 			},
 			Web: WebToolConfig{
-				Enabled:       false,
+				Enabled:       &webEnabled,
+				Provider:      "duckduckgo",
 				Timeout:       15 * time.Second,
 				MaxFetchBytes: 2 * 1024 * 1024,
-				UserAgent:     "ub-web/1.0",
+				UserAgent:     "Mozilla/5.0 (compatible; ub-web/1.0)",
 			},
 		},
 		Context: ContextConfig{

@@ -3,6 +3,7 @@ package config
 import "testing"
 
 func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
+	webEnabled := true
 	cfg := &Config{
 		DefaultModel: "anthropic/claude-sonnet-4-7",
 		Providers: map[string]ProviderConfig{
@@ -28,7 +29,7 @@ func TestRedactMasksSecretsAndLeavesOriginalUntouched(t *testing.T) {
 		},
 		Tools: ToolsConfig{
 			Web: WebToolConfig{
-				Enabled:  true,
+				Enabled:  &webEnabled,
 				Provider: "brave",
 				APIKey:   "web-real-key",
 			},
