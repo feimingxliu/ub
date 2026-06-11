@@ -159,6 +159,12 @@ type Model struct {
 	loadingMessages  bool
 	lastEscTime      time.Time
 	lastEscRunID     int
+	backgroundQueue  []backgroundTranscriptMessage
+}
+
+type backgroundTranscriptMessage struct {
+	role string
+	text string
 }
 
 // NewModel creates the root TUI model.
@@ -896,6 +902,7 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.pendingAsk = nil
 		m.events = nil
 		m.clearEscInterruptConfirm()
+		m.flushBackgroundQueue()
 		return m.startNextQueuedPrompt()
 	}
 	cmd := waitForEventFromUpdate(msg.event, &m)
@@ -906,29 +913,57 @@ func (m Model) handleBackgroundEvent(msg backgroundEventMsg) (tea.Model, tea.Cmd
 	if !msg.ok {
 		return m, nil
 	}
-	switch msg.event.Type {
-	case EventActivity:
-		text := strings.TrimSpace(msg.event.Summary)
-		if text == "" {
-			text = strings.TrimSpace(msg.event.Content)
+	next := waitForBackgroundEvent(m.backgroundEvents)
+	if notice, ok := backgroundTranscriptMessageFromEvent(msg.event); ok {
+		if m.running {
+			m.backgroundQueue = append(m.backgroundQueue, notice)
+			return m, next
 		}
-		if text != "" {
-			role := systemRole
-			if msg.event.IsError {
-				role = errorRole
-			}
-			m.messages.append(role, text)
-			m.scrollToBottom()
-		}
-	case EventError:
-		text := strings.TrimSpace(msg.event.Content)
-		if text == "" && msg.event.Err != nil {
-			text = msg.event.Err.Error()
-		}
-		m.messages.append(errorRole, defaultString(text, "background task failed"))
-		m.scrollToBottom()
+		m.appendBackgroundTranscriptMessage(notice)
 	}
-	return m, waitForBackgroundEvent(m.backgroundEvents)
+	return m, next
+}
+
+func backgroundTranscriptMessageFromEvent(event Event) (backgroundTranscriptMessage, bool) {
+	switch event.Type {
+	case EventActivity:
+		text := strings.TrimSpace(event.Summary)
+		if text == "" {
+			text = strings.TrimSpace(event.Content)
+		}
+		if text == "" {
+			return backgroundTranscriptMessage{}, false
+		}
+		role := systemRole
+		if event.IsError {
+			role = errorRole
+		}
+		return backgroundTranscriptMessage{role: role, text: text}, true
+	case EventError:
+		text := strings.TrimSpace(event.Content)
+		if text == "" && event.Err != nil {
+			text = event.Err.Error()
+		}
+		return backgroundTranscriptMessage{role: errorRole, text: defaultString(text, "background task failed")}, true
+	default:
+		return backgroundTranscriptMessage{}, false
+	}
+}
+
+func (m *Model) appendBackgroundTranscriptMessage(msg backgroundTranscriptMessage) {
+	m.messages.append(msg.role, msg.text)
+	m.scrollToBottom()
+}
+
+func (m *Model) flushBackgroundQueue() {
+	if len(m.backgroundQueue) == 0 {
+		return
+	}
+	queued := append([]backgroundTranscriptMessage(nil), m.backgroundQueue...)
+	m.backgroundQueue = nil
+	for _, msg := range queued {
+		m.appendBackgroundTranscriptMessage(msg)
+	}
 }
 
 func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea.Cmd) {
@@ -1869,6 +1904,7 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		m.messages.removePlaceholderActivityGroup(thinkingActivityGroupKey(m.runID))
 		m.status.state = statusFinalizing
 		m.cancel = nil
+		m.flushBackgroundQueue()
 		return waitForEventWithTimeout(m.events, m.runID, m.timeout)
 	case EventError:
 		m.messages.removeKey(activityRole, thinkingActivityKey(m.runID))

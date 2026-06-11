@@ -248,11 +248,11 @@ func TestModelShowsBackgroundActivityNotice(t *testing.T) {
 	events := make(chan Event, 1)
 	model := NewModel(Options{BackgroundEvents: events})
 	updated, cmd := model.handleBackgroundEvent(backgroundEventMsg{
-		event: Event{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "memory wrote: build command is `make build`"},
+		event: Event{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "background sync complete"},
 		ok:    true,
 	})
 	model = assertModel(t, updated)
-	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"memory wrote: build command is `make build`"}) {
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"background sync complete"}) {
 		t.Fatalf("messages = %#v", got)
 	}
 	if cmd == nil {
@@ -262,6 +262,70 @@ func TestModelShowsBackgroundActivityNotice(t *testing.T) {
 	msg, ok := cmd().(backgroundEventMsg)
 	if !ok || !msg.ok || msg.event.Summary != "next background notice" {
 		t.Fatalf("next background msg = %#v", msg)
+	}
+}
+
+func TestModelDefersBackgroundActivityNoticeWhileStreaming(t *testing.T) {
+	events := make(chan Event, 1)
+	model := NewModel(Options{
+		BackgroundEvents: events,
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "prompt"},
+		},
+	})
+	model.running = true
+	model.runID = 1
+	model.events = make(chan Event)
+
+	updated, cmd := model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventDeltaText, Text: "answer "},
+	})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("delta should continue waiting for stream events")
+	}
+
+	updated, cmd = model.handleBackgroundEvent(backgroundEventMsg{
+		event: Event{Type: EventActivity, ActivityKind: "notice", Status: "done", Summary: "memory created: build command is `make build`"},
+		ok:    true,
+	})
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"prompt", "answer "}) {
+		t.Fatalf("messages = %#v, want background notice deferred", got)
+	}
+	events <- Event{Type: EventActivity, Summary: "next background notice"}
+	msgValue := cmd()
+	batch, ok := msgValue.(tea.BatchMsg)
+	if ok || batch != nil {
+		t.Fatalf("background notice while streaming should only wait for background events, got batch %T %#v", msgValue, msgValue)
+	}
+	msg, ok := msgValue.(backgroundEventMsg)
+	if !ok || !msg.ok || msg.event.Summary != "next background notice" {
+		t.Fatalf("next background msg = %#v", msg)
+	}
+
+	updated, cmd = model.Update(streamEventMsg{
+		runID: 1,
+		ok:    true,
+		event: Event{Type: EventDeltaText, Text: "tail"},
+	})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("second delta should continue waiting for stream events")
+	}
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"prompt", "answer tail"}) {
+		t.Fatalf("messages = %#v, want assistant delta to stay in one block", got)
+	}
+
+	updated, cmd = model.Update(streamEventMsg{runID: 1, ok: true, event: Event{Type: EventDone}})
+	model = assertModel(t, updated)
+	if cmd == nil {
+		t.Fatal("done should continue waiting for stream close")
+	}
+	if got := model.MessageTexts(); !reflect.DeepEqual(got, []string{"prompt", "answer tail", "memory created: build command is `make build`"}) {
+		t.Fatalf("messages = %#v, want deferred background notice after assistant", got)
 	}
 }
 
