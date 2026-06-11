@@ -898,8 +898,15 @@ func TestTUIRunnerModeSwitchStaysRuntimeOnly(t *testing.T) {
 		t.Fatalf("SetMode: %v", err)
 	}
 	events := readOnlySessionEvents(t, temp)
-	if len(events) != 0 {
-		t.Fatalf("events = %#v, want no mode persistence", events)
+	if len(events) != 1 {
+		t.Fatalf("events = %#v, want one mode audit event", events)
+	}
+	payload, ok, err := rollout.ActivityFromEvent(events[0])
+	if err != nil {
+		t.Fatalf("ActivityFromEvent: %v", err)
+	}
+	if !ok || payload.ActivityKind != "mode" || payload.Source != "slash" || payload.Decision != "approved" || !payload.Allowed {
+		t.Fatalf("mode activity = %#v", payload)
 	}
 
 	runner.mode = execution.ModeAuto

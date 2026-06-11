@@ -23,6 +23,7 @@ const (
 	ActivityTool       ActivityKind = "tool"
 	ActivityPermission ActivityKind = "permission"
 	ActivityAsk        ActivityKind = "ask"
+	ActivityMode       ActivityKind = "mode"
 	ActivityNotice     ActivityKind = "notice"
 	ActivityHook       ActivityKind = "hook"
 )

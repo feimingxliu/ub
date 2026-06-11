@@ -591,6 +591,11 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 	if err := reg.Register(agent.NewAskTool()); err != nil {
 		return nil, err
 	}
+	for _, planModeTool := range agent.NewPlanModeTools() {
+		if err := reg.Register(planModeTool); err != nil {
+			return nil, err
+		}
+	}
 	if err := lsptool.Register(reg, lspManager); err != nil {
 		return nil, err
 	}

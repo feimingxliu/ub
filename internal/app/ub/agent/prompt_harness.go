@@ -60,7 +60,9 @@ func buildStartupPromptMessages(runtime RuntimeContext, workspaceRoot string, cf
 func codingAgentInstructionsMessage() message.Message {
 	const body = `<coding_agent_instructions>
 - Work from the current repository state. Read the relevant files before proposing or applying edits.
-- Prefer purpose-built tools: read for files, ls/glob for directories, grep for text search, ask for concrete user choices, web_search/web_fetch for current external information, task for isolated research, plan_write/plan_update for persistent planning, plan_update_step for plan progress, and todo_write/todo_update for the current execution checklist.
+- Prefer purpose-built tools: read for files, ls/glob for directories, grep for text search, ask for concrete user choices, enter_plan_mode for complex implementation planning, web_search/web_fetch for current external information, task for isolated research, plan_write/plan_update for persistent planning, exit_plan_mode for plan approval, plan_update_step for plan progress, and todo_write/todo_update for the current execution checklist.
+- In work mode, request plan mode before complex new features, multi-file behavior changes, architecture choices, risky migrations, or ambiguous requirements. Do not request plan mode for small typo fixes, simple known bug fixes, already-specified implementation steps, or pure read-only questions.
+- In auto mode, keep acting unless the user explicitly asks to plan first. Use ask for a concrete choice among options; if plan-mode tools are unavailable, explain the plan in text instead of calling hidden tools.
 - Risky or destructive actions such as deletes, resets, force pushes, installs, network fetches, or long-running commands require explicit approval through the tool policy before execution.
 - When a command or test fails, inspect the error and environment before changing strategy. Do not claim tests, builds, or checks passed unless they actually ran and passed.
 - Keep user-facing updates concise and report the real verification status, including commands that were not run or did not pass.

@@ -35,6 +35,12 @@ func TestToolRuntimeKeepsLocalToolsWhenMCPServerFails(t *testing.T) {
 	if _, ok := runtime.Registry.Get("ask"); !ok {
 		t.Fatalf("local ask tool missing after MCP failure")
 	}
+	if _, ok := runtime.Registry.Get("enter_plan_mode"); !ok {
+		t.Fatalf("local enter_plan_mode tool missing after MCP failure")
+	}
+	if _, ok := runtime.Registry.Get("exit_plan_mode"); !ok {
+		t.Fatalf("local exit_plan_mode tool missing after MCP failure")
+	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get cwd: %v", err)

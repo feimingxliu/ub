@@ -64,6 +64,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 
 	permBridge := tui.NewPermissionBridge()
 	askBridge := tui.NewAskBridge()
+	planModeBridge := tui.NewPlanModeBridge()
 	limitBridge := tui.NewLimitBridge()
 	backgroundEvents := make(chan tui.Event, 64)
 	runner, err := newTUIAgentRunner(cmd, cfg, permBridge, providerFlag, modelFlag, backgroundEvents)
@@ -71,6 +72,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		return err
 	}
 	runner.asker = askBridge
+	runner.planMode = planModeBridge
 	runner.limitAsker = limitBridge
 	defer func() {
 		if closeErr := runner.Close(); closeErr != nil {
@@ -108,6 +110,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		Runner:           runner,
 		Permissions:      permBridge.Requests(),
 		Asks:             askBridge.Requests(),
+		PlanModes:        planModeBridge.Requests(),
 		Limits:           limitBridge.Requests(),
 		BackgroundEvents: backgroundEvents,
 		Provider:         runner.Provider(),
@@ -172,6 +175,8 @@ type tuiAgentRunner struct {
 	backgroundEvents     chan<- tui.Event
 	tools                *toolRuntime
 	mode                 execution.Mode
+	startupMode          execution.Mode
+	prePlanMode          execution.Mode
 	modeMu               sync.RWMutex
 	eventTimeout         time.Duration
 	permission           *permission.Manager
@@ -180,6 +185,7 @@ type tuiAgentRunner struct {
 	maxTurns             int
 	limitAsker           agent.LimitAsker
 	asker                agent.Asker
+	planMode             agent.PlanModeController
 	providerCheckMu      sync.Mutex
 	providerChecks       map[string]providerCheck
 
@@ -280,6 +286,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		backgroundEvents:     backgroundEvents,
 		tools:                tools,
 		mode:                 mode,
+		startupMode:          mode,
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
 		maxTurns:             cfg.MaxTurns,
@@ -639,6 +646,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Model:               r.model,
 		Mode:                r.currentMode(),
 		ModeFunc:            r.currentMode,
+		PlanMode:            r.planMode,
 		MaxTurns:            r.maxTurns,
 		LimitAsker:          r.limitAsker,
 		Asker:               r.asker,
@@ -1189,9 +1197,86 @@ func (r *tuiAgentRunner) SetMode(mode string) error {
 		return err
 	}
 	r.modeMu.Lock()
-	defer r.modeMu.Unlock()
-	r.mode = parsed
+	from, to := r.setModeLocked(parsed)
+	r.modeMu.Unlock()
+	r.recordModeSwitchActivity("slash", from, to, true, "")
 	return nil
+}
+
+func (r *tuiAgentRunner) EnterPlanMode() (string, string, error) {
+	if r == nil {
+		return "", "", fmt.Errorf("plan mode switching is unavailable")
+	}
+	r.modeMu.Lock()
+	from, to := r.setModeLocked(execution.ModePlan)
+	r.modeMu.Unlock()
+	return string(from), string(to), nil
+}
+
+func (r *tuiAgentRunner) ExitPlanMode() (string, string, error) {
+	if r == nil {
+		return "", "", fmt.Errorf("plan mode switching is unavailable")
+	}
+	r.modeMu.Lock()
+	defer r.modeMu.Unlock()
+	from := r.mode
+	if from != execution.ModePlan {
+		return string(from), string(from), fmt.Errorf("not in plan mode")
+	}
+	to := r.prePlanMode
+	if to == "" {
+		to = r.startupMode
+	}
+	if to == "" || to == execution.ModePlan {
+		to = execution.ModeWork
+	}
+	r.mode = to
+	r.prePlanMode = ""
+	return string(from), string(to), nil
+}
+
+func (r *tuiAgentRunner) setModeLocked(mode execution.Mode) (execution.Mode, execution.Mode) {
+	from := r.mode
+	if mode == execution.ModePlan && from != execution.ModePlan {
+		r.prePlanMode = from
+	}
+	if mode != execution.ModePlan && from == execution.ModePlan {
+		r.prePlanMode = ""
+	}
+	r.mode = mode
+	return from, mode
+}
+
+func (r *tuiAgentRunner) recordModeSwitchActivity(source string, from, to execution.Mode, approved bool, toolUseID string) {
+	if r == nil || r.state == nil || r.state.rollout == nil || strings.TrimSpace(r.state.sessionID) == "" || from == to {
+		return
+	}
+	summary := "Mode switch"
+	if to == execution.ModePlan {
+		summary = "Enter Plan Mode"
+	} else if from == execution.ModePlan {
+		summary = "Exit Plan Mode"
+	}
+	decision := "approved"
+	if !approved {
+		decision = "denied"
+	}
+	payload := rollout.ActivityPayload{
+		ActivityKind: "mode",
+		ToolUseID:    toolUseID,
+		ToolName:     "mode",
+		Status:       decision,
+		Summary:      summary,
+		Content:      fmt.Sprintf("from=%s\nto=%s\napproved=%t", from, to, approved),
+		Decision:     decision,
+		Source:       source,
+		Allowed:      approved,
+	}
+	event, err := rollout.Activity(r.state.sessionID, max(1, r.state.nextTurn), payload)
+	if err != nil {
+		return
+	}
+	_ = r.state.rollout.Append(context.Background(), event)
 }
 
 func (r *tuiAgentRunner) currentMode() execution.Mode {

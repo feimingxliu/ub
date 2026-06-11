@@ -222,14 +222,16 @@ type FileChange struct {
 ```
 
 **风险等级**：
-- `safe`：read / ls / grep / glob / ask / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / todo_write / todo_update / remember / recall / task
+- `safe`：read / ls / grep / glob / ask / enter_plan_mode / exit_plan_mode / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / todo_write / todo_update / remember / recall / task
 - `write`：write / edit / multiedit
 - `exec`：bash / job_run / job_kill
 - `network`：web_search / web_fetch
 
 `ask`:让模型在确有用户偏好分叉时发起结构化问题。schema 为 `questions[]`(header、question、options、multi_select),TUI 渲染单选/多选 chooser,把选择摘要回灌为 tool result 并写入 transcript;headless `ub run` 无交互 asker 时不阻塞,而是返回让模型自行判断并说明假设的 tool result。它是 `RiskSafe`,不走 permission approval,plan 模式也可用;子 agent 默认不继承 asker。
 
-`plan_write` / `plan_update` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),TUI 在 `plan_write` / `plan_update` 完成摘要中直接展示 `plan_id`。用户纠正已有计划时用 `plan_update` 原地更新同一个 artifact;也可在 TUI 中通过 `/plans` 打开当前 workspace 的 plan picker,或通过 `/plan-edit <plan-id>` / `/plans <plan-id>` 用 `$VISUAL` / `$EDITOR` 直接打开该 markdown review/edit。work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` / `plan_update` 只在 plan 模式暴露和执行;`plan_update_step` 只在 work/auto 模式用于执行进度。plan 模式只向 provider 广告 `read` / `ls` / `glob` / `grep` / `ask` / `plan_write` / `plan_update`,误调用其它工具仍由 mode gate 拦截。三者都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
+`enter_plan_mode` / `exit_plan_mode`:模型发起的 plan-mode 状态切换。`enter_plan_mode(reason?)` 只在 `work` 模式广告,弹 TUI 确认后把本进程 mode 切到 `plan` 并记住内存态 `pre_plan_mode`;`auto` / `full-access` 默认不广告。`exit_plan_mode(plan_id, summary?)` 只在 `plan` 模式广告,要求带 `plan_write` / `plan_update` 返回的 `plan_id`;缺失时直接返回明确 tool error,不会弹批准框。批准退出时恢复 `pre_plan_mode`(缺失则回到启动有效 mode 或 `work`),拒绝则留在 plan 模式让模型修订同一个 artifact。两者都是 `RiskSafe`,不走 permission approval,但 TUI 会把用户批准/拒绝写成 mode activity 并进入 rollout 审计。
+
+`plan_write` / `plan_update` / `plan_update_step`:把 plan-then-execute 工作流落到磁盘。plan 模式产出 `$XDG_STATE_HOME/ub/plans/<project-key>/<id>.md`(标题、metadata、`## Steps` 任务列表、`## Notes`、`## Log`),TUI 在 `plan_write` / `plan_update` 完成摘要中直接展示 `plan_id`。用户纠正已有计划时用 `plan_update` 原地更新同一个 artifact;也可在 TUI 中通过 `/plans` 打开当前 workspace 的 plan picker,或通过 `/plan-edit <plan-id>` / `/plans <plan-id>` 用 `$VISUAL` / `$EDITOR` 直接打开该 markdown review/edit。work/auto 模式按这个 artifact 推进并 `plan_update_step` 标记每一步。`plan_write` / `plan_update` 只在 plan 模式暴露和执行;`plan_update_step` 只在 work/auto 模式用于执行进度。plan 模式只向 provider 广告 `read` / `ls` / `glob` / `grep` / `ask` / `plan_write` / `plan_update` / `exit_plan_mode`,误调用其它工具仍由 mode gate 拦截。这些 plan artifact 工具都是 `RiskSafe`(写的是 ub 用户 state artifact 目录,不是用户代码)。
 
 `todo_write` / `todo_update`:维护当前 session 的短生命周期执行清单,不复用 plan markdown checkbox。`todo_write` 创建或替换当前清单,`todo_update` 通过 `id` 或 1-based `item_index` 更新单项状态。状态为 `pending` / `in_progress` / `completed` / `skipped` / `failed`,并约束同一清单最多一个 `in_progress`。todo state 存在 `$XDG_STATE_HOME/ub/todos/<session-id>.json`,tool result 同时输出稳定的 `## Todo` 文本;TUI 将该文本抽取成独立 Todo checklist,rollout show 和 resume 也能恢复同一份执行视图。todo 工具只在 work/auto/full-access 执行阶段暴露;plan 模式不广告也不执行。
 
@@ -560,9 +562,9 @@ type ModePolicy struct {
 ```
 
 **四种模式**：
-- `work`：允许 workspace 内文件读写；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
-- `plan`：只读规划；只广告 `read` / `ls` / `glob` / `grep` / `ask` / `plan_write` / `plan_update`。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具在 dispatcher 层直接拒绝并把错误回灌给模型。
-- `auto`：文件读写策略同 `work`；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
+- `work`：允许 workspace 内文件读写；广告 `enter_plan_mode` 供模型在复杂实现前请求只读规划；`exec` 风险工具如果没有命中 allow-rule，走用户审批。
+- `plan`：只读规划；只广告 `read` / `ls` / `glob` / `grep` / `ask` / `plan_write` / `plan_update` / `exit_plan_mode`。`write` 与 `exec` 风险工具、sub-agent、memory、LSP/MCP 等其它工具在 dispatcher 层直接拒绝并把错误回灌给模型。
+- `auto`：文件读写策略同 `work`；默认不广告 `enter_plan_mode`,避免打断连续执行语义；`exec` 风险工具先交给 approval agent 自动判断，若拒绝、不确定或异常，再回退到用户显式审批。
 - `full-access`：文件读写策略同 `work`；`exec` 风险工具在未命中 deny/ask/黑名单时由 mode 直接放行，不走 approval agent 或用户审批。当前 TUI 切入该模式不弹首次高风险确认 dialog；风险提示依赖状态栏、帮助文案和后续 tool activity 审计。
 
 **approval agent** 是一个受限的二级 agent，只输出 `allow` / `deny` / `unsure` 与一句理由，不执行工具、不修改上下文、不写文件。它的输入只包含命令文本、cwd、风险等级、当前 mode、最近相关上下文摘要和已命中的规则信息；API key 等 secret 不传入。黑名单命令不进入 approval agent，直接走用户确认。
@@ -599,7 +601,7 @@ type ApprovalAgent interface {
   ```
 
 UI 流程：
-1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式拒绝所有 `write` 风险工具
+1. tool dispatcher 收到 call，先执行 mode gate：`plan` 模式只允许 read / search / ask / plan / exit_plan_mode 这类安全规划工具
 2. 若工具实现 PreviewableTool，先调 `Preview()`
 3. 对 `exec` 风险工具先查 project `deny` rules → project `allow` rules → session allow rules → project `ask` rules（黑名单除外）；`deny` 直接拒绝，`allow` 直接通过，`ask` 强制人工确认
 4. 不 match 时按 mode 选择审批路径：`work`/`plan` 直接向 TUI 发 `PermissionRequest{Call, Preview}`；`auto` 先调 approval agent，并用 `slog` 记录 `allow`/`deny`/`unsure` 或错误原因，返回 `deny`/`unsure`/error 时再向 TUI 发请求；`full-access` 直接返回 mode allow

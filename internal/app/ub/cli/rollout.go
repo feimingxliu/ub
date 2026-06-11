@@ -368,6 +368,66 @@ func writeRolloutEvent(w io.Writer, style rolloutStyle, event rollout.Event) err
 			}
 		}
 		return writeIndentedBlock(w, "text:", payload.Text, style)
+	case rollout.TypeActivity:
+		var payload rollout.ActivityPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return fmt.Errorf("decode activity event %s: %w", event.ID, err)
+		}
+		kind := defaultRolloutString(payload.ActivityKind, "activity")
+		if _, err := fmt.Fprintf(w, "  activity: %s", kind); err != nil {
+			return err
+		}
+		if payload.ToolName != "" {
+			if _, err := fmt.Fprintf(w, " tool=%s", payload.ToolName); err != nil {
+				return err
+			}
+		}
+		if payload.ToolUseID != "" {
+			if _, err := fmt.Fprintf(w, " id=%s", payload.ToolUseID); err != nil {
+				return err
+			}
+		}
+		if payload.Status != "" {
+			if _, err := fmt.Fprintf(w, " status=%s", payload.Status); err != nil {
+				return err
+			}
+		}
+		if payload.Source != "" {
+			if _, err := fmt.Fprintf(w, " source=%s", payload.Source); err != nil {
+				return err
+			}
+		}
+		switch payload.ActivityKind {
+		case "permission", "ask", "mode":
+			if _, err := fmt.Fprintf(w, " allowed=%t", payload.Allowed); err != nil {
+				return err
+			}
+		default:
+			if payload.Allowed {
+				if _, err := fmt.Fprint(w, " allowed=true"); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+		if payload.Decision != "" {
+			if _, err := fmt.Fprintf(w, "  decision: %s\n", payload.Decision); err != nil {
+				return err
+			}
+		}
+		if payload.Reason != "" {
+			if _, err := fmt.Fprintf(w, "  reason: %s\n", payload.Reason); err != nil {
+				return err
+			}
+		}
+		if payload.Summary != "" {
+			if _, err := fmt.Fprintf(w, "  summary: %s\n", payload.Summary); err != nil {
+				return err
+			}
+		}
+		return writeIndentedBlock(w, "content:", payload.Content, style)
 	case rollout.TypeFileHistorySnapshot:
 		var payload filehistory.EventPayload
 		if err := json.Unmarshal(event.Payload, &payload); err != nil {

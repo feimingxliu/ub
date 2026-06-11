@@ -54,6 +54,7 @@ type Options struct {
 	Runner           Runner
 	Permissions      <-chan PermissionRequest
 	Asks             <-chan AskRequest
+	PlanModes        <-chan PlanModeRequest
 	Limits           <-chan LimitRequest
 	BackgroundEvents <-chan Event
 	Provider         string
@@ -113,6 +114,9 @@ type Model struct {
 	askReqs          <-chan AskRequest
 	pendingAsk       *AskRequest
 	askPrompt        askPromptModel
+	planModeReqs     <-chan PlanModeRequest
+	pendingPlanMode  *PlanModeRequest
+	planModePrompt   planModePromptModel
 	limitReqs        <-chan LimitRequest
 	pendingLimit     *LimitRequest
 	backgroundEvents <-chan Event
@@ -229,6 +233,7 @@ func NewModel(opts Options) Model {
 		clipboard:        opts.Clipboard,
 		permReqs:         opts.Permissions,
 		askReqs:          opts.Asks,
+		planModeReqs:     opts.PlanModes,
 		limitReqs:        opts.Limits,
 		backgroundEvents: opts.BackgroundEvents,
 		ctx:              ctx,
@@ -279,7 +284,7 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForAsk(m.askReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner)}
+	cmds := []tea.Cmd{windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForAsk(m.askReqs), waitForPlanMode(m.planModeReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner)}
 	if m.backgroundEvents != nil {
 		cmds = append(cmds, waitForBackgroundEvent(m.backgroundEvents))
 	}
@@ -302,6 +307,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handlePermissionRequest(msg)
 	case askRequestMsg:
 		return m.handleAskRequest(msg)
+	case planModeRequestMsg:
+		return m.handlePlanModeRequest(msg)
 	case limitRequestMsg:
 		return m.handleLimitRequest(msg)
 	case spinnerTickMsg:
@@ -381,6 +388,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.resolveAsk(false)
 			default:
 				m.askPrompt.HandleKey(key.String())
+				return m, nil
+			}
+		}
+		return m, nil
+	}
+
+	if m.pendingPlanMode != nil {
+		if mouseMsg, ok := msg.(tea.MouseWheelMsg); ok {
+			switch mouseMsg.Mouse().Button {
+			case tea.MouseWheelUp:
+				m.scrollMessages(3)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollMessages(-3)
+				return m, nil
+			}
+		}
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch strings.ToLower(key.String()) {
+			case "ctrl+c":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			case "esc", "n":
+				return m.resolvePlanMode(false)
+			case "y", "enter":
+				return m.resolvePlanMode(true)
+			case "ctrl+home":
+				m.scrollToTop()
+				return m, nil
+			case "ctrl+end":
+				m.scrollToBottom()
 				return m, nil
 			}
 		}
@@ -909,6 +949,15 @@ func (m Model) handleAskRequest(msg askRequestMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handlePlanModeRequest(msg planModeRequestMsg) (tea.Model, tea.Cmd) {
+	if !msg.ok {
+		return m, nil
+	}
+	m.pendingPlanMode = &msg.request
+	m.planModePrompt = newPlanModePromptModel(msg.request.Request)
+	return m, nil
+}
+
 func (m Model) handleLimitRequest(msg limitRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
@@ -934,6 +983,49 @@ func (m Model) resolveAsk(skipped bool) (tea.Model, tea.Cmd) {
 	}
 	m.pendingAsk = nil
 	return m, waitForAsk(m.askReqs)
+}
+
+func (m Model) resolvePlanMode(approved bool) (tea.Model, tea.Cmd) {
+	from := m.status.executionMode
+	to := from
+	var err error
+	if approved {
+		from, to, err = m.applyPlanModeTransition()
+	}
+	resp := m.planModePrompt.Response(approved, from, to, err)
+	if resp.Approved && resp.ToMode != "" {
+		m.status.executionMode = string(resp.ToMode)
+	}
+	if m.pendingPlanMode != nil && m.pendingPlanMode.Response != nil {
+		m.pendingPlanMode.Response <- resp
+	}
+	if summary := strings.TrimSpace(m.planModePrompt.Summary(resp)); summary != "" {
+		m.messages.append(systemRole, summary)
+		m.scrollToBottom()
+	}
+	m.pendingPlanMode = nil
+	return m, waitForPlanMode(m.planModeReqs)
+}
+
+func (m Model) applyPlanModeTransition() (from, to string, err error) {
+	if runner, ok := m.runner.(PlanModeControlRunner); ok {
+		switch m.planModePrompt.request.Action {
+		case agent.PlanModeExit:
+			return runner.ExitPlanMode()
+		default:
+			return runner.EnterPlanMode()
+		}
+	}
+	target := string(execution.ModePlan)
+	if m.planModePrompt.request.Action == agent.PlanModeExit {
+		target = string(execution.ModeWork)
+	}
+	from = m.status.executionMode
+	to = target
+	if runner, ok := m.runner.(ControlRunner); ok {
+		err = runner.SetMode(target)
+	}
+	return from, to, err
 }
 
 func (m Model) resolveLimit(extra int) (tea.Model, tea.Cmd) {
@@ -1678,13 +1770,14 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 			m.messages.append(systemRole, err.Error())
 			return m, nil
 		}
+		next := string(mode)
 		if runner, ok := m.runner.(ControlRunner); ok {
-			if err := runner.SetMode(string(mode)); err != nil {
+			if err := runner.SetMode(next); err != nil {
 				m.messages.append(systemRole, err.Error())
 				return m, nil
 			}
 		}
-		m.status.executionMode = string(mode)
+		m.status.executionMode = next
 		return m, nil
 	default:
 		m.messages.append(systemRole, "unknown slash command "+cmd.Name)
@@ -1835,6 +1928,8 @@ func activityEventText(event Event) string {
 		return prefix + toolActivityText(event)
 	case "permission":
 		return prefix + permissionEventText(event)
+	case "mode":
+		return prefix + modeEventText(event)
 	case "notice":
 		return prefix + "notice: " + defaultString(event.Summary, event.Text)
 	default:
@@ -1848,6 +1943,10 @@ func activityEventKey(event Event) string {
 	case "tool":
 		if strings.TrimSpace(event.ToolUseID) != "" {
 			return "tool:" + event.ToolUseID
+		}
+	case "mode":
+		if strings.TrimSpace(event.ToolUseID) != "" {
+			return "mode:" + event.ToolUseID
 		}
 	case "thinking":
 		if subagentID != "" {
@@ -1885,11 +1984,28 @@ func activityGroupNameForEvent(event Event) string {
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "thinking":
 		return thinkingGroupName
-	case "tool", "permission":
+	case "tool", "permission", "mode":
 		return toolGroupName
 	default:
 		return ""
 	}
+}
+
+func modeEventText(event Event) string {
+	summary := defaultString(event.Summary, "Mode switch")
+	decision := strings.TrimSpace(event.Decision)
+	if decision == "" {
+		if event.Allowed {
+			decision = "approved"
+		} else {
+			decision = "denied"
+		}
+	}
+	text := summary + " " + decision
+	if line := firstNonEmptyLine(event.Content); line != "" {
+		text += ": " + line
+	}
+	return text
 }
 
 func toolActivityText(event Event) string {
@@ -1967,6 +2083,10 @@ func toolAction(name string) string {
 		return "Running Task..."
 	case "remember":
 		return "Writing memory..."
+	case "enter_plan_mode":
+		return "Requesting plan mode..."
+	case "exit_plan_mode":
+		return "Requesting plan approval..."
 	case "plan_write":
 		return "Writing plan..."
 	case "plan_update":
@@ -2034,6 +2154,10 @@ func toolTitle(name, summary string) string {
 		verb = "Ran Task"
 	case "remember":
 		verb = "Remembered"
+	case "enter_plan_mode":
+		verb = "Requested plan mode"
+	case "exit_plan_mode":
+		verb = "Requested plan approval"
 	case "plan_write":
 		verb = "Wrote plan"
 	case "plan_update":
@@ -2106,6 +2230,8 @@ func statusForActivity(event Event) string {
 		return statusThinking
 	case "permission":
 		return statusTool
+	case "mode":
+		return statusTool
 	default:
 		return statusThinking
 	}
@@ -2116,6 +2242,16 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func firstNonEmptyLine(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 func (m Model) cycleMode() (tea.Model, tea.Cmd) {
@@ -2181,6 +2317,13 @@ func (m *Model) interruptCurrent() {
 		}
 	}
 	m.pendingAsk = nil
+	if m.pendingPlanMode != nil && m.pendingPlanMode.Response != nil {
+		select {
+		case m.pendingPlanMode.Response <- m.planModePrompt.Response(false, m.status.executionMode, m.status.executionMode, nil):
+		default:
+		}
+	}
+	m.pendingPlanMode = nil
 	if m.cancel != nil {
 		m.cancel()
 	}

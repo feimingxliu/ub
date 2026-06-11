@@ -528,7 +528,7 @@ func TestAgentInjectsPlanModeInstructionsWithoutPersistingThem(t *testing.T) {
 		"create a plan with the plan_write tool before starting implementation",
 		"update that same plan with plan_update instead of creating another plan",
 		"Do not create, edit, delete, move, format, install, execute commands",
-		"report the plan_id and wait",
+		"call exit_plan_mode with the plan_id",
 	} {
 		if !containsText(got, want) {
 			t.Fatalf("plan mode instructions missing %q:\n%#v", want, got)
@@ -1162,6 +1162,11 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if err := reg.Register(&namedSafeTool{name: "ask"}); err != nil {
 		t.Fatalf("register ask: %v", err)
 	}
+	for _, tl := range NewPlanModeTools() {
+		if err := reg.Register(tl); err != nil {
+			t.Fatalf("register %s: %v", tl.Name(), err)
+		}
+	}
 	if err := reg.Register(&namedSafeTool{name: "remember"}); err != nil {
 		t.Fatalf("register remember: %v", err)
 	}
@@ -1177,7 +1182,18 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if err := reg.Register(&namedRiskTool{name: "web_fetch", risk: tool.RiskNetwork}); err != nil {
 		t.Fatalf("register web_fetch: %v", err)
 	}
-	tools, err := toolDefinitions(reg, execution.ModeAuto)
+	tools, err := toolDefinitions(reg, execution.ModeWork)
+	if err != nil {
+		t.Fatalf("toolDefinitions work: %v", err)
+	}
+	if !toolNamesContain(tools, "enter_plan_mode") {
+		t.Fatalf("work mode should advertise enter_plan_mode: %#v", tools)
+	}
+	if toolNamesContain(tools, "exit_plan_mode") {
+		t.Fatalf("work mode should not advertise exit_plan_mode: %#v", tools)
+	}
+
+	tools, err = toolDefinitions(reg, execution.ModeAuto)
 	if err != nil {
 		t.Fatalf("toolDefinitions auto: %v", err)
 	}
@@ -1186,6 +1202,9 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	}
 	if toolNamesContain(tools, "plan_update") {
 		t.Fatalf("auto mode should not advertise plan_update: %#v", tools)
+	}
+	if toolNamesContain(tools, "enter_plan_mode") || toolNamesContain(tools, "exit_plan_mode") {
+		t.Fatalf("auto mode should not advertise plan-mode switch tools: %#v", tools)
 	}
 	if !toolNamesContain(tools, "plan_update_step") {
 		t.Fatalf("auto mode should keep plan_update_step for execution progress: %#v", tools)
@@ -1206,6 +1225,9 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if toolNamesContain(tools, "plan_write") || toolNamesContain(tools, "plan_update") {
 		t.Fatalf("full-access mode should not advertise plan tools: %#v", tools)
 	}
+	if toolNamesContain(tools, "enter_plan_mode") || toolNamesContain(tools, "exit_plan_mode") {
+		t.Fatalf("full-access mode should not advertise plan-mode switch tools: %#v", tools)
+	}
 	if !toolNamesContain(tools, "edit") || !toolNamesContain(tools, "bash") || !toolNamesContain(tools, "web_search") || !toolNamesContain(tools, "web_fetch") {
 		t.Fatalf("full-access mode should keep write, exec, and network tools: %#v", tools)
 	}
@@ -1219,7 +1241,10 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "plan_update") {
 		t.Fatalf("plan mode should advertise plan_update: %#v", tools)
 	}
-	for _, hidden := range []string{"plan_update_step", "todo_write", "todo_update", "edit", "bash", "web_search", "web_fetch", "remember"} {
+	if !toolNamesContain(tools, "exit_plan_mode") {
+		t.Fatalf("plan mode should advertise exit_plan_mode: %#v", tools)
+	}
+	for _, hidden := range []string{"enter_plan_mode", "plan_update_step", "todo_write", "todo_update", "edit", "bash", "web_search", "web_fetch", "remember"} {
 		if toolNamesContain(tools, hidden) {
 			t.Fatalf("plan mode should not advertise %s: %#v", hidden, tools)
 		}
@@ -1246,6 +1271,123 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	block := last.Content[0]
 	if !block.IsError || !strings.Contains(block.Output, "only available in plan mode") {
 		t.Fatalf("tool result block = %#v, want plan-mode denial", block)
+	}
+}
+
+func TestAgentEnterPlanModeRefreshesToolsAndRecordsActivity(t *testing.T) {
+	reg := tool.New()
+	for _, tl := range NewPlanModeTools() {
+		if err := reg.Register(tl); err != nil {
+			t.Fatalf("register %s: %v", tl.Name(), err)
+		}
+	}
+	if err := reg.Register(&namedSafeTool{name: "read"}); err != nil {
+		t.Fatalf("register read: %v", err)
+	}
+	if err := reg.Register(&namedSafeTool{name: "plan_write"}); err != nil {
+		t.Fatalf("register plan_write: %v", err)
+	}
+	mode := execution.ModeWork
+	controller := &recordingPlanModeController{
+		confirm: func(req PlanModeRequest) PlanModeResponse {
+			if req.Action != PlanModeEnter {
+				t.Fatalf("action = %q, want enter", req.Action)
+			}
+			from := mode
+			mode = execution.ModePlan
+			return PlanModeResponse{Approved: true, FromMode: from, ToMode: mode}
+		},
+	}
+	ro := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("enter_plan_mode", map[string]any{"reason": "multi-file change"}), fake.Done()},
+		{fake.TextDelta("planning"), fake.Done()},
+	}}
+	var events []Event
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Rollout:  ro,
+		Model:    "fake/model",
+		Mode:     execution.ModeWork,
+		ModeFunc: func() execution.Mode {
+			return mode
+		},
+		PlanMode: controller,
+		Events: func(event Event) {
+			events = append(events, event)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_plan", Prompt: "implement", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if controller.calls != 1 || controller.requests[0].Reason != "multi-file change" {
+		t.Fatalf("controller = calls %d requests %#v", controller.calls, controller.requests)
+	}
+	if !toolNamesContain(p.requests[1].Tools, "exit_plan_mode") || !toolNamesContain(p.requests[1].Tools, "plan_write") {
+		t.Fatalf("plan mode tools after switch = %#v", p.requests[1].Tools)
+	}
+	if toolNamesContain(p.requests[1].Tools, "enter_plan_mode") {
+		t.Fatalf("enter_plan_mode should hide after switch: %#v", p.requests[1].Tools)
+	}
+	var sawModeActivity bool
+	for _, event := range events {
+		if event.Type == EventActivity && event.ActivityKind == ActivityMode {
+			sawModeActivity = true
+			if event.Source != "tool" || event.Decision != "approved" || !event.Allowed || !strings.Contains(event.Content, "from=work") || !strings.Contains(event.Content, "to=plan") {
+				t.Fatalf("mode activity = %#v", event)
+			}
+		}
+	}
+	if !sawModeActivity {
+		t.Fatalf("mode activity missing: %#v", events)
+	}
+	var persisted rollout.ActivityPayload
+	for _, event := range ro.events {
+		payload, ok, err := rollout.ActivityFromEvent(event)
+		if err != nil {
+			t.Fatalf("ActivityFromEvent: %v", err)
+		}
+		if ok && payload.ActivityKind == string(ActivityMode) {
+			persisted = payload
+			break
+		}
+	}
+	if persisted.ActivityKind != string(ActivityMode) || persisted.Source != "tool" || persisted.Decision != "approved" {
+		t.Fatalf("persisted mode activity = %#v", persisted)
+	}
+}
+
+func TestExitPlanModeRequiresPlanIDBeforePrompt(t *testing.T) {
+	var exitTool tool.Tool
+	for _, tl := range NewPlanModeTools() {
+		if tl.Name() == "exit_plan_mode" {
+			exitTool = tl
+			break
+		}
+	}
+	if exitTool == nil {
+		t.Fatal("exit_plan_mode tool missing")
+	}
+	controller := &recordingPlanModeController{
+		response: PlanModeResponse{Approved: true, FromMode: execution.ModePlan, ToMode: execution.ModeWork},
+	}
+	ctx := contextWithPlanModeController(context.Background(), controller)
+	result, err := exitTool.Execute(ctx, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if controller.calls != 0 {
+		t.Fatalf("controller was called without plan_id: %#v", controller.requests)
+	}
+	if !result.IsError || !strings.Contains(result.Content, "requires a plan_id") {
+		t.Fatalf("result = %#v, want missing plan_id error", result)
+	}
+	if result.Metadata["mode_action"] != string(PlanModeExit) || result.Metadata["mode_status"] != "missing_plan" || result.Metadata["mode_approved"] != "false" {
+		t.Fatalf("metadata = %#v, want missing_plan denial", result.Metadata)
 	}
 }
 
@@ -2734,6 +2876,22 @@ func (a *recordingUserAsker) AskUser(_ context.Context, req AskRequest) (AskResp
 	a.calls++
 	a.requests = append(a.requests, req)
 	return a.response, nil
+}
+
+type recordingPlanModeController struct {
+	response PlanModeResponse
+	confirm  func(PlanModeRequest) PlanModeResponse
+	calls    int
+	requests []PlanModeRequest
+}
+
+func (c *recordingPlanModeController) ConfirmPlanMode(_ context.Context, req PlanModeRequest) (PlanModeResponse, error) {
+	c.calls++
+	c.requests = append(c.requests, req)
+	if c.confirm != nil {
+		return c.confirm(req), nil
+	}
+	return c.response, nil
 }
 
 type approvalAgent struct {

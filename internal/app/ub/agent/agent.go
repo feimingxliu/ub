@@ -60,6 +60,7 @@ type Options struct {
 	Model                string
 	Mode                 execution.Mode
 	ModeFunc             func() execution.Mode
+	PlanMode             PlanModeController
 	MaxTurns             int
 	LimitAsker           LimitAsker
 	Asker                Asker
@@ -94,6 +95,7 @@ type Agent struct {
 	model                string
 	mode                 execution.Mode
 	modeFunc             func() execution.Mode
+	planMode             PlanModeController
 	maxTurns             int
 	limitAsker           LimitAsker
 	asker                Asker
@@ -199,6 +201,7 @@ func New(opts Options) (*Agent, error) {
 		model:                strings.TrimSpace(opts.Model),
 		mode:                 mode,
 		modeFunc:             opts.ModeFunc,
+		planMode:             opts.PlanMode,
 		maxTurns:             maxTurns,
 		limitAsker:           opts.LimitAsker,
 		asker:                opts.Asker,
@@ -676,6 +679,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	ctx = tool.WithAgentTurn(ctx, turn)
 	ctx = tool.WithToolUseID(ctx, call.ID)
 	ctx = contextWithAsker(ctx, a.asker)
+	ctx = contextWithPlanModeController(ctx, a.planMode)
 	if a.subagentRunner != nil {
 		ctx = tool.WithSubagentRunner(ctx, a.subagentRunner)
 	}
@@ -793,6 +797,9 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 			askStatus = "unavailable"
 		}
 		a.recordAskActivity(ctx, sessionID, turn, call, askStatus, result.Content, result.IsError)
+	}
+	if call.Name == "enter_plan_mode" || call.Name == "exit_plan_mode" {
+		a.recordModeActivity(ctx, sessionID, turn, call, result)
 	}
 	summary, content := ToolActivityResultWithInput(call.Name, call.Input, result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
@@ -994,8 +1001,10 @@ func toolAvailableInMode(name string, mode execution.Mode) bool {
 		return toolAllowedInPlanMode(name)
 	}
 	switch name {
-	case "plan_write", "plan_update":
+	case "plan_write", "plan_update", "exit_plan_mode":
 		return false
+	case "enter_plan_mode":
+		return parsed == execution.ModeWork
 	default:
 		return true
 	}
@@ -1003,7 +1012,7 @@ func toolAvailableInMode(name string, mode execution.Mode) bool {
 
 func toolAllowedInPlanMode(name string) bool {
 	switch name {
-	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update":
+	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update", "exit_plan_mode":
 		return true
 	default:
 		return false
@@ -1016,10 +1025,16 @@ func toolUnavailableInModeMessage(name string, mode execution.Mode) string {
 		parsed = execution.ModeWork
 	}
 	if parsed == execution.ModePlan {
-		return fmt.Sprintf("tool %q is not available in plan mode; use read, ls, glob, grep, ask, plan_write, or plan_update", name)
+		return fmt.Sprintf("tool %q is not available in plan mode; use read, ls, glob, grep, ask, plan_write, plan_update, or exit_plan_mode", name)
 	}
 	if name == "plan_write" || name == "plan_update" {
 		return fmt.Sprintf("tool %q is only available in plan mode", name)
+	}
+	if name == "exit_plan_mode" {
+		return fmt.Sprintf("tool %q is only available in plan mode", name)
+	}
+	if name == "enter_plan_mode" {
+		return fmt.Sprintf("tool %q is only available in work mode", name)
 	}
 	return fmt.Sprintf("tool %q is not available in %s mode", name, parsed)
 }

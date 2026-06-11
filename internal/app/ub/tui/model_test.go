@@ -4005,6 +4005,77 @@ func TestShiftTabCyclesMode(t *testing.T) {
 	}
 }
 
+func TestPlanModePromptApproveEnterSwitchesMode(t *testing.T) {
+	response := make(chan agent.PlanModeResponse, 1)
+	runner := &scriptedRunner{mode: "work"}
+	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
+	req := PlanModeRequest{
+		Request: agent.PlanModeRequest{
+			Action: agent.PlanModeEnter,
+			Reason: "multi-file change",
+		},
+		Response: response,
+	}
+	updated, _ := model.Update(planModeRequestMsg{request: req, ok: true})
+	model = assertModel(t, updated)
+	if model.pendingPlanMode == nil {
+		t.Fatalf("pendingPlanMode should be set")
+	}
+	if view := viewString(model); !strings.Contains(view, "Enter plan mode?") || !strings.Contains(view, "multi-file change") {
+		t.Fatalf("plan mode prompt missing content:\n%s", view)
+	}
+
+	updated, _ = model.Update(runePress('y'))
+	model = assertModel(t, updated)
+	if runner.mode != "plan" || model.status.executionMode != "plan" {
+		t.Fatalf("mode = runner %q status %q, want plan", runner.mode, model.status.executionMode)
+	}
+	select {
+	case got := <-response:
+		if !got.Approved || got.FromMode != execution.ModeWork || got.ToMode != execution.ModePlan {
+			t.Fatalf("response = %#v, want approved work->plan", got)
+		}
+	default:
+		t.Fatal("no plan mode response returned")
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "approved enter plan mode") {
+		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestPlanModePromptDenyExitStaysInPlan(t *testing.T) {
+	response := make(chan agent.PlanModeResponse, 1)
+	runner := &scriptedRunner{mode: "plan", prePlanMode: "work"}
+	model := NewModel(Options{Runner: runner, ExecutionMode: "plan"})
+	req := PlanModeRequest{
+		Request: agent.PlanModeRequest{
+			Action:  agent.PlanModeExit,
+			PlanID:  "plan-1",
+			Summary: "Inspect then edit",
+		},
+		Response: response,
+	}
+	updated, _ := model.Update(planModeRequestMsg{request: req, ok: true})
+	model = assertModel(t, updated)
+	if view := viewString(model); !strings.Contains(view, "Exit plan mode?") || !strings.Contains(view, "plan-1") {
+		t.Fatalf("exit prompt missing content:\n%s", view)
+	}
+
+	updated, _ = model.Update(keyPress(tea.KeyEsc, 0))
+	model = assertModel(t, updated)
+	if runner.mode != "plan" || model.status.executionMode != "plan" {
+		t.Fatalf("mode changed on denial: runner %q status %q", runner.mode, model.status.executionMode)
+	}
+	select {
+	case got := <-response:
+		if got.Approved || got.Reason == "" {
+			t.Fatalf("response = %#v, want denied with reason", got)
+		}
+	default:
+		t.Fatal("no plan mode response returned")
+	}
+}
+
 func TestShiftTabCyclesModeWhileRunning(t *testing.T) {
 	runner := &scriptedRunner{}
 	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
@@ -5194,6 +5265,7 @@ type scriptedRunner struct {
 	refreshSmallErr        error
 	refreshSmallCalls      int
 	mode                   string
+	prePlanMode            string
 	sessions               []SessionInfo
 	sessionStates          map[string]SessionState
 	currentSessionID       string
@@ -5345,6 +5417,26 @@ func (r *scriptedRunner) Providers() []string {
 func (r *scriptedRunner) SetMode(mode string) error {
 	r.mode = mode
 	return nil
+}
+
+func (r *scriptedRunner) EnterPlanMode() (string, string, error) {
+	from := defaultString(r.mode, string(execution.ModeWork))
+	if from != string(execution.ModePlan) {
+		r.prePlanMode = from
+	}
+	r.mode = string(execution.ModePlan)
+	return from, r.mode, nil
+}
+
+func (r *scriptedRunner) ExitPlanMode() (string, string, error) {
+	from := defaultString(r.mode, string(execution.ModeWork))
+	to := r.prePlanMode
+	if to == "" || to == string(execution.ModePlan) {
+		to = string(execution.ModeWork)
+	}
+	r.mode = to
+	r.prePlanMode = ""
+	return from, to, nil
 }
 
 func (r *scriptedRunner) Models() []string {

@@ -60,6 +60,13 @@ type ControlRunner interface {
 	Models() []string
 }
 
+// PlanModeControlRunner optionally lets slash commands and model-requested
+// plan-mode tools share one in-memory transition path.
+type PlanModeControlRunner interface {
+	EnterPlanMode() (from, to string, err error)
+	ExitPlanMode() (from, to string, err error)
+}
+
 // ModelRefreshRunner optionally lets the TUI load the current provider's
 // complete model list on demand.
 type ModelRefreshRunner interface {

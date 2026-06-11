@@ -174,10 +174,10 @@ permissions:
 
 工具实现声明 `Risk()`，决定权限询问粒度：
 
-- `safe`：默认不问（read / ls / glob / grep / LSP 工具）
-- `write`：默认问（write / edit）
+- `safe`：默认不问（read / ls / glob / grep / ask / plan 工具 / LSP 工具）
+- `write`：默认问（write / edit / multiedit）
 - `exec`：默认问（bash / job_run / job_kill）
-- `network`：默认问（如果某些 MCP 工具声明）
+- `network`：默认问（web_search / web_fetch,以及声明为联网风险的 MCP 工具）
 
 ## 6. 上下文管理
 
@@ -262,7 +262,7 @@ ub --mode plan
 > 这个项目的 agent loop 是怎么处理多 turn tool use 的？画一个流程图（不要改代码）
 ```
 
-agent 只能用 read / ls / glob / grep 和 plan 工具，不能改文件、不能跑命令、不能启动 sub-agent 或写 memory。研究完想动手时按 `Shift+Tab` 切到 `work`。
+agent 只能用 read / ls / glob / grep / ask 和 plan 工具，不能改文件、不能跑命令、不能启动 sub-agent 或写 memory。研究完想动手时按 `Shift+Tab` 切到 `work`,或让 agent 通过 `exit_plan_mode` 请求批准退出。
 
 ### 7.3 Headless / CI 跑批
 
@@ -377,7 +377,7 @@ ub 提供 plan artifact 和 session todo 两层工作流:
 - `plan_write` / `plan_update` / `plan_update_step` 管理可 review、可恢复的持久计划 artifact
 - `todo_write` / `todo_update` 管理当前 session 的短生命周期执行清单,用于 TUI 中实时展示正在做什么
 
-1. **进 plan 模式**(`Shift+Tab` 循环模式,或 `--mode plan` 启动),让 agent 把思路 `plan_write` 成一个 markdown:
+1. **进 plan 模式**(`Shift+Tab` 循环模式,`--mode plan` 启动,或 work 模式中由模型调用 `enter_plan_mode` 请求用户批准),让 agent 把思路 `plan_write` 成一个 markdown:
 
    ```
    plan_write(
@@ -387,7 +387,9 @@ ub 提供 plan artifact 和 session todo 两层工作流:
    )
    ```
 
-   `plan_write` 只在 plan 模式暴露和执行;work/auto 模式不会让模型创建新 plan。plan 模式会给模型注入规划约束,并只暴露 read / ls / glob / grep / plan_write / plan_update。工具会在 `$XDG_STATE_HOME/ub/plans/<project-key>/<时间戳>-<slug>.md` 写一个文件,并把 `plan_id` 和绝对 `path` 返回。TUI 完成行会直接显示 `Wrote plan <plan-id>` / `Updated plan <plan-id>`,也可以用 `/plans` 列出当前 workspace 的所有 plan artifact。
+   `plan_write` 只在 plan 模式暴露和执行;work/auto 模式不会让模型创建新 plan。plan 模式会给模型注入规划约束,并只暴露 read / ls / glob / grep / ask / plan_write / plan_update / exit_plan_mode。工具会在 `$XDG_STATE_HOME/ub/plans/<project-key>/<时间戳>-<slug>.md` 写一个文件,并把 `plan_id` 和绝对 `path` 返回。TUI 完成行会直接显示 `Wrote plan <plan-id>` / `Updated plan <plan-id>`,也可以用 `/plans` 列出当前 workspace 的所有 plan artifact。
+
+   plan 准备好后,agent 应调用 `exit_plan_mode(plan_id, summary?)` 请求批准退出;批准后恢复进入 plan 前的本进程 mode,拒绝则留在 plan 模式并继续用 `plan_update` 修订。`exit_plan_mode` 缺少 `plan_id` 时不会弹批准框,会返回 tool error 让模型先创建或更新 plan artifact。
 
 2. **修订已有 plan**:如果你在 plan 模式纠正了模型的计划,agent 应使用 `plan_update` 原地更新同一个 `plan_id`,而不是再次调用 `plan_write` 创建新 plan:
 
@@ -623,7 +625,7 @@ hooks:
 | 模型不支持 tool calling | `ub doctor` 会标注；本地小模型常见，换支持 tool calling 的模型，或改用 `ub chat` 单轮模式 |
 | TUI 内 Enter 没反应 | 检查是不是停在中文输入法候选状态；权限弹窗里需要先方向键选 / 直接按数字键 |
 | 鼠标点击不响应 / 块没法展开 | 确认没有 modal / 选择器开着（按 `Esc` 关掉）；如终端不支持鼠标，用 `Ctrl+O` / `Ctrl+N` / `Ctrl+P` + `Enter` 替代 |
-| 切到 plan 模式后 write/bash/task/memory 工具报错 | 这是预期：plan 模式只允许 read / ls / glob / grep / plan_write / plan_update；切回 `work` 或按 `Shift+Tab` 循环 |
+| 切到 plan 模式后 write/bash/task/memory 工具报错 | 这是预期：plan 模式只允许 read / ls / glob / grep / ask / plan_write / plan_update / exit_plan_mode；切回 `work` 或批准 `exit_plan_mode` |
 | 长会话越来越慢 | 主动 `/compact`；调小 `context.tool_results.max_chars`；切到更长 context 的模型 |
 | 在 `/proj/sub` 看不到 `/proj` 的 session | sessions 按 cwd 字符串隔离；`cd` 到原 cwd 再 `ub --resume` |
 | 想看完整 prompt | `UB_LOG_LEVEL=debug UB_LOG_FILE=/tmp/ub.log ub ...`，日志里有 provider 请求 |

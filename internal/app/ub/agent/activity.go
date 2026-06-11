@@ -219,6 +219,11 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 		add("text", "text")
 	case "ask":
 		addCount("questions", "questions")
+	case "enter_plan_mode":
+		add("reason", "reason")
+	case "exit_plan_mode":
+		add("plan_id", "plan_id")
+		add("summary", "summary")
 	case "plan_write":
 		add("title", "title")
 		addCount("steps", "steps")
@@ -372,6 +377,11 @@ func ToolInputDetail(name string, raw json.RawMessage) string {
 				writeDetailBlock(&b, "questions", strings.Join(lines, "\n"))
 			}
 		}
+	case "enter_plan_mode":
+		addBlock("reason", "reason")
+	case "exit_plan_mode":
+		addLine("plan_id", "plan_id")
+		addBlock("summary", "summary")
 	case "web_search":
 		addBlock("query", "query")
 		addLine("limit", "limit")

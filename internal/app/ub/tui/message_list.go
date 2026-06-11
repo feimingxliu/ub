@@ -2225,6 +2225,19 @@ func activityMessage(event Event) message {
 			detail:    strings.TrimSpace(event.Reason),
 			collapsed: true,
 		}
+	case "mode":
+		text := subagentActivityPrefix(event) + modeEventText(event)
+		return message{
+			role:      activityRole,
+			text:      text,
+			key:       activityEventKey(event),
+			kind:      noticeMessage,
+			title:     text,
+			name:      "mode",
+			status:    defaultString(event.Decision, event.Status),
+			detail:    strings.TrimSpace(event.Content),
+			collapsed: true,
+		}
 	case "notice":
 		text := activityEventText(event)
 		return message{role: activityRole, text: text, kind: noticeMessage, title: text}

@@ -48,6 +48,10 @@ func TestRolloutShowPrettyPrintsFilteredTurns(t *testing.T) {
 		"memory: scope=auto category=project action=merged source=auto",
 		"path: /state/ub/memory/project/memory.md",
 		"text: build command is `make build`",
+		"activity: mode tool=enter_plan_mode id=call_plan_mode status=approved source=tool allowed=true",
+		"decision: approved",
+		"summary: Enter Plan Mode",
+		"from=work",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("rollout show output missing %q:\n%s", want, got)
@@ -213,6 +217,17 @@ func createRolloutShowFixture(t *testing.T) string {
 			Kind:        tool.KindModify,
 			UnifiedDiff: "@@\n-old\n+new\n",
 		}},
+	})))
+	appendRolloutEventAt(t, ro, now.Add(3500*time.Millisecond), mustRolloutEvent(rollout.Activity(sessionID, 2, rollout.ActivityPayload{
+		ActivityKind: "mode",
+		ToolUseID:    "call_plan_mode",
+		ToolName:     "enter_plan_mode",
+		Status:       "approved",
+		Summary:      "Enter Plan Mode",
+		Content:      "from=work\nto=plan\napproved=true",
+		Decision:     "approved",
+		Source:       "tool",
+		Allowed:      true,
 	})))
 	appendRolloutEventAt(t, ro, now.Add(4*time.Second), mustRolloutEvent(rollout.Summary(sessionID, 3, "Earlier summary.", 4, 2, 120)))
 	appendRolloutEventAt(t, ro, now.Add(4500*time.Millisecond), mustRolloutEvent(rollout.MemoryWrite(sessionID, 3, rollout.MemoryWritePayload{

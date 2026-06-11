@@ -112,7 +112,7 @@ Plan mode instructions:
 - For implementation requests such as add, fix, refactor, configure, test, build, or CI setup, create a plan with the plan_write tool before starting implementation.
 - If a plan already exists and the user corrects or changes it, update that same plan with plan_update instead of creating another plan.
 - Do not create, edit, delete, move, format, install, execute commands, launch sub-agents, or otherwise change project files in plan mode.
-- After writing the plan, report the plan_id and wait for the user to switch to work or auto mode before executing it.
+- After writing or updating the plan, call exit_plan_mode with the plan_id and a concise summary to ask the user to approve the plan. If denied, revise the same plan with plan_update.
 - If the user only asks a question, answer normally; use plan_write or plan_update only when a persistent execution plan is useful.`
 	return message.Text(message.RoleSystem, body), true
 }
