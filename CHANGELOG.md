@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.13] - 2026-06-11
+
+
+### Added
+
+- Improve subagent tracing and runtime reuse ([4df4529](https://github.com/feimingxliu/ub/commit/4df45296ba50717a8fa8a6003f9562d153023563))
+- Add structured ask tool ([6cf22ff](https://github.com/feimingxliu/ub/commit/6cf22ff5303e69166cff40c414a25a29cf0fc3e8))
+- Add audited web tools ([601974c](https://github.com/feimingxliu/ub/commit/601974c6af805610566412e5c250377c3b3d951c))
+- Add model-initiated plan mode ([a39e26a](https://github.com/feimingxliu/ub/commit/a39e26a5cecb87e142ffe8e59eb35bf086cd4f58))
+- Enable zero-config web tools ([a50b0c8](https://github.com/feimingxliu/ub/commit/a50b0c8d87f134301ef02772320bf29e96043a7b))
+
+
+### Fixed
+
+- Defer background notices during streams ([f7c9cdd](https://github.com/feimingxliu/ub/commit/f7c9cdda66e7486b785eba2476633c919ad49c00))
+
 ## [0.3.12] - 2026-06-11
 
 
@@ -16,6 +32,11 @@ All notable changes to this project are documented here.
 - Harden line-based edits ([825bd82](https://github.com/feimingxliu/ub/commit/825bd82719706df0f68f7045cf6192ff01864369))
 - Recover from dead language servers ([1463f14](https://github.com/feimingxliu/ub/commit/1463f1453006fc5adeabb4e8e44634882b11771e))
 - Remove go syntax edit guard ([14549a5](https://github.com/feimingxliu/ub/commit/14549a53b865e480748da142db4c7a5f020a1e52))
+
+
+### Maintenance
+
+- V0.3.12 ([bee291f](https://github.com/feimingxliu/ub/commit/bee291f83439b1d29cd74a1e228cbd711c4480f2))
 
 
 ### Refactoring
