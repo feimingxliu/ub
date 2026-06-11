@@ -62,6 +62,7 @@ type Options struct {
 	ModeFunc             func() execution.Mode
 	MaxTurns             int
 	LimitAsker           LimitAsker
+	Asker                Asker
 	Events               EventSink
 	BackgroundEvents     EventSink
 	Reasoning            *reasoning.Config
@@ -95,6 +96,7 @@ type Agent struct {
 	modeFunc             func() execution.Mode
 	maxTurns             int
 	limitAsker           LimitAsker
+	asker                Asker
 	events               EventSink
 	backgroundEvents     EventSink
 	reasoning            *reasoning.Config
@@ -199,6 +201,7 @@ func New(opts Options) (*Agent, error) {
 		modeFunc:             opts.ModeFunc,
 		maxTurns:             maxTurns,
 		limitAsker:           opts.LimitAsker,
+		asker:                opts.Asker,
 		events:               opts.Events,
 		backgroundEvents:     opts.BackgroundEvents,
 		reasoning:            cloneReasoning(opts.Reasoning),
@@ -672,6 +675,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	ctx = tool.WithSessionID(ctx, sessionID)
 	ctx = tool.WithAgentTurn(ctx, turn)
 	ctx = tool.WithToolUseID(ctx, call.ID)
+	ctx = contextWithAsker(ctx, a.asker)
 	if a.subagentRunner != nil {
 		ctx = tool.WithSubagentRunner(ctx, a.subagentRunner)
 	}
@@ -718,6 +722,9 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 		preview = &pv
 	}
 	a.emitToolActivity(call, "running", SummarizeToolInput(call.Name, call.Input), ToolInputDetail(call.Name, call.Input), false)
+	if call.Name == "ask" {
+		a.recordAskActivity(ctx, sessionID, turn, call, "requested", askActivityRequestContent(call.Input), false)
+	}
 	if a.permission != nil {
 		approvalObserved := false
 		result, err := a.permission.Ask(ctx, permission.Request{
@@ -775,6 +782,17 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	status := "done"
 	if result.IsError {
 		status = "failed"
+	}
+	if call.Name == "ask" {
+		askStatus := "answered"
+		if result.IsError {
+			askStatus = "failed"
+		} else if strings.EqualFold(strings.TrimSpace(result.Metadata["ask_status"]), "skipped") {
+			askStatus = "skipped"
+		} else if strings.EqualFold(strings.TrimSpace(result.Metadata["ask_status"]), "unavailable") {
+			askStatus = "unavailable"
+		}
+		a.recordAskActivity(ctx, sessionID, turn, call, askStatus, result.Content, result.IsError)
 	}
 	summary, content := ToolActivityResultWithInput(call.Name, call.Input, result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
@@ -985,7 +1003,7 @@ func toolAvailableInMode(name string, mode execution.Mode) bool {
 
 func toolAllowedInPlanMode(name string) bool {
 	switch name {
-	case "read", "ls", "glob", "grep", "plan_write", "plan_update":
+	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update":
 		return true
 	default:
 		return false
@@ -998,7 +1016,7 @@ func toolUnavailableInModeMessage(name string, mode execution.Mode) string {
 		parsed = execution.ModeWork
 	}
 	if parsed == execution.ModePlan {
-		return fmt.Sprintf("tool %q is not available in plan mode; use read, ls, glob, grep, plan_write, or plan_update", name)
+		return fmt.Sprintf("tool %q is not available in plan mode; use read, ls, glob, grep, ask, plan_write, or plan_update", name)
 	}
 	if name == "plan_write" || name == "plan_update" {
 		return fmt.Sprintf("tool %q is only available in plan mode", name)

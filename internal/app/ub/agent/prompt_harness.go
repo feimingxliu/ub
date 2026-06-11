@@ -60,7 +60,7 @@ func buildStartupPromptMessages(runtime RuntimeContext, workspaceRoot string, cf
 func codingAgentInstructionsMessage() message.Message {
 	const body = `<coding_agent_instructions>
 - Work from the current repository state. Read the relevant files before proposing or applying edits.
-- Prefer purpose-built tools: read for files, ls/glob for directories, grep for text search, task for isolated research, plan_write/plan_update for persistent planning, plan_update_step for plan progress, and todo_write/todo_update for the current execution checklist.
+- Prefer purpose-built tools: read for files, ls/glob for directories, grep for text search, ask for concrete user choices, task for isolated research, plan_write/plan_update for persistent planning, plan_update_step for plan progress, and todo_write/todo_update for the current execution checklist.
 - Risky or destructive actions such as deletes, resets, force pushes, installs, network fetches, or long-running commands require explicit approval through the tool policy before execution.
 - When a command or test fails, inspect the error and environment before changing strategy. Do not claim tests, builds, or checks passed unless they actually ran and passed.
 - Keep user-facing updates concise and report the real verification status, including commands that were not run or did not pass.

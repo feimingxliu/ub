@@ -5749,6 +5749,53 @@ func TestLimitPromptNoFallsThroughToFinalize(t *testing.T) {
 	}
 }
 
+func TestStructuredAskPromptSubmitsSelectionAndTranscriptSummary(t *testing.T) {
+	model := NewModel(Options{})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	model = assertModel(t, updated)
+	response := make(chan agent.AskResponse, 1)
+	updated, cmd := model.Update(askRequestMsg{request: AskRequest{
+		Request: agent.AskRequest{Questions: []agent.AskQuestion{{
+			Header:   "Backend",
+			Question: "Which store should ub use?",
+			Options: []agent.AskOption{
+				{Label: "SQLite", Description: "local durable store"},
+				{Label: "Postgres", Description: "shared server"},
+			},
+		}}},
+		Response: response,
+	}, ok: true})
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("ask request returned unexpected command")
+	}
+	view := viewString(model)
+	if !strings.Contains(view, "Agent question") || !strings.Contains(view, "SQLite") {
+		t.Fatalf("ask prompt not visible:\n%s", view)
+	}
+	updated, _ = model.Update(tea.KeyPressMsg{Code: '2', Text: "2"})
+	model = assertModel(t, updated)
+	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if cmd != nil {
+		t.Fatalf("ask submit returned unexpected command")
+	}
+	if model.pendingAsk != nil {
+		t.Fatal("pendingAsk should clear after submit")
+	}
+	select {
+	case got := <-response:
+		if got.Skipped || len(got.Answers) != 1 || len(got.Answers[0].Selected) != 1 || got.Answers[0].Selected[0].Label != "Postgres" {
+			t.Fatalf("ask response = %#v, want Postgres", got)
+		}
+	default:
+		t.Fatal("no ask response returned")
+	}
+	if got := model.MessageTexts(); len(got) == 0 || !strings.Contains(got[len(got)-1], "ask answered: Backend: Postgres") {
+		t.Fatalf("messages = %#v, want ask summary", got)
+	}
+}
+
 func mouseClick(x, y int) tea.MouseClickMsg {
 	return tea.MouseClickMsg(tea.Mouse{X: x, Y: y, Button: tea.MouseLeft})
 }

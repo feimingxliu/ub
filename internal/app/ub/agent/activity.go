@@ -217,6 +217,8 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 	case "remember":
 		add("scope", "scope")
 		add("text", "text")
+	case "ask":
+		addCount("questions", "questions")
 	case "plan_write":
 		add("title", "title")
 		addCount("steps", "steps")
@@ -337,6 +339,32 @@ func ToolInputDetail(name string, raw json.RawMessage) string {
 	case "task":
 		addBlock("prompt", "prompt")
 		addLine("max_turns", "max_turns")
+	case "ask":
+		if questions, ok := body["questions"].([]any); ok {
+			var lines []string
+			for _, item := range questions {
+				q, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				header, _ := rawStringField(q, "header")
+				question, _ := rawStringField(q, "question")
+				if strings.TrimSpace(header) == "" && strings.TrimSpace(question) == "" {
+					continue
+				}
+				line := strings.TrimSpace(header)
+				if strings.TrimSpace(question) != "" {
+					if line != "" {
+						line += ": "
+					}
+					line += strings.TrimSpace(question)
+				}
+				lines = append(lines, line)
+			}
+			if len(lines) > 0 {
+				writeDetailBlock(&b, "questions", strings.Join(lines, "\n"))
+			}
+		}
 	default:
 		if _, hasCommand := body["command"]; hasCommand {
 			addBlock("command", "command")

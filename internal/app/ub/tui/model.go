@@ -53,6 +53,7 @@ type Options struct {
 	Context          context.Context
 	Runner           Runner
 	Permissions      <-chan PermissionRequest
+	Asks             <-chan AskRequest
 	Limits           <-chan LimitRequest
 	BackgroundEvents <-chan Event
 	Provider         string
@@ -109,6 +110,9 @@ type Model struct {
 	permReqs         <-chan PermissionRequest
 	pending          *PermissionRequest
 	modal            permissiondialog.Model
+	askReqs          <-chan AskRequest
+	pendingAsk       *AskRequest
+	askPrompt        askPromptModel
 	limitReqs        <-chan LimitRequest
 	pendingLimit     *LimitRequest
 	backgroundEvents <-chan Event
@@ -224,6 +228,7 @@ func NewModel(opts Options) Model {
 		runner:           opts.Runner,
 		clipboard:        opts.Clipboard,
 		permReqs:         opts.Permissions,
+		askReqs:          opts.Asks,
 		limitReqs:        opts.Limits,
 		backgroundEvents: opts.BackgroundEvents,
 		ctx:              ctx,
@@ -274,7 +279,7 @@ func NewModel(opts Options) Model {
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner)}
+	cmds := []tea.Cmd{windowSizeCmd(m.width, m.height), requestWindowSize(), waitForPermission(m.permReqs), waitForAsk(m.askReqs), waitForLimit(m.limitReqs), refreshModelLists(m.ctx, m.runner)}
 	if m.backgroundEvents != nil {
 		cmds = append(cmds, waitForBackgroundEvent(m.backgroundEvents))
 	}
@@ -295,6 +300,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleBackgroundEvent(msg)
 	case permissionRequestMsg:
 		return m.handlePermissionRequest(msg)
+	case askRequestMsg:
+		return m.handleAskRequest(msg)
 	case limitRequestMsg:
 		return m.handleLimitRequest(msg)
 	case spinnerTickMsg:
@@ -339,6 +346,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.resolveLimit(defaultLimitExtension)
 			case "n", "N", "esc", "ctrl+c":
 				return m.resolveLimit(0)
+			}
+		}
+		return m, nil
+	}
+
+	if m.pendingAsk != nil {
+		if mouseMsg, ok := msg.(tea.MouseWheelMsg); ok {
+			switch mouseMsg.Mouse().Button {
+			case tea.MouseWheelUp:
+				m.scrollMessages(3)
+				return m, nil
+			case tea.MouseWheelDown:
+				m.scrollMessages(-3)
+				return m, nil
+			}
+		}
+		if key, ok := msg.(tea.KeyPressMsg); ok {
+			switch key.String() {
+			case "ctrl+c":
+				if m.cancel != nil {
+					m.cancel()
+				}
+				return m, tea.Quit
+			case "esc":
+				return m.resolveAsk(true)
+			case "ctrl+home":
+				m.scrollToTop()
+				return m, nil
+			case "ctrl+end":
+				m.scrollToBottom()
+				return m, nil
+			case "enter":
+				return m.resolveAsk(false)
+			default:
+				m.askPrompt.HandleKey(key.String())
+				return m, nil
 			}
 		}
 		return m, nil
@@ -810,6 +853,7 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 		m.status.state = statusIdle
 		m.cancel = nil
 		m.pending = nil
+		m.pendingAsk = nil
 		m.events = nil
 		m.clearEscInterruptConfirm()
 		return m.startNextQueuedPrompt()
@@ -856,12 +900,40 @@ func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea
 	return m, nil
 }
 
+func (m Model) handleAskRequest(msg askRequestMsg) (tea.Model, tea.Cmd) {
+	if !msg.ok {
+		return m, nil
+	}
+	m.pendingAsk = &msg.request
+	m.askPrompt = newAskPromptModel(msg.request.Request)
+	return m, nil
+}
+
 func (m Model) handleLimitRequest(msg limitRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
 	}
 	m.pendingLimit = &msg.request
 	return m, nil
+}
+
+func (m Model) resolveAsk(skipped bool) (tea.Model, tea.Cmd) {
+	var resp agent.AskResponse
+	if skipped {
+		resp = m.askPrompt.SkipResponse()
+	} else {
+		resp = m.askPrompt.SubmitResponse()
+	}
+	if m.pendingAsk != nil && m.pendingAsk.Response != nil {
+		m.pendingAsk.Response <- resp
+	}
+	summary := strings.TrimSpace(m.askPrompt.Summary(resp))
+	if summary != "" {
+		m.messages.append(systemRole, summary)
+		m.scrollToBottom()
+	}
+	m.pendingAsk = nil
+	return m, waitForAsk(m.askReqs)
 }
 
 func (m Model) resolveLimit(extra int) (tea.Model, tea.Cmd) {
@@ -2102,6 +2174,13 @@ func (m *Model) interruptCurrent() {
 		}
 	}
 	m.pending = nil
+	if m.pendingAsk != nil && m.pendingAsk.Response != nil {
+		select {
+		case m.pendingAsk.Response <- m.askPrompt.SkipResponse():
+		default:
+		}
+	}
+	m.pendingAsk = nil
 	if m.cancel != nil {
 		m.cancel()
 	}

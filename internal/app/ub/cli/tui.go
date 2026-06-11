@@ -63,12 +63,14 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 	}
 
 	permBridge := tui.NewPermissionBridge()
+	askBridge := tui.NewAskBridge()
 	limitBridge := tui.NewLimitBridge()
 	backgroundEvents := make(chan tui.Event, 64)
 	runner, err := newTUIAgentRunner(cmd, cfg, permBridge, providerFlag, modelFlag, backgroundEvents)
 	if err != nil {
 		return err
 	}
+	runner.asker = askBridge
 	runner.limitAsker = limitBridge
 	defer func() {
 		if closeErr := runner.Close(); closeErr != nil {
@@ -105,6 +107,7 @@ func runTUI(cmd *cobra.Command, cfg *config.Config, resume, providerFlag, modelF
 		Output:           cmd.OutOrStdout(),
 		Runner:           runner,
 		Permissions:      permBridge.Requests(),
+		Asks:             askBridge.Requests(),
 		Limits:           limitBridge.Requests(),
 		BackgroundEvents: backgroundEvents,
 		Provider:         runner.Provider(),
@@ -176,6 +179,7 @@ type tuiAgentRunner struct {
 	closedStore          bool
 	maxTurns             int
 	limitAsker           agent.LimitAsker
+	asker                agent.Asker
 	providerCheckMu      sync.Mutex
 	providerChecks       map[string]providerCheck
 
@@ -637,6 +641,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		ModeFunc:            r.currentMode,
 		MaxTurns:            r.maxTurns,
 		LimitAsker:          r.limitAsker,
+		Asker:               r.asker,
 		Reasoning:           resolvedReasoning,
 		MaxContextTokens:    maxContext,
 		SummaryProvider:     r.summaryProvider,

@@ -586,6 +586,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 	}); err != nil {
 		return nil, err
 	}
+	if err := reg.Register(agent.NewAskTool()); err != nil {
+		return nil, err
+	}
 	if err := lsptool.Register(reg, lspManager); err != nil {
 		return nil, err
 	}

@@ -1159,6 +1159,9 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if err := reg.Register(&namedSafeTool{name: "grep"}); err != nil {
 		t.Fatalf("register grep: %v", err)
 	}
+	if err := reg.Register(&namedSafeTool{name: "ask"}); err != nil {
+		t.Fatalf("register ask: %v", err)
+	}
 	if err := reg.Register(&namedSafeTool{name: "remember"}); err != nil {
 		t.Fatalf("register remember: %v", err)
 	}
@@ -1215,7 +1218,7 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 			t.Fatalf("plan mode should not advertise %s: %#v", hidden, tools)
 		}
 	}
-	for _, shown := range []string{"read", "grep"} {
+	for _, shown := range []string{"read", "grep", "ask"} {
 		if !toolNamesContain(tools, shown) {
 			t.Fatalf("plan mode should advertise %s: %#v", shown, tools)
 		}
@@ -1295,6 +1298,99 @@ func TestAgentRefreshesAdvertisedToolsAfterModeSwitch(t *testing.T) {
 	}
 	if !containsText(p.requests[1].Messages, "mode=plan") {
 		t.Fatalf("second request missing plan-mode instructions: %#v", p.requests[1].Messages)
+	}
+}
+
+func TestAgentAskToolUsesStructuredAskerAndPersistsActivities(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(NewAskTool()); err != nil {
+		t.Fatalf("register ask: %v", err)
+	}
+	ro := &recordingRollout{}
+	asker := &recordingUserAsker{
+		response: AskResponse{Answers: []AskAnswer{{
+			Header:   "Storage",
+			Question: "Which backend?",
+			Selected: []AskOption{{Label: "SQLite", Description: "local durable store"}},
+		}}},
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("ask", map[string]any{"questions": []map[string]any{{
+			"header":   "Storage",
+			"question": "Which backend?",
+			"options": []map[string]any{
+				{"label": "SQLite", "description": "local durable store"},
+				{"label": "Postgres", "description": "shared server"},
+			},
+		}}}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Rollout:  ro,
+		Model:    "fake/model",
+		Mode:     execution.ModePlan,
+		Asker:    asker,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_ask", Prompt: "choose", Turn: 2}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if asker.calls != 1 {
+		t.Fatalf("asker calls = %d, want 1", asker.calls)
+	}
+	if got := asker.requests[0]; got.SessionID != "sess_ask" || got.UserTurn != 2 || got.ToolUseID == "" || len(got.Questions) != 1 {
+		t.Fatalf("ask request = %#v", got)
+	}
+	last := lastMessage(t, p.requests[1].Messages)
+	block := last.Content[0]
+	if block.IsError || !strings.Contains(block.Output, "SQLite") || !strings.Contains(block.Output, "ask answered") {
+		t.Fatalf("tool result = %#v, want ask answer", block)
+	}
+	var requested, answered bool
+	for _, event := range ro.events {
+		if event.Type != rollout.TypeActivity {
+			continue
+		}
+		payload, ok, err := rollout.ActivityFromEvent(event)
+		if err != nil {
+			t.Fatalf("ActivityFromEvent: %v", err)
+		}
+		if !ok || payload.ActivityKind != string(ActivityAsk) {
+			continue
+		}
+		requested = requested || payload.Status == "requested"
+		answered = answered || payload.Status == "answered" && strings.Contains(payload.Content, "SQLite")
+	}
+	if !requested || !answered {
+		t.Fatalf("ask activities requested=%v answered=%v events=%#v", requested, answered, ro.events)
+	}
+}
+
+func TestAgentAskToolHeadlessFallsBackWithoutBlocking(t *testing.T) {
+	reg := tool.New()
+	if err := reg.Register(NewAskTool()); err != nil {
+		t.Fatalf("register ask: %v", err)
+	}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("ask", map[string]any{"questions": []map[string]any{{
+			"header":   "Choice",
+			"question": "Pick one",
+			"options":  []map[string]any{{"label": "A"}, {"label": "B"}},
+		}}}), fake.Done()},
+		{fake.TextDelta("done"), fake.Done()},
+	}}
+	a := newTestAgent(t, p, reg, nil, execution.ModeWork)
+	if _, err := a.Run(context.Background(), Request{Prompt: "choose", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	last := lastMessage(t, p.requests[1].Messages)
+	block := last.Content[0]
+	if block.IsError || !strings.Contains(block.Output, "No interactive ask UI is available") {
+		t.Fatalf("tool result = %#v, want non-blocking fallback", block)
 	}
 }
 
@@ -2620,6 +2716,18 @@ func (a *recordingAsker) Ask(_ context.Context, req permission.Request) (permiss
 	a.calls++
 	a.requests = append(a.requests, req)
 	return a.decision, nil
+}
+
+type recordingUserAsker struct {
+	response AskResponse
+	calls    int
+	requests []AskRequest
+}
+
+func (a *recordingUserAsker) AskUser(_ context.Context, req AskRequest) (AskResponse, error) {
+	a.calls++
+	a.requests = append(a.requests, req)
+	return a.response, nil
 }
 
 type approvalAgent struct {

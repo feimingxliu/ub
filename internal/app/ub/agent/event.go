@@ -22,6 +22,7 @@ const (
 	ActivityThinking   ActivityKind = "thinking"
 	ActivityTool       ActivityKind = "tool"
 	ActivityPermission ActivityKind = "permission"
+	ActivityAsk        ActivityKind = "ask"
 	ActivityNotice     ActivityKind = "notice"
 	ActivityHook       ActivityKind = "hook"
 )

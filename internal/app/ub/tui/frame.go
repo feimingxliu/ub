@@ -19,7 +19,7 @@ type footerFrame struct {
 }
 
 func (m Model) renderFrame() tuiFrame {
-	if m.btw.visible && m.pending == nil && m.pendingLimit == nil {
+	if m.btw.visible && m.pending == nil && m.pendingAsk == nil && m.pendingLimit == nil {
 		return m.renderSideQuestionFrame()
 	}
 	width := contentWidth(m.width)
@@ -69,7 +69,7 @@ func padFrameLine(line string, width int) string {
 }
 
 func (m Model) frameCursor(inputY int) *tea.Cursor {
-	if m.pending != nil || m.picker != nil || m.sessions != nil || m.plans != nil || m.rewind != nil || m.btw.visible {
+	if m.pending != nil || m.pendingAsk != nil || m.picker != nil || m.sessions != nil || m.plans != nil || m.rewind != nil || m.btw.visible {
 		return nil
 	}
 	cur := m.input.Cursor()
@@ -117,6 +117,10 @@ func (m Model) footerFrame(width int) footerFrame {
 	if m.pending != nil {
 		lines = append(lines, "")
 		lines = append(lines, splitFrameLines(m.modal.View())...)
+	}
+	if m.pendingAsk != nil {
+		lines = append(lines, "")
+		lines = append(lines, splitFrameLines(m.askPrompt.View(width))...)
 	}
 	if prompt := m.limitPromptView(width); prompt != "" {
 		lines = append(lines, "")

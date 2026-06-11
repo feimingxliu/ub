@@ -138,6 +138,7 @@ func (r *cliSubagentRunner) newChildAgent(maxTurns int, events agent.EventSink) 
 		opts.Rollout = nil
 		opts.MaxTurns = maxTurns
 		opts.LimitAsker = nil
+		opts.Asker = nil
 		opts.Hooks = subagentHookRunner{inner: r.hooks}
 		opts.SummaryProvider = nil
 		opts.SummaryModel = ""
