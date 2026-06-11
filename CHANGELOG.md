@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.12] - 2026-06-11
+
+
+### Fixed
+
+- Hide zero todo item index in activity summary ([1fee729](https://github.com/feimingxliu/ub/commit/1fee729d7f0d1e9faf2dd1014fe61fd242f2fd55))
+- Refine context compaction behavior ([ab23e1e](https://github.com/feimingxliu/ub/commit/ab23e1ef0c3dc7c848a09a1b81140babbdd2390a))
+- Show full command details for tool activity ([4c03538](https://github.com/feimingxliu/ub/commit/4c03538f6652494b767e217b11f05ae84fc84f0e))
+- Validate line-range edit anchors ([35179ff](https://github.com/feimingxliu/ub/commit/35179ffcb60e8fbab34a2f8cc481437f2f6f7fc0))
+- Route auto memory events through background channel ([97690c8](https://github.com/feimingxliu/ub/commit/97690c8b189a9ab2933952c73646320104be0c24))
+- Clean session artifacts safely ([4c9828e](https://github.com/feimingxliu/ub/commit/4c9828e80384f9cc1297cae7d6bb8f38aa09c54e))
+- Harden line-based edits ([825bd82](https://github.com/feimingxliu/ub/commit/825bd82719706df0f68f7045cf6192ff01864369))
+- Recover from dead language servers ([1463f14](https://github.com/feimingxliu/ub/commit/1463f1453006fc5adeabb4e8e44634882b11771e))
+- Remove go syntax edit guard ([14549a5](https://github.com/feimingxliu/ub/commit/14549a53b865e480748da142db4c7a5f020a1e52))
+
+
+### Refactoring
+
+- Reorganize project layout ([3ee90e8](https://github.com/feimingxliu/ub/commit/3ee90e89923fdfb712263fa7b4fed9e9f30fb362))
+
 ## [0.3.11] - 2026-06-10
 
 
@@ -15,6 +35,11 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Move new todo lists to latest activity ([ee561f3](https://github.com/feimingxliu/ub/commit/ee561f31b6bd127ea0eed94527269fee3770480d))
+
+
+### Maintenance
+
+- V0.3.11 ([56bf1aa](https://github.com/feimingxliu/ub/commit/56bf1aaa776cbaf8cf2e2d812ca860d3f17090b0))
 
 ## [0.3.10] - 2026-06-09
 
