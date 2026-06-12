@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.0] - 2026-06-12
+
+
+### Documentation
+
+- Document rollout show limit ([0c72a3c](https://github.com/feimingxliu/ub/commit/0c72a3ca8480b7a06a9e81f9554b8e2d2211d415))
+- Align specs with current implementation ([b27c949](https://github.com/feimingxliu/ub/commit/b27c949e76e535473ffd3a3fe3fc4ca001bf317e))
+
+
+### Fixed
+
+- Sync aux models after resume ([214f5dc](https://github.com/feimingxliu/ub/commit/214f5dc4361acf8734e6684351c1bbfcd611632e))
+- Defer provider model checks on startup ([fc32239](https://github.com/feimingxliu/ub/commit/fc3223911671d714f0b568e8851b0aec66a75d64))
+- Serialize sqlite writes ([dba0af6](https://github.com/feimingxliu/ub/commit/dba0af6798a63a27836223180988ce6e5612a6d8))
+
+
+### Refactoring
+
+- Split model and message rendering ([6384da5](https://github.com/feimingxliu/ub/commit/6384da5c9ac41b0bd157d655d379d07c343a18cc))
+- Split loop activity and tool handling ([7d85299](https://github.com/feimingxliu/ub/commit/7d85299ea735ca81533b531cda10dbf5b714632d))
+- Split web tools and improve lifecycles ([80b1648](https://github.com/feimingxliu/ub/commit/80b1648036ed9833d8a811a7f97e83953e0bdfd3))
+- Split runtime and provider model control ([8614c95](https://github.com/feimingxliu/ub/commit/8614c957a8c8df1e5768436fd56851907a501f93))
+
 ## [0.3.13] - 2026-06-11
 
 
@@ -17,6 +40,11 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Defer background notices during streams ([f7c9cdd](https://github.com/feimingxliu/ub/commit/f7c9cdda66e7486b785eba2476633c919ad49c00))
+
+
+### Maintenance
+
+- V0.3.13 ([1e6f064](https://github.com/feimingxliu/ub/commit/1e6f064505e7701d2d4879fdcc98d761b22742fc))
 
 ## [0.3.12] - 2026-06-11
 
