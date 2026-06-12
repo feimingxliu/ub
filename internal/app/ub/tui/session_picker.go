@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"unicode"
 
 	"github.com/feimingxliu/ub/internal/app/ub/tui/tuitheme"
 )
@@ -32,52 +31,42 @@ func (p *sessionPicker) next() {
 	if p == nil || len(p.sessions) == 0 {
 		return
 	}
-	p.index = (p.index + 1) % len(p.sessions)
+	p.index = nextPickerIndex(p.index, len(p.sessions))
 }
 
 func (p *sessionPicker) previous() {
 	if p == nil || len(p.sessions) == 0 {
 		return
 	}
-	p.index = (p.index + len(p.sessions) - 1) % len(p.sessions)
+	p.index = previousPickerIndex(p.index, len(p.sessions))
 }
 
 func (p *sessionPicker) appendRune(r rune) {
-	if p == nil || !unicode.IsPrint(r) {
+	if p == nil {
 		return
 	}
-	p.query += string(r)
-	p.refilter()
+	appendPickerQueryRuneAndRefilter(&p.query, r, p.refilter)
 }
 
 func (p *sessionPicker) backspace() {
-	if p == nil || p.query == "" {
+	if p == nil {
 		return
 	}
-	runes := []rune(p.query)
-	p.query = string(runes[:len(runes)-1])
-	p.refilter()
+	backspacePickerQueryAndRefilter(&p.query, p.refilter)
 }
 
 func (p *sessionPicker) clearQuery() {
-	if p == nil || p.query == "" {
+	if p == nil {
 		return
 	}
-	p.query = ""
-	p.refilter()
+	clearPickerQueryAndRefilter(&p.query, p.refilter)
 }
 
 func (p *sessionPicker) refilter() {
 	if p == nil {
 		return
 	}
-	p.sessions = nil
-	query := strings.TrimSpace(p.query)
-	for _, sess := range p.all {
-		if query == "" || sessionMatchesQuery(sess, query) {
-			p.sessions = append(p.sessions, sess)
-		}
-	}
+	p.sessions = filterPickerItems(p.all, p.query, sessionMatchesQuery)
 	p.index = 0
 	for i, sess := range p.sessions {
 		if sess.Current {
@@ -95,24 +84,17 @@ func (p *sessionPicker) view(width int, styles tuitheme.Styles) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(styles.Render(styles.Picker.Title, truncateText("◇ select session (type filter, enter switch, esc cancel)", width)))
+	b.WriteString(renderPickerTitle(styles, width, "◇ select session (type filter, enter switch, esc cancel)"))
 	b.WriteByte('\n')
-	filter := p.query
-	if filter == "" {
-		filter = "all"
-	}
-	b.WriteString(styles.Render(styles.Picker.Item, truncateText("  filter: "+filter, width)))
+	b.WriteString(renderPickerItem(styles, width, "  filter: "+pickerFilterLabel(p.query)))
 	if len(p.sessions) == 0 {
 		b.WriteByte('\n')
-		b.WriteString(styles.Render(styles.Picker.Empty, truncateText("  no matching sessions", width)))
+		b.WriteString(renderPickerEmpty(styles, width, "  no matching sessions"))
 		return b.String()
 	}
 	for i, sess := range p.sessions {
 		b.WriteByte('\n')
-		marker := "  "
-		if i == p.index {
-			marker = "> "
-		}
+		selected := i == p.index
 		current := " "
 		if sess.Current {
 			current = "*"
@@ -133,12 +115,8 @@ func (p *sessionPicker) view(width int, styles tuitheme.Styles) string {
 		if !sess.UpdatedAt.IsZero() {
 			updated = sess.UpdatedAt.Local().Format("2006-01-02 15:04")
 		}
-		line := truncateText(fmt.Sprintf("%s%s %s  %s  %s/%s  %s", marker, current, sess.ID, updated, provider, model, title), width)
-		if i == p.index {
-			b.WriteString(styles.Render(styles.Picker.Selected, line))
-			continue
-		}
-		b.WriteString(styles.Render(styles.Picker.Item, line))
+		text := fmt.Sprintf("%s %s  %s  %s/%s  %s", current, sess.ID, updated, provider, model, title)
+		b.WriteString(renderPickerChoiceLine(styles, width, selected, text))
 	}
 	return b.String()
 }

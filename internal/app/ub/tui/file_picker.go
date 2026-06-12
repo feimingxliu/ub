@@ -40,14 +40,14 @@ func (p *filePicker) next() {
 	if p == nil || len(p.files) == 0 {
 		return
 	}
-	p.index = (selectedIndex(p.index, len(p.files)) + 1) % len(p.files)
+	p.index = nextPickerIndex(p.index, len(p.files))
 }
 
 func (p *filePicker) previous() {
 	if p == nil || len(p.files) == 0 {
 		return
 	}
-	p.index = (selectedIndex(p.index, len(p.files)) + len(p.files) - 1) % len(p.files)
+	p.index = previousPickerIndex(p.index, len(p.files))
 }
 
 func (p *filePicker) view(width int, styles tuitheme.Styles) string {
@@ -59,29 +59,21 @@ func (p *filePicker) view(width int, styles tuitheme.Styles) string {
 	if p.query != "" {
 		title = fmt.Sprintf("◇ attach file @%s (enter/tab insert, esc cancel)", p.query)
 	}
-	b.WriteString(styles.Render(styles.Picker.Title, truncateText(title, width)))
+	b.WriteString(renderPickerTitle(styles, width, title))
 	if p.err != "" {
 		b.WriteByte('\n')
-		b.WriteString(styles.Render(styles.Picker.Empty, truncateText("  "+p.err, width)))
+		b.WriteString(renderPickerEmpty(styles, width, "  "+p.err))
 		return b.String()
 	}
 	if len(p.files) == 0 {
 		b.WriteByte('\n')
-		b.WriteString(styles.Render(styles.Picker.Empty, truncateText("  no matching files", width)))
+		b.WriteString(renderPickerEmpty(styles, width, "  no matching files"))
 		return b.String()
 	}
 	for i, path := range p.files {
 		b.WriteByte('\n')
-		marker := "  "
-		if i == selectedIndex(p.index, len(p.files)) {
-			marker = "> "
-		}
-		line := truncateText(marker+path, width)
-		if i == selectedIndex(p.index, len(p.files)) {
-			b.WriteString(styles.Render(styles.Picker.Selected, line))
-			continue
-		}
-		b.WriteString(styles.Render(styles.Picker.Item, line))
+		selected := i == selectedIndex(p.index, len(p.files))
+		b.WriteString(renderPickerChoiceLine(styles, width, selected, path))
 	}
 	return b.String()
 }

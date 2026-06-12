@@ -46,14 +46,14 @@ func (p *modelPicker) next() {
 	if p == nil || len(p.models) == 0 {
 		return
 	}
-	p.index = (p.index + 1) % len(p.models)
+	p.index = nextPickerIndex(p.index, len(p.models))
 }
 
 func (p *modelPicker) previous() {
 	if p == nil || len(p.models) == 0 {
 		return
 	}
-	p.index = (p.index + len(p.models) - 1) % len(p.models)
+	p.index = previousPickerIndex(p.index, len(p.models))
 }
 
 func (p *modelPicker) view(width int, styles tuitheme.Styles) string {
@@ -61,19 +61,10 @@ func (p *modelPicker) view(width int, styles tuitheme.Styles) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(styles.Render(styles.Picker.Title, truncateText("◇ "+p.title, width)))
+	b.WriteString(renderPickerTitle(styles, width, "◇ "+p.title))
 	for i, model := range p.models {
 		b.WriteByte('\n')
-		marker := "  "
-		if i == p.index {
-			marker = "> "
-		}
-		line := truncateText(marker+model, width)
-		if i == p.index {
-			b.WriteString(styles.Render(styles.Picker.Selected, line))
-			continue
-		}
-		b.WriteString(styles.Render(styles.Picker.Item, line))
+		b.WriteString(renderPickerChoiceLine(styles, width, i == p.index, model))
 	}
 	return b.String()
 }
