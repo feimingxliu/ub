@@ -38,8 +38,8 @@ func (t *recallTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *recallTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a recallArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("recall: invalid args: %w", err)
+	if err := tool.DecodeArgs("recall", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 
 	var cat memory.Category

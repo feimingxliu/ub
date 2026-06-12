@@ -36,8 +36,8 @@ func (t *killTool) Risk() tool.Risk            { return tool.RiskExec }
 
 func (t *killTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a killArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("job_kill: invalid args: %w", err)
+	if err := tool.DecodeArgs("job_kill", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if a.JobID == "" {
 		return tool.Result{}, fmt.Errorf("job_kill: job_id is required")

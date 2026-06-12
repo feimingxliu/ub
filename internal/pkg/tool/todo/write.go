@@ -75,8 +75,8 @@ func (t *writeTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *writeTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a writeArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("todo_write: invalid args: %w", err)
+	if err := tool.DecodeArgs("todo_write", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	sessionID := strings.TrimSpace(tool.SessionIDFromContext(ctx))
 	if sessionID == "" {

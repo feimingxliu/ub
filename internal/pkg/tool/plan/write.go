@@ -88,8 +88,8 @@ func (t *writeTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *writeTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a writeArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("plan_write: invalid args: %w", err)
+	if err := tool.DecodeArgs("plan_write", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.Title) == "" {
 		return tool.Result{}, fmt.Errorf("plan_write: title is required")

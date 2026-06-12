@@ -154,7 +154,7 @@ func LimitResult(result tool.Result, opts LimitOptions) (tool.Result, error) {
 		return result, nil
 	}
 
-	originalBytes := len([]byte(full))
+	originalBytes := len(full)
 	fullPath := ""
 	if limits.SpilloverEnabled && strings.TrimSpace(opts.SessionID) != "" && strings.TrimSpace(opts.ToolUseID) != "" {
 		toWrite := full
@@ -172,7 +172,7 @@ func LimitResult(result tool.Result, opts LimitOptions) (tool.Result, error) {
 	footer := truncationFooter(originalBytes, fullPath)
 	previewBudget := limits.InlineMaxBytes
 	if footer != "" {
-		previewBudget -= len([]byte(footer)) + 1
+		previewBudget -= len(footer) + 1
 	}
 	if previewBudget < 0 {
 		previewBudget = 0
@@ -194,7 +194,7 @@ func LimitResult(result tool.Result, opts LimitOptions) (tool.Result, error) {
 }
 
 func exceedsLimits(text string, limits Limits) bool {
-	return len([]byte(text)) > limits.InlineMaxBytes || lineCount(text) > limits.InlineMaxLines
+	return len(text) > limits.InlineMaxBytes || lineCount(text) > limits.InlineMaxLines
 }
 
 func lineCount(text string) int {
@@ -223,12 +223,12 @@ func headWithin(text string, limits Limits) string {
 			segment = text[:idx+1]
 		}
 		remaining := limits.InlineMaxBytes - bytesUsed
-		if len([]byte(segment)) > remaining {
+		if len(segment) > remaining {
 			b.WriteString(validPrefix(segment, remaining))
 			break
 		}
 		b.WriteString(segment)
-		bytesUsed += len([]byte(segment))
+		bytesUsed += len(segment)
 		linesUsed++
 		text = text[len(segment):]
 	}

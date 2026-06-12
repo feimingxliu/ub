@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,27 @@ func TestAppendValidatesRequiredFields(t *testing.T) {
 	}
 	if got := err.Error(); got == "" {
 		t.Fatal("validation error should be readable")
+	}
+}
+
+func TestCloseIsIdempotentAndClosesWriter(t *testing.T) {
+	ctx := context.Background()
+	st, ro := openStoreRollout(t)
+	sessionID := createSession(t, st, "close")
+	event, err := UserMessage(sessionID, 1, message.Text(message.RoleUser, "closed"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+
+	if err := ro.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := ro.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+	err = ro.Append(ctx, event)
+	if err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("Append after Close error = %v, want closed writer error", err)
 	}
 }
 
@@ -297,6 +319,9 @@ func TestAppendVisibleAfterReopen(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	appendMessage(t, ro, sessionID, "durable")
+	if err := ro.Close(); err != nil {
+		t.Fatalf("close rollout: %v", err)
+	}
 	if err := st.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -384,6 +409,70 @@ func TestForEachCallbackError(t *testing.T) {
 	}
 }
 
+func BenchmarkAppendEvent(b *testing.B) {
+	ctx := context.Background()
+	st, ro := openStoreRolloutForBenchmark(b)
+	sessionID := createSessionForBenchmark(b, st, "append")
+	payload, err := MarshalPayload(map[string]string{"text": "benchmark event payload"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	now := time.Unix(100, 0).UTC()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		event := Event{
+			ID:        "evt_bench_append_" + strconv.Itoa(i),
+			SessionID: sessionID,
+			Turn:      i + 1,
+			Time:      now.Add(time.Duration(i) * time.Millisecond),
+			Type:      TypeUserMessage,
+			Payload:   payload,
+		}
+		if err := ro.Append(ctx, event); err != nil {
+			b.Fatalf("Append %d: %v", i, err)
+		}
+	}
+}
+
+func BenchmarkForEachThousandEvents(b *testing.B) {
+	ctx := context.Background()
+	st, ro := openStoreRolloutForBenchmark(b)
+	sessionID := createSessionForBenchmark(b, st, "replay")
+	payload, err := MarshalPayload(map[string]string{"text": "benchmark event payload"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	now := time.Unix(100, 0).UTC()
+	for i := 0; i < 1000; i++ {
+		event := Event{
+			ID:        "evt_bench_replay_" + strconv.Itoa(i),
+			SessionID: sessionID,
+			Turn:      i/10 + 1,
+			Time:      now.Add(time.Duration(i) * time.Millisecond),
+			Type:      TypeUserMessage,
+			Payload:   payload,
+		}
+		if err := ro.Append(ctx, event); err != nil {
+			b.Fatalf("Append setup %d: %v", i, err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		count := 0
+		if err := ro.ForEach(ctx, sessionID, func(Event) error {
+			count++
+			return nil
+		}); err != nil {
+			b.Fatalf("ForEach: %v", err)
+		}
+		if count != 1000 {
+			b.Fatalf("events = %d, want 1000", count)
+		}
+	}
+}
+
 func crashChild(t *testing.T) {
 	t.Helper()
 	st, err := store.Open(os.Getenv("UB_ROLLOUT_CRASH_DB"))
@@ -415,6 +504,7 @@ func openStoreRollout(t *testing.T) (*store.Store, *SQLite) {
 	if err != nil {
 		t.Fatalf("New rollout: %v", err)
 	}
+	t.Cleanup(func() { _ = ro.Close() })
 	return st, ro
 }
 
@@ -441,4 +531,33 @@ func appendMessage(t *testing.T, ro *SQLite, sessionID, text string) {
 	if err := ro.Append(context.Background(), event); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
+}
+
+func openStoreRolloutForBenchmark(b *testing.B) (*store.Store, *SQLite) {
+	b.Helper()
+	st, err := store.Open(filepath.Join(b.TempDir(), "ub.db"))
+	if err != nil {
+		b.Fatalf("Open: %v", err)
+	}
+	b.Cleanup(func() { _ = st.Close() })
+	ro, err := New(st)
+	if err != nil {
+		b.Fatalf("New rollout: %v", err)
+	}
+	b.Cleanup(func() { _ = ro.Close() })
+	return st, ro
+}
+
+func createSessionForBenchmark(b *testing.B, st *store.Store, suffix string) string {
+	b.Helper()
+	id := "sess_" + suffix
+	if err := st.CreateSession(context.Background(), store.Session{
+		ID:        id,
+		Workspace: "/workspace",
+		Title:     suffix,
+		Model:     "fake/model",
+	}); err != nil {
+		b.Fatalf("CreateSession: %v", err)
+	}
+	return id
 }

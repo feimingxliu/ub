@@ -88,8 +88,8 @@ func (t *reviseTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *reviseTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a reviseArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("plan_update: invalid args: %w", err)
+	if err := tool.DecodeArgs("plan_update", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.PlanID) == "" {
 		return tool.Result{}, fmt.Errorf("plan_update: plan_id is required")

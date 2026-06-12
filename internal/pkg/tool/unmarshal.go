@@ -27,3 +27,10 @@ func UnmarshalArgs(raw json.RawMessage, dst any) error {
 		return nil
 	}
 }
+
+func DecodeArgs(toolName string, raw json.RawMessage, dst any) error {
+	if err := UnmarshalArgs(raw, dst); err != nil {
+		return fmt.Errorf("%s: invalid args: %w", toolName, err)
+	}
+	return nil
+}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/feimingxliu/ub/internal/pkg/workspace/store"
@@ -23,7 +24,9 @@ type Reader interface {
 
 // SQLite provides rollout read/write operations over the shared store DB.
 type SQLite struct {
-	db *sql.DB
+	db     *sql.DB
+	insert *sql.Stmt
+	mu     sync.RWMutex
 }
 
 // New creates a SQLite rollout reader/writer bound to an opened store.
@@ -31,18 +34,29 @@ func New(st *store.Store) (*SQLite, error) {
 	if st == nil || st.DB() == nil {
 		return nil, errors.New("rollout store is nil")
 	}
-	return &SQLite{db: st.DB()}, nil
+	insert, err := st.DB().PrepareContext(context.Background(), appendEventSQL)
+	if err != nil {
+		return nil, fmt.Errorf("prepare rollout append: %w", err)
+	}
+	return &SQLite{db: st.DB(), insert: insert}, nil
 }
+
+const appendEventSQL = `INSERT INTO events
+	(id, session_id, turn, time, type, payload)
+	VALUES (?, ?, ?, ?, ?, ?)`
 
 // Append inserts one rollout event.
 func (s *SQLite) Append(ctx context.Context, event Event) error {
 	if err := validateEvent(event); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(
-		ctx, `INSERT INTO events
-		(id, session_id, turn, time, type, payload)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.insert == nil {
+		return errors.New("rollout writer is closed")
+	}
+	if _, err := s.insert.ExecContext(
+		ctx,
 		event.ID,
 		event.SessionID,
 		event.Turn,
@@ -145,7 +159,14 @@ func (s *SQLite) DeleteFromTurn(ctx context.Context, sessionID string, startTurn
 
 // Close is present to satisfy Writer. The underlying store owns the DB handle.
 func (s *SQLite) Close() error {
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.insert == nil {
+		return nil
+	}
+	err := s.insert.Close()
+	s.insert = nil
+	return err
 }
 
 func validateEvent(event Event) error {

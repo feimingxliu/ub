@@ -38,8 +38,8 @@ func (t *runTool) Risk() tool.Risk            { return tool.RiskExec }
 
 func (t *runTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a runArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("job_run: invalid args: %w", err)
+	if err := tool.DecodeArgs("job_run", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if a.Command == "" {
 		return tool.Result{}, fmt.Errorf("job_run: command is required")

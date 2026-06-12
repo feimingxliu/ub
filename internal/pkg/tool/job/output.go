@@ -48,8 +48,8 @@ func (t *outputTool) ExecuteStream(ctx context.Context, raw json.RawMessage, eve
 
 func (t *outputTool) run(ctx context.Context, raw json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
 	var a outputArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("job_output: invalid args: %w", err)
+	if err := tool.DecodeArgs("job_output", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if a.JobID == "" {
 		return tool.Result{}, fmt.Errorf("job_output: job_id is required")

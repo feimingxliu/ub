@@ -38,9 +38,11 @@ func (t *hoverTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *hoverTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a hoverArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("hover: invalid args: %w", err)
+	if err := tool.DecodeArgs("hover", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
+	ctx, cancel := lspToolContext(ctx)
+	defer cancel()
 	res, err := t.manager.Hover(ctx, a.File, int(a.Line), int(a.Col))
 	if err != nil {
 		return tool.Result{}, err
@@ -84,8 +86,8 @@ func (t *completionTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *completionTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a completionArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("completion: invalid args: %w", err)
+	if err := tool.DecodeArgs("completion", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	maxN := int(a.Max)
 	if maxN <= 0 {
@@ -94,6 +96,8 @@ func (t *completionTool) Execute(ctx context.Context, raw json.RawMessage) (tool
 	if maxN > maxCompletionItems {
 		maxN = maxCompletionItems
 	}
+	ctx, cancel := lspToolContext(ctx)
+	defer cancel()
 	items, err := t.manager.Completion(ctx, a.File, int(a.Line), int(a.Col), maxN)
 	if err != nil {
 		return tool.Result{}, err
@@ -137,12 +141,14 @@ func (t *documentSymbolsTool) Risk() tool.Risk            { return tool.RiskSafe
 
 func (t *documentSymbolsTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a documentSymbolsArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("document_symbols: invalid args: %w", err)
+	if err := tool.DecodeArgs("document_symbols", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.File) == "" {
 		return tool.Result{}, fmt.Errorf("document_symbols: file is required")
 	}
+	ctx, cancel := lspToolContext(ctx)
+	defer cancel()
 	symbols, err := t.manager.DocumentSymbols(ctx, a.File)
 	if err != nil {
 		return tool.Result{}, err
@@ -215,12 +221,14 @@ func (t *renameTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *renameTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a renameArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("rename: invalid args: %w", err)
+	if err := tool.DecodeArgs("rename", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.NewName) == "" {
 		return tool.Result{}, fmt.Errorf("rename: new_name is required")
 	}
+	ctx, cancel := lspToolContext(ctx)
+	defer cancel()
 	edit, err := t.manager.Rename(ctx, a.File, int(a.Line), int(a.Col), a.NewName)
 	if err != nil {
 		return tool.Result{}, err
@@ -269,8 +277,8 @@ func (t *codeActionTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *codeActionTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a codeActionArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("code_action: invalid args: %w", err)
+	if err := tool.DecodeArgs("code_action", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	endLine := int(a.EndLine)
 	if endLine <= 0 {
@@ -280,6 +288,8 @@ func (t *codeActionTool) Execute(ctx context.Context, raw json.RawMessage) (tool
 	if endCol <= 0 {
 		endCol = int(a.Col)
 	}
+	ctx, cancel := lspToolContext(ctx)
+	defer cancel()
 	actions, err := t.manager.CodeActions(ctx, a.File, int(a.Line), int(a.Col), endLine, endCol)
 	if err != nil {
 		return tool.Result{}, err

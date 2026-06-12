@@ -49,17 +49,23 @@ type CallResult struct {
 
 // Text joins text content blocks for display in ub tool results.
 func (r CallResult) Text() string {
-	var parts []string
+	var b strings.Builder
 	for _, block := range r.Content {
 		if block.Type == "text" {
-			parts = append(parts, block.Text)
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(block.Text)
 			continue
 		}
 		if len(block.Data) > 0 {
-			parts = append(parts, string(block.Data))
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.Write(block.Data)
 		}
 	}
-	return strings.Join(parts, "\n")
+	return b.String()
 }
 
 type initializeParams struct {

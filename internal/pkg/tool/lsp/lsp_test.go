@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	lspruntime "github.com/feimingxliu/ub/internal/pkg/integration/lsp"
 	"github.com/feimingxliu/ub/internal/pkg/tool"
@@ -27,30 +28,40 @@ type fakeManager struct {
 	renameNewName   string
 	codeActions     []lspruntime.CodeAction
 	codeActionRange [4]int // line, col, endLine, endCol
+	deadlineSeen    bool
 }
 
-func (m *fakeManager) Diagnostics(context.Context, string) ([]lspruntime.FileDiagnostics, error) {
+func (m *fakeManager) recordContext(ctx context.Context) {
+	_, m.deadlineSeen = ctx.Deadline()
+}
+
+func (m *fakeManager) Diagnostics(ctx context.Context, _ string) ([]lspruntime.FileDiagnostics, error) {
+	m.recordContext(ctx)
 	return m.diagnostics, nil
 }
 
-func (m *fakeManager) References(_ context.Context, file string, line, col int) ([]lspruntime.Location, error) {
+func (m *fakeManager) References(ctx context.Context, file string, line, col int) ([]lspruntime.Location, error) {
+	m.recordContext(ctx)
 	m.refFile = file
 	m.refLine = line
 	m.refCol = col
 	return m.locations, nil
 }
 
-func (m *fakeManager) ReferencesBySymbol(_ context.Context, symbol, path string) ([]lspruntime.Location, error) {
+func (m *fakeManager) ReferencesBySymbol(ctx context.Context, symbol, path string) ([]lspruntime.Location, error) {
+	m.recordContext(ctx)
 	m.symbol = symbol
 	m.symbolPath = path
 	return m.locations, nil
 }
 
-func (m *fakeManager) Hover(_ context.Context, _ string, _, _ int) (lspruntime.HoverResult, error) {
+func (m *fakeManager) Hover(ctx context.Context, _ string, _, _ int) (lspruntime.HoverResult, error) {
+	m.recordContext(ctx)
 	return m.hover, nil
 }
 
-func (m *fakeManager) Completion(_ context.Context, _ string, _, _, maxN int) ([]lspruntime.CompletionItem, error) {
+func (m *fakeManager) Completion(ctx context.Context, _ string, _, _, maxN int) ([]lspruntime.CompletionItem, error) {
+	m.recordContext(ctx)
 	m.completionMax = maxN
 	items := m.completion
 	if maxN > 0 && len(items) > maxN {
@@ -59,16 +70,19 @@ func (m *fakeManager) Completion(_ context.Context, _ string, _, _, maxN int) ([
 	return items, nil
 }
 
-func (m *fakeManager) DocumentSymbols(_ context.Context, _ string) ([]lspruntime.DocumentSymbol, error) {
+func (m *fakeManager) DocumentSymbols(ctx context.Context, _ string) ([]lspruntime.DocumentSymbol, error) {
+	m.recordContext(ctx)
 	return m.docSymbols, nil
 }
 
-func (m *fakeManager) Rename(_ context.Context, _ string, _, _ int, newName string) (lspruntime.WorkspaceEdit, error) {
+func (m *fakeManager) Rename(ctx context.Context, _ string, _, _ int, newName string) (lspruntime.WorkspaceEdit, error) {
+	m.recordContext(ctx)
 	m.renameNewName = newName
 	return m.renameEdit, nil
 }
 
-func (m *fakeManager) CodeActions(_ context.Context, _ string, line, col, endLine, endCol int) ([]lspruntime.CodeAction, error) {
+func (m *fakeManager) CodeActions(ctx context.Context, _ string, line, col, endLine, endCol int) ([]lspruntime.CodeAction, error) {
+	m.recordContext(ctx)
 	m.codeActionRange = [4]int{line, col, endLine, endCol}
 	return m.codeActions, nil
 }
@@ -181,6 +195,33 @@ func TestRegister_NilManagerSkips(t *testing.T) {
 	}
 	if len(reg.All()) != 0 {
 		t.Fatalf("nil manager should register no tools, got %d", len(reg.All()))
+	}
+}
+
+func TestLSPToolsApplyDefaultDeadline(t *testing.T) {
+	m := &fakeManager{}
+	tl := newDiagnosticsTool(m)
+	if _, err := execTool(t, tl, diagnosticsArgs{}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !m.deadlineSeen {
+		t.Fatal("expected LSP tool call to apply a deadline")
+	}
+}
+
+func TestLSPToolContextPreservesExistingDeadline(t *testing.T) {
+	parentDeadline := time.Now().Add(time.Minute)
+	parent, cancelParent := context.WithDeadline(context.Background(), parentDeadline)
+	defer cancelParent()
+
+	ctx, cancel := lspToolContext(parent)
+	defer cancel()
+	gotDeadline, ok := ctx.Deadline()
+	if !ok {
+		t.Fatal("expected existing deadline")
+	}
+	if !gotDeadline.Equal(parentDeadline) {
+		t.Fatalf("deadline = %s, want %s", gotDeadline, parentDeadline)
 	}
 }
 

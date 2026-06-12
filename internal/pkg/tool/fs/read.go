@@ -62,8 +62,8 @@ func (t *readTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *readTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a readArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("read: invalid args: %w", err)
+	if err := tool.DecodeArgs("read", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if a.Path == "" {
 		return tool.Result{}, fmt.Errorf("read: path is required")

@@ -8,12 +8,25 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/invopop/jsonschema"
 
 	lspruntime "github.com/feimingxliu/ub/internal/pkg/integration/lsp"
 	"github.com/feimingxliu/ub/internal/pkg/tool"
 )
+
+const defaultLSPToolTimeout = 10 * time.Second
+
+func lspToolContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, defaultLSPToolTimeout)
+}
 
 // Manager is the LSP query surface used by these tools. The interface grew
 // from the original 3 read methods to 8 when hover / completion /
@@ -80,10 +93,12 @@ func (t *diagnosticsTool) Risk() tool.Risk { return tool.RiskSafe }
 func (t *diagnosticsTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var args diagnosticsArgs
 	if len(raw) > 0 {
-		if err := tool.UnmarshalArgs(raw, &args); err != nil {
-			return tool.Result{}, fmt.Errorf("diagnostics: invalid args: %w", err)
+		if err := tool.DecodeArgs("diagnostics", raw, &args); err != nil {
+			return tool.Result{}, err
 		}
 	}
+	ctx, cancel := lspToolContext(ctx)
+	defer cancel()
 	files, err := t.manager.Diagnostics(ctx, args.File)
 	if err != nil {
 		return tool.Result{}, err
@@ -124,17 +139,21 @@ func (t *referencesTool) Risk() tool.Risk { return tool.RiskSafe }
 
 func (t *referencesTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var args referencesArgs
-	if err := tool.UnmarshalArgs(raw, &args); err != nil {
-		return tool.Result{}, fmt.Errorf("references: invalid args: %w", err)
+	if err := tool.DecodeArgs("references", raw, &args); err != nil {
+		return tool.Result{}, err
 	}
 	var locations []lspruntime.Location
 	var err error
 	if strings.TrimSpace(args.Symbol) != "" {
+		ctx, cancel := lspToolContext(ctx)
+		defer cancel()
 		locations, err = t.manager.ReferencesBySymbol(ctx, args.Symbol, args.symbolSearchPath())
 	} else {
 		if strings.TrimSpace(args.File) == "" || int(args.Line) <= 0 || int(args.Col) <= 0 {
 			return tool.Result{}, fmt.Errorf("references: provide symbol, or file with positive 1-based line and col")
 		}
+		ctx, cancel := lspToolContext(ctx)
+		defer cancel()
 		locations, err = t.manager.References(ctx, args.File, int(args.Line), int(args.Col))
 	}
 	if err != nil {

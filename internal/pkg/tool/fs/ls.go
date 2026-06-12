@@ -36,8 +36,8 @@ func (t *lsTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *lsTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a lsArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("ls: invalid args: %w", err)
+	if err := tool.DecodeArgs("ls", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if a.Path == "" {
 		return tool.Result{}, fmt.Errorf("ls: path is required")

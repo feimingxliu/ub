@@ -99,8 +99,8 @@ type meFile struct {
 // and Execute.
 func (t *multiEditTool) plan(raw json.RawMessage) ([]*meFile, error) {
 	var a multiEditArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return nil, fmt.Errorf("multiedit: invalid args: %w", err)
+	if err := tool.DecodeArgs("multiedit", raw, &a); err != nil {
+		return nil, err
 	}
 	if len(a.Edits) == 0 {
 		return nil, fmt.Errorf("multiedit: at least one edit is required")

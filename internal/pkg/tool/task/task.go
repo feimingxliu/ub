@@ -47,8 +47,8 @@ func (t *taskTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *taskTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a taskArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("task: invalid args: %w", err)
+	if err := tool.DecodeArgs("task", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.Prompt) == "" {
 		return tool.Result{}, errors.New("task: prompt is required")

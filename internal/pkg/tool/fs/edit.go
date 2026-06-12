@@ -54,8 +54,8 @@ func (t *editTool) Risk() tool.Risk            { return tool.RiskWrite }
 
 func (t *editTool) parseAndResolve(raw json.RawMessage) (editArgs, string, error) {
 	var a editArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return a, "", fmt.Errorf("edit: invalid args: %w", err)
+	if err := tool.DecodeArgs("edit", raw, &a); err != nil {
+		return a, "", err
 	}
 	if a.Path == "" {
 		return a, "", fmt.Errorf("edit: path is required")

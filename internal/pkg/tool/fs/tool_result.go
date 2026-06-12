@@ -47,8 +47,8 @@ func (t *toolResultTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *toolResultTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a toolResultArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("tool_result: invalid args: %w", err)
+	if err := tool.DecodeArgs("tool_result", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.ToolUseID) == "" {
 		return tool.Result{}, fmt.Errorf("tool_result: tool_use_id is required")

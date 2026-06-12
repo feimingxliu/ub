@@ -36,8 +36,8 @@ func (t *updateTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *updateTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a updateArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("todo_update: invalid args: %w", err)
+	if err := tool.DecodeArgs("todo_update", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	sessionID := strings.TrimSpace(tool.SessionIDFromContext(ctx))
 	if sessionID == "" {

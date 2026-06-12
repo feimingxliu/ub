@@ -265,6 +265,8 @@ const (
 	reconnectMaxBackoff     = 30 * time.Second
 )
 
+var serverConnectionIdleTimeout = 10 * time.Minute
+
 type serverConnection struct {
 	name    string
 	cfg     config.MCPServerConfig
@@ -272,6 +274,8 @@ type serverConnection struct {
 
 	mu          sync.Mutex
 	client      *coremcp.Client
+	inFlight    int
+	idleTimer   *time.Timer
 	backoff     time.Duration
 	nextAttempt time.Time
 	lastErr     error
@@ -297,10 +301,11 @@ func (c *serverConnection) Connect(ctx context.Context) ([]coremcp.ToolSpec, err
 }
 
 func (c *serverConnection) CallTool(ctx context.Context, name string, args json.RawMessage) (coremcp.CallResult, error) {
-	client, err := c.clientForCall(ctx)
+	client, release, err := c.clientForCall(ctx)
 	if err != nil {
 		return coremcp.CallResult{}, err
 	}
+	defer release()
 	res, err := client.CallTool(ctx, name, args)
 	if err == nil {
 		c.markHealthy()
@@ -336,6 +341,8 @@ func (c *serverConnection) Close() error {
 	c.mu.Lock()
 	client := c.client
 	c.client = nil
+	c.inFlight = 0
+	c.stopIdleTimerLocked()
 	c.mu.Unlock()
 	if client == nil {
 		return nil
@@ -343,19 +350,20 @@ func (c *serverConnection) Close() error {
 	return client.Close()
 }
 
-func (c *serverConnection) clientForCall(ctx context.Context) (*coremcp.Client, error) {
+func (c *serverConnection) clientForCall(ctx context.Context) (*coremcp.Client, func(), error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.client != nil {
-		return c.client, nil
+	if c.client == nil {
+		if !c.nextAttempt.IsZero() && time.Now().Before(c.nextAttempt) {
+			return nil, nil, fmt.Errorf("mcp server %q is disconnected; reconnect backoff active: %v", c.name, c.lastErr)
+		}
+		if _, err := c.connectLocked(ctx, false); err != nil {
+			return nil, nil, err
+		}
 	}
-	if !c.nextAttempt.IsZero() && time.Now().Before(c.nextAttempt) {
-		return nil, fmt.Errorf("mcp server %q is disconnected; reconnect backoff active: %v", c.name, c.lastErr)
-	}
-	if _, err := c.connectLocked(ctx, false); err != nil {
-		return nil, err
-	}
-	return c.client, nil
+	c.inFlight++
+	c.stopIdleTimerLocked()
+	return c.client, c.releaseClient, nil
 }
 
 func (c *serverConnection) reconnectNow(ctx context.Context) (*coremcp.Client, error) {
@@ -382,10 +390,14 @@ func (c *serverConnection) connectLocked(ctx context.Context, ignoreBackoff bool
 	if c.client != nil {
 		_ = c.client.Close()
 	}
+	c.stopIdleTimerLocked()
 	c.client = client
 	c.lastErr = nil
 	c.nextAttempt = time.Time{}
 	c.backoff = reconnectInitialBackoff
+	if c.inFlight == 0 {
+		c.resetIdleTimerLocked()
+	}
 	return specs, nil
 }
 
@@ -404,16 +416,58 @@ func (c *serverConnection) markDisconnected(err error) {
 		_ = c.client.Close()
 		c.client = nil
 	}
+	c.stopIdleTimerLocked()
 	c.recordConnectFailure(err)
 }
 
 func (c *serverConnection) recordConnectFailure(err error) {
+	c.stopIdleTimerLocked()
 	c.lastErr = err
 	c.nextAttempt = time.Now().Add(c.backoff)
 	c.backoff *= 2
 	if c.backoff > reconnectMaxBackoff {
 		c.backoff = reconnectMaxBackoff
 	}
+}
+
+func (c *serverConnection) releaseClient() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inFlight > 0 {
+		c.inFlight--
+	}
+	if c.inFlight == 0 && c.client != nil {
+		c.resetIdleTimerLocked()
+	}
+}
+
+func (c *serverConnection) resetIdleTimerLocked() {
+	c.stopIdleTimerLocked()
+	if serverConnectionIdleTimeout <= 0 {
+		return
+	}
+	c.idleTimer = time.AfterFunc(serverConnectionIdleTimeout, c.closeIdleClient)
+}
+
+func (c *serverConnection) stopIdleTimerLocked() {
+	if c.idleTimer == nil {
+		return
+	}
+	c.idleTimer.Stop()
+	c.idleTimer = nil
+}
+
+func (c *serverConnection) closeIdleClient() {
+	c.mu.Lock()
+	if c.inFlight > 0 || c.client == nil {
+		c.mu.Unlock()
+		return
+	}
+	client := c.client
+	c.client = nil
+	c.idleTimer = nil
+	c.mu.Unlock()
+	_ = client.Close()
 }
 
 // Tool is a local tool backed by one remote MCP tool.

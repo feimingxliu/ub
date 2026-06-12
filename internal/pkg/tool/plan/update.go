@@ -39,8 +39,8 @@ func (t *updateTool) Risk() tool.Risk            { return tool.RiskSafe }
 
 func (t *updateTool) Execute(_ context.Context, raw json.RawMessage) (tool.Result, error) {
 	var a updateArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("plan_update_step: invalid args: %w", err)
+	if err := tool.DecodeArgs("plan_update_step", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if strings.TrimSpace(a.PlanID) == "" {
 		return tool.Result{}, fmt.Errorf("plan_update_step: plan_id is required")

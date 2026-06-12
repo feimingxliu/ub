@@ -58,8 +58,8 @@ func (t *bashTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Resul
 
 func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
 	var a bashArgs
-	if err := tool.UnmarshalArgs(raw, &a); err != nil {
-		return tool.Result{}, fmt.Errorf("bash: invalid args: %w", err)
+	if err := tool.DecodeArgs("bash", raw, &a); err != nil {
+		return tool.Result{}, err
 	}
 	if a.Command == "" {
 		return tool.Result{}, fmt.Errorf("bash: command is required")
