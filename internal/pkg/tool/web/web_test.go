@@ -39,10 +39,11 @@ func TestWebSearchSearXNGFormatsProviderNeutralResults(t *testing.T) {
 
 	reg := tool.New()
 	if err := Register(reg, Options{
-		Enabled:  true,
-		Provider: "searxng",
-		BaseURL:  "https://search.example.test",
-		Client:   client,
+		Enabled:             true,
+		Provider:            "searxng",
+		BaseURL:             "https://search.example.test",
+		AllowPrivateNetwork: true,
+		Client:              client,
 	}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestWebSearchDefaultDuckDuckGoFormatsResultsWithoutAPIKey(t *testing.T) {
 	})
 
 	reg := tool.New()
-	if err := Register(reg, Options{Enabled: true, BaseURL: "https://duck.example.test/html/", Client: client}); err != nil {
+	if err := Register(reg, Options{Enabled: true, BaseURL: "https://duck.example.test/html/", AllowPrivateNetwork: true, Client: client}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	searchTool, ok := reg.Get("web_search")
@@ -134,6 +135,84 @@ func TestParseDuckDuckGoHTMLDecodesResultLinks(t *testing.T) {
 	}
 	if results[0].URL != targetURL || results[0].Title != "Go Docs" || results[0].Summary != "Official & current docs." {
 		t.Fatalf("result = %#v", results[0])
+	}
+}
+
+func TestWebSearchBlocksPrivateProviderEndpointByDefault(t *testing.T) {
+	client := fakeHTTPClient(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request to blocked provider endpoint: %s", r.URL.String())
+		return nil, nil
+	})
+	reg := tool.New()
+	if err := Register(reg, Options{
+		Enabled: true,
+		BaseURL: "http://127.0.0.1/html/",
+		Client:  client,
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	searchTool, ok := reg.Get("web_search")
+	if !ok {
+		t.Fatal("web_search missing")
+	}
+	raw, _ := json.Marshal(map[string]any{"query": "latest go"})
+	_, err := searchTool.Execute(context.Background(), raw)
+	if err == nil || !strings.Contains(err.Error(), "refusing private or local network address") {
+		t.Fatalf("web_search error = %v, want private network block", err)
+	}
+}
+
+func TestWebSearchAppliesDomainPolicyToProviderEndpoint(t *testing.T) {
+	client := fakeHTTPClient(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request to denied provider endpoint: %s", r.URL.String())
+		return nil, nil
+	})
+	reg := tool.New()
+	if err := Register(reg, Options{
+		Enabled:             true,
+		Provider:            "searxng",
+		BaseURL:             "https://search.example.test",
+		AllowPrivateNetwork: true,
+		DenyDomains:         []string{"search.example.test"},
+		Client:              client,
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	searchTool, ok := reg.Get("web_search")
+	if !ok {
+		t.Fatal("web_search missing")
+	}
+	raw, _ := json.Marshal(map[string]any{"query": "latest go"})
+	_, err := searchTool.Execute(context.Background(), raw)
+	if err == nil || !strings.Contains(err.Error(), "denied by tools.web.deny_domains") {
+		t.Fatalf("web_search error = %v, want provider domain block", err)
+	}
+}
+
+func TestWebSearchAllowDomainsBlocksUnlistedProvider(t *testing.T) {
+	client := fakeHTTPClient(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("unexpected request to unlisted provider endpoint: %s", r.URL.String())
+		return nil, nil
+	})
+	reg := tool.New()
+	if err := Register(reg, Options{
+		Enabled:             true,
+		Provider:            "searxng",
+		BaseURL:             "https://search.example.test",
+		AllowPrivateNetwork: true,
+		AllowDomains:        []string{"allowed.test"},
+		Client:              client,
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	searchTool, ok := reg.Get("web_search")
+	if !ok {
+		t.Fatal("web_search missing")
+	}
+	raw, _ := json.Marshal(map[string]any{"query": "latest go"})
+	_, err := searchTool.Execute(context.Background(), raw)
+	if err == nil || !strings.Contains(err.Error(), "not allowed by tools.web.allow_domains") {
+		t.Fatalf("web_search error = %v, want allow_domains block", err)
 	}
 }
 

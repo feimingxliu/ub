@@ -34,12 +34,17 @@ type searchBackend interface {
 }
 
 func searchBackendFor(opts Options, client *http.Client) searchBackend {
-	return httpSearchBackend{opts: opts, client: client}
+	return httpSearchBackend{
+		opts:   opts,
+		client: client,
+		policy: domainPolicy{allow: opts.AllowDomains, deny: opts.DenyDomains},
+	}
 }
 
 type httpSearchBackend struct {
 	opts   Options
 	client *http.Client
+	policy domainPolicy
 }
 
 func (b httpSearchBackend) Search(ctx context.Context, req searchRequest) ([]searchResult, error) {
@@ -59,6 +64,20 @@ func (b httpSearchBackend) Search(ctx context.Context, req searchRequest) ([]sea
 	}
 }
 
+func (b httpSearchBackend) newProviderRequest(ctx context.Context, method, rawURL string, body io.Reader) (*http.Request, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateHTTPURL(ctx, u, b.opts.AllowPrivateNetwork); err != nil {
+		return nil, err
+	}
+	if err := b.policy.checkHost(u.Host); err != nil {
+		return nil, err
+	}
+	return newRequest(ctx, method, rawURL, body, b.opts.UserAgent)
+}
+
 func (b httpSearchBackend) searchDuckDuckGo(ctx context.Context, req searchRequest) ([]searchResult, error) {
 	base := fallback(b.opts.BaseURL, defaultDuckDuckGoSearchURL)
 	u, err := url.Parse(base)
@@ -71,7 +90,7 @@ func (b httpSearchBackend) searchDuckDuckGo(ctx context.Context, req searchReque
 		q.Set("df", duckDuckGoTimeRange(req.Recency))
 	}
 	u.RawQuery = q.Encode()
-	httpReq, err := newRequest(ctx, http.MethodGet, u.String(), nil, b.opts.UserAgent)
+	httpReq, err := b.newProviderRequest(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +124,7 @@ func (b httpSearchBackend) searchSearXNG(ctx context.Context, req searchRequest)
 		q.Set("time_range", searxngTimeRange(req.Recency))
 	}
 	u.RawQuery = q.Encode()
-	httpReq, err := newRequest(ctx, http.MethodGet, u.String(), nil, b.opts.UserAgent)
+	httpReq, err := b.newProviderRequest(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +168,7 @@ func (b httpSearchBackend) searchBrave(ctx context.Context, req searchRequest) (
 		q.Set("freshness", braveFreshness(req.Recency))
 	}
 	u.RawQuery = q.Encode()
-	httpReq, err := newRequest(ctx, http.MethodGet, u.String(), nil, b.opts.UserAgent)
+	httpReq, err := b.newProviderRequest(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +208,7 @@ func (b httpSearchBackend) searchTavily(ctx context.Context, req searchRequest) 
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := newRequest(ctx, http.MethodPost, base, bytes.NewReader(raw), b.opts.UserAgent)
+	httpReq, err := b.newProviderRequest(ctx, http.MethodPost, base, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +249,7 @@ func (b httpSearchBackend) searchSerpAPI(ctx context.Context, req searchRequest)
 	q.Set("api_key", b.opts.APIKey)
 	q.Set("num", fmt.Sprintf("%d", req.Limit))
 	u.RawQuery = q.Encode()
-	httpReq, err := newRequest(ctx, http.MethodGet, u.String(), nil, b.opts.UserAgent)
+	httpReq, err := b.newProviderRequest(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
