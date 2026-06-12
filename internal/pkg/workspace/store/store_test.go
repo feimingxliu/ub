@@ -53,6 +53,13 @@ func TestOpenCreatesParentAndAppliesMigrations(t *testing.T) {
 	if foreignKeys != 1 {
 		t.Fatalf("foreign_keys = %d, want 1", foreignKeys)
 	}
+	var busyTimeout int
+	if err := st.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+		t.Fatalf("query busy_timeout pragma: %v", err)
+	}
+	if busyTimeout != 5000 {
+		t.Fatalf("busy_timeout = %d, want 5000", busyTimeout)
+	}
 	var journalMode string
 	if err := st.db.QueryRow("PRAGMA journal_mode").Scan(&journalMode); err != nil {
 		t.Fatalf("query journal_mode pragma: %v", err)
@@ -66,6 +73,9 @@ func TestOpenCreatesParentAndAppliesMigrations(t *testing.T) {
 	}
 	if synchronous != 1 {
 		t.Fatalf("synchronous = %d, want 1 (NORMAL)", synchronous)
+	}
+	if got := st.db.Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1", got)
 	}
 }
 

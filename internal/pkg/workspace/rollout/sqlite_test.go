@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -92,6 +93,54 @@ func TestAppendAndReadHundredEventsInOrder(t *testing.T) {
 		if payload["i"] != i {
 			t.Fatalf("event %d payload = %#v", i, payload)
 		}
+	}
+}
+
+func TestConcurrentAppendSerializesSQLiteWrites(t *testing.T) {
+	ctx := context.Background()
+	st, ro := openStoreRollout(t)
+	sessionID := createSession(t, st, "concurrent")
+
+	const workers = 16
+	const perWorker = 8
+	start := make(chan struct{})
+	errs := make(chan error, workers*perWorker)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		worker := worker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < perWorker; i++ {
+				event, err := UserMessage(sessionID, worker*perWorker+i+1, message.Text(message.RoleUser, "concurrent"))
+				if err != nil {
+					errs <- err
+					continue
+				}
+				event.ID = "evt_concurrent_" + strconv.Itoa(worker) + "_" + strconv.Itoa(i)
+				if err := ro.Append(ctx, event); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent Append: %v", err)
+	}
+
+	count := 0
+	if err := ro.ForEach(ctx, sessionID, func(Event) error {
+		count++
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	if count != workers*perWorker {
+		t.Fatalf("events = %d, want %d", count, workers*perWorker)
 	}
 }
 

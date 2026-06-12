@@ -68,6 +68,8 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite store: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	s := &Store{db: db}
 	if err := s.configure(context.Background()); err != nil {
 		_ = db.Close()
@@ -82,6 +84,7 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) configure(ctx context.Context) error {
 	pragmas := []string{
+		"PRAGMA busy_timeout = 5000",
 		"PRAGMA foreign_keys = ON",
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
