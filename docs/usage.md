@@ -299,6 +299,7 @@ ub 会在每个 user turn 开始前记录文件 checkpoint，并在 `write` / `e
 ub rollout show abc123 | less          # 彩色 pretty-print
 ub rollout show abc123 --json | jq .    # 机器可读
 ub rollout show abc123 --turns 3..5     # 只看第 3-5 轮
+ub rollout show abc123 --limit 100      # 最多输出 100 个事件
 ```
 
 Pretty 输出会展开 `assistant_message` 中的结构化 content block：模型发起工具调用时会显示 `tool_use` 的工具名、调用 id 和 input JSON；工具执行结果继续显示为独立的 `tool_result` 事件。事件类型：`user_message` / `assistant_message` / `tool_result` / `summary` / `usage` / `activity` / `error`。
