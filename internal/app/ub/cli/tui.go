@@ -18,6 +18,7 @@ import (
 	logx "github.com/feimingxliu/ub/internal/pkg/runtime/log"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/permission"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/singleflight"
 )
 
 const resumeSelectSentinel = "latest"
@@ -165,6 +166,7 @@ type tuiAgentRunner struct {
 	planMode             agent.PlanModeController
 	providerCheckMu      sync.Mutex
 	providerChecks       map[string]providerCheck
+	providerCheckGroup   singleflight.Group
 
 	// cachedMessages holds the reconstructed InitialMessages for the loaded
 	// session. Populated lazily by Messages() so we only scan the rollout once
@@ -186,17 +188,15 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, fmt.Errorf("create provider %q: %w", providerName, err)
 	}
-	providerCheckResult := checkProvider(cmd.Context(), providerName, providerCfg)
 	models := mergeModelCandidates(
 		model,
 		configuredProviderModels(providerCfg, ""),
-		providerCheckResult.Models,
 	)
 	mode, err := execution.ParseMode(cfg.ExecutionMode)
 	if err != nil {
 		return nil, err
 	}
-	approvalSetup, err := newApprovalAgentSetup(cmd.Context(), cfg, providerName, model, providers)
+	approvalSetup, err := newApprovalAgentSetupForStartup(cmd.Context(), cfg, providerName, model, providers)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +204,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	autoMemorySetup, err := newAutoMemorySetup(cmd.Context(), cfg, providerName, providerCfg, model, providers)
+	autoMemorySetup, err := newAutoMemorySetupForStartup(cmd.Context(), cfg, providerName, providerCfg, model, providers)
 	if err != nil {
 		return nil, err
 	}
@@ -232,8 +232,6 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 	if err != nil {
 		return nil, err
 	}
-	providerChecks := map[string]providerCheck{}
-	providerChecks[providerCheckKey(providerName, providerCfg)] = providerCheckResult
 	runner := &tuiAgentRunner{
 		cmd:                  cmd,
 		cfg:                  cfg,
@@ -267,7 +265,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		eventTimeout:         effectiveTUIEventTimeout(providerCfg.Timeout),
 		permission:           perm,
 		maxTurns:             cfg.MaxTurns,
-		providerChecks:       providerChecks,
+		providerChecks:       map[string]providerCheck{},
 	}
 	closeTools = false
 	return runner, nil

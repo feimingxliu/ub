@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -680,15 +681,15 @@ func TestTUIRunnerAnswerSideQuestionRejectsTextualToolMarkup(t *testing.T) {
 	}
 }
 
-func TestTUIAgentRunnerInitMergesConfiguredAndDiscoveredModels(t *testing.T) {
-	requested := false
+func TestTUIAgentRunnerInitDefersDiscoveredModelsUntilRefresh(t *testing.T) {
+	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requested = true
+		requests.Add(1)
 		if r.URL.Path != "/models" {
 			t.Fatalf("path = %q, want /models", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[{"id":"remote/model"},{"id":"configured/model"}]}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"remote/model","object":"model","created":0,"owned_by":"test"},{"id":"configured/model","object":"model","created":0,"owned_by":"test"}]}`))
 	}))
 	defer server.Close()
 
@@ -714,13 +715,34 @@ func TestTUIAgentRunnerInitMergesConfiguredAndDiscoveredModels(t *testing.T) {
 	}
 	defer runner.Close()
 
-	if !requested {
-		t.Fatal("provider model list was not requested during initialization")
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("provider model list requests during initialization = %d, want 0", got)
 	}
 	got := strings.Join(runner.Models(), "\n")
-	want := strings.Join([]string{"configured/model", "remote/model"}, "\n")
+	want := "configured/model"
 	if got != want {
 		t.Fatalf("initial models = %s, want %s", got, want)
+	}
+
+	refreshed, err := runner.RefreshModels(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshModels: %v", err)
+	}
+	want = strings.Join([]string{"configured/model", "remote/model"}, "\n")
+	if got := strings.Join(refreshed, "\n"); got != want {
+		t.Fatalf("refreshed models = %s, want %s", got, want)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("provider model list requests after model refresh = %d, want 1", got)
+	}
+	if _, err := runner.RefreshApprovalModels(context.Background()); err != nil {
+		t.Fatalf("RefreshApprovalModels: %v", err)
+	}
+	if _, err := runner.RefreshSmallModels(context.Background()); err != nil {
+		t.Fatalf("RefreshSmallModels: %v", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("provider model list requests after reused refreshes = %d, want 1", got)
 	}
 }
 

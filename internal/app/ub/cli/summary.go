@@ -21,10 +21,18 @@ func newSummarySetup(ctx context.Context, cfg *config.Config, providerName strin
 }
 
 func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, caches ...*providerCache) (summarySetup, error) {
+	return newAutoMemorySetupWithOptions(ctx, cfg, providerName, providerCfg, fallbackModel, true, caches...)
+}
+
+func newAutoMemorySetupForStartup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, caches ...*providerCache) (summarySetup, error) {
+	return newAutoMemorySetupWithOptions(ctx, cfg, providerName, providerCfg, fallbackModel, false, caches...)
+}
+
+func newAutoMemorySetupWithOptions(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, verifySmallModel bool, caches ...*providerCache) (summarySetup, error) {
 	if cfg == nil {
 		return summarySetup{}, nil
 	}
-	model, usesCurrent, err := selectSmallModel(ctx, cfg, providerName, providerCfg, fallbackModel)
+	model, usesCurrent, err := selectSmallModel(ctx, cfg, providerName, providerCfg, fallbackModel, verifySmallModel)
 	if err != nil {
 		return summarySetup{}, err
 	}
@@ -60,12 +68,12 @@ func firstProviderCache(caches []*providerCache) *providerCache {
 	return nil
 }
 
-func selectSmallModel(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string) (string, bool, error) {
+func selectSmallModel(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, verifySmallModel bool) (string, bool, error) {
 	smallModel := strings.TrimSpace(cfg.SmallModel)
 	if smallModel == "" {
 		return strings.TrimSpace(fallbackModel), true, nil
 	}
-	if smallModelAvailable(ctx, providerName, providerCfg, smallModel) {
+	if !verifySmallModel || smallModelAvailable(ctx, providerName, providerCfg, smallModel) {
 		return smallModel, false, nil
 	}
 	return strings.TrimSpace(fallbackModel), true, nil

@@ -27,6 +27,20 @@ func selectProviderModel(ctx context.Context, providerName string, providerCfg c
 	return "", missingModelError(providerName, check)
 }
 
+func selectConfiguredProviderModel(providerName string, providerCfg config.ProviderConfig, model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if model != "" {
+		return model, nil
+	}
+	if configured := firstConfiguredProviderModel(providerCfg); configured != "" {
+		return configured, nil
+	}
+	if !providerRequiresModel(providerCfg.Type) {
+		return "", nil
+	}
+	return "", fmt.Errorf("model required for provider %q: set model or configure providers.%s.models", providerName, providerName)
+}
+
 func firstConfiguredProviderModel(providerCfg config.ProviderConfig) string {
 	if len(providerCfg.Models) == 0 {
 		return ""

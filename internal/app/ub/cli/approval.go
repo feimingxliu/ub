@@ -28,6 +28,19 @@ func newApprovalAgentFromConfig(ctx context.Context, cfg *config.Config, fallbac
 }
 
 func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string, caches ...*providerCache) (approvalAgentSetup, error) {
+	return newApprovalAgentSetupWithOptions(ctx, cfg, fallbackProvider, fallbackModel, approvalSetupOptions{VerifySmallModel: true, AllowRemoteModelSelection: true}, caches...)
+}
+
+func newApprovalAgentSetupForStartup(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string, caches ...*providerCache) (approvalAgentSetup, error) {
+	return newApprovalAgentSetupWithOptions(ctx, cfg, fallbackProvider, fallbackModel, approvalSetupOptions{}, caches...)
+}
+
+type approvalSetupOptions struct {
+	VerifySmallModel          bool
+	AllowRemoteModelSelection bool
+}
+
+func newApprovalAgentSetupWithOptions(ctx context.Context, cfg *config.Config, fallbackProvider, fallbackModel string, opts approvalSetupOptions, caches ...*providerCache) (approvalAgentSetup, error) {
 	if cfg == nil {
 		return approvalAgentSetup{}, nil
 	}
@@ -55,7 +68,7 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 	}
 	if model == "" {
 		smallModel := strings.TrimSpace(cfg.SmallModel)
-		if smallModel != "" && smallModelAvailable(ctx, providerName, providerCfg, smallModel) {
+		if smallModel != "" && (!opts.VerifySmallModel || smallModelAvailable(ctx, providerName, providerCfg, smallModel)) {
 			model = smallModel
 		}
 	}
@@ -63,7 +76,11 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 		model = strings.TrimSpace(fallbackModel)
 	}
 	var err error
-	model, err = selectProviderModel(ctx, providerName, providerCfg, model)
+	if opts.AllowRemoteModelSelection {
+		model, err = selectProviderModel(ctx, providerName, providerCfg, model)
+	} else {
+		model, err = selectConfiguredProviderModel(providerName, providerCfg, model)
+	}
 	if err != nil {
 		if explicitProvider || strings.TrimSpace(cfg.ExecutionMode) == config.ModeAuto {
 			return approvalAgentSetup{}, fmt.Errorf("select approval model: %w", err)

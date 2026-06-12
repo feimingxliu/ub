@@ -45,22 +45,50 @@ func (r *tuiAgentRunner) checkProvider(ctx context.Context, providerName string,
 		return checkProvider(ctx, providerName, providerCfg)
 	}
 	key := providerCheckKey(providerName, providerCfg)
+	if cached, ok := r.cachedProviderCheck(key); ok {
+		return cached
+	}
+
+	value, _, _ := r.providerCheckGroup.Do(key, func() (any, error) {
+		if cached, ok := r.cachedProviderCheck(key); ok {
+			return cached, nil
+		}
+		result := checkProvider(ctx, providerName, providerCfg)
+		r.storeProviderCheck(key, result)
+		return result, nil
+	})
+	if result, ok := value.(providerCheck); ok {
+		return result
+	}
+
+	result := checkProvider(ctx, providerName, providerCfg)
+	r.storeProviderCheck(key, result)
+	return result
+}
+
+func (r *tuiAgentRunner) cachedProviderCheck(key string) (providerCheck, bool) {
+	if r == nil {
+		return providerCheck{}, false
+	}
 	r.providerCheckMu.Lock()
+	defer r.providerCheckMu.Unlock()
+	if r.providerChecks == nil {
+		return providerCheck{}, false
+	}
+	cached, ok := r.providerChecks[key]
+	return cached, ok
+}
+
+func (r *tuiAgentRunner) storeProviderCheck(key string, result providerCheck) {
+	if r == nil {
+		return
+	}
+	r.providerCheckMu.Lock()
+	defer r.providerCheckMu.Unlock()
 	if r.providerChecks == nil {
 		r.providerChecks = map[string]providerCheck{}
 	}
-	if cached, ok := r.providerChecks[key]; ok {
-		r.providerCheckMu.Unlock()
-		return cached
-	}
-	r.providerCheckMu.Unlock()
-
-	result := checkProvider(ctx, providerName, providerCfg)
-
-	r.providerCheckMu.Lock()
 	r.providerChecks[key] = result
-	r.providerCheckMu.Unlock()
-	return result
 }
 
 func providerCheckKey(providerName string, providerCfg config.ProviderConfig) string {
