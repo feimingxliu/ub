@@ -17,7 +17,7 @@
 | 工具 | 用途 | 缺失时影响 |
 |---|---|---|
 | `rg`（ripgrep） | 加速 `grep` 工具 | 自动回退到 Go 内置实现，速度稍慢 |
-| `gopls` | Go LSP 服务 | LSP 工具（`diagnostics` / `references`）对 Go 项目不可用 |
+| `gopls` | Go LSP 服务 | LSP 工具（`diagnostics` / `references` / `hover` / `completion` / `document_symbols` / `rename` / `code_action`）对 Go 项目不可用 |
 | `typescript-language-server` | TypeScript / JavaScript LSP | LSP 工具对 TS/JS 项目不可用 |
 | `npx`（Node.js） | 运行某些基于 npm 的 MCP server | 无法用 `npx -y @some/mcp-server` 方式启动 MCP |
 | `gofumpt` | 代码格式化（开发用） | `make fmt` 回退到 `gofmt` |

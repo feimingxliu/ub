@@ -1,6 +1,6 @@
 # ub — 设计选型文档
 
-> 状态：v0.1 — 与 `requirements.md` 配套。模块名暂定，实现时可微调。
+> 状态：当前实现对齐（2026-06-12）。本文件与 `requirements.md`、`roadmap-v2.md` 共同描述当前产品边界。
 
 ## 1. 总体架构
 
@@ -50,7 +50,7 @@ ub/
 ├── internal/
 │   ├── app/ub/                        # ub 应用层: CLI / agent / TUI
 │   │   ├── cli/                       # cobra 子命令：run / rollout / config / sessions
-│   │   ├── agent/                     # agent loop、prompt 模板、summary
+│   │   ├── agent/                     # Agent/Factory、stream、tool runner、context、activity、summary
 │   │   └── tui/                       # Bubble Tea models 与 view
 │   └── pkg/                           # ub 内部共享库,仍受 Go internal 可见性保护
 │       ├── core/                      # 配置、消息模型、执行模式等基础类型
@@ -60,7 +60,7 @@ ub/
 │       │   └── reasoning/             # reasoning effort 枚举与校验
 │       ├── llm/                       # provider、上下文估算与 LLM 测试支撑
 │       │   ├── provider/
-│       │   │   ├── provider.go        # Provider 接口、ProviderCaps、ModelInfo
+│       │   │   ├── provider.go        # Provider 接口、Caps、Request、Stream、Event
 │       │   │   ├── anthropic/         # 包 anthropic-sdk-go
 │       │   │   ├── openai/            # 包 openai-go
 │       │   │   ├── compat/            # OpenAI 兼容（DeepSeek / Together / vLLM / Ollama /v1 …）
@@ -89,9 +89,12 @@ ub/
 │       │   ├── fs/                    # read / write / edit / multiedit / ls / glob / tool_result
 │       │   ├── plan/                  # plan_write / plan_update / plan_update_step
 │       │   ├── todo/                  # todo_write / todo_update
+│       │   ├── memory/                # remember / recall
 │       │   ├── search/                # grep / glob
 │       │   ├── shell/                 # bash
 │       │   ├── job/                   # job_run / job_output / job_kill
+│       │   ├── task/                  # task 子 agent adapter
+│       │   ├── web/                   # web_search / web_fetch
 │       │   └── mcp/                   # MCP tool adapter
 ├── docs/
 ├── .references/                       # 不入 git
@@ -107,56 +110,75 @@ ub/
 type Agent struct {
     provider provider.Provider
     tools    *tool.Registry
-    perm     *permission.Manager
+    rollout  rollout.Writer
+    model    string
     mode     execution.Mode
-    rollout  *rollout.Writer
-    ctx      *ctxmgr.Manager
-    models   Models // large + small
+    modeFunc func() execution.Mode
+    // 其余字段由 Options 注入: permission、events、summary provider、
+    // context config、prompt config、hooks、memory、file history 等。
 }
 
-func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.User) error {
-    a.rollout.AppendUser(userMsg)
+type Request struct {
+    SessionID      string
+    Turn           int
+    History        []message.Message
+    ContextHistory []message.Message
+    Prompt         string
+}
+
+func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
+    userMsg := message.Text(message.RoleUser, req.Prompt)
+    transcriptMessages := append(clone(req.History), userMsg)
+    contextMessages := append(effectiveContextHistory(req), userMsg)
+    a.append(ctx, req.SessionID, rollout.UserMessage(req.SessionID, req.Turn, userMsg))
 
     turn := 0
     for {
         if maxTurns > 0 && turn >= maxTurns {
             // TUI 可通过 LimitAsker 给一次额外预算；无批准时进入 no-tools 收尾。
-            return a.finalizeWithoutTools(ctx, sess.ID, messages, "tool loop reached max_turns")
+            return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, "tool loop reached max_turns")
         }
 
-        // 1. 准备上下文（含 summary）
-        msgs, err := a.ctx.Prepare(sess.History(), a.models.Large.MaxContext)
-        if err != nil { return err }
+        // 1. 按当前 mode 生成工具 schema，并准备上下文（含 runtime context / summary）
+        tools, err := a.toolDefinitions(a.currentMode())
+        if err != nil { return Result{}, err }
+        prepared, err := a.prepareMessages(ctx, req.SessionID, req.Turn, contextMessages, tools)
+        if err != nil { return Result{}, err }
 
         // 2. 调 LLM（流式）
         stream, err := a.provider.Chat(ctx, provider.Request{
-            Model: a.models.Large,
-            Messages: msgs,
-            Tools: a.tools.Schemas(),
+            Model: a.model,
+            Messages: prepared.requestMessages,
+            Tools: tools,
+            Reasoning: a.reasoning,
         })
-        if err != nil { return err }
+        if err != nil { return Result{}, err }
 
         // 3. 消费流：边收 delta 边推送 UI、收集 tool calls
-        result, err := a.consumeStream(ctx, stream)
-        if err != nil { return err }
-        a.rollout.AppendAssistant(result.Message)
+        consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
+        if err != nil { return Result{}, err }
+        a.append(ctx, req.SessionID, rollout.AssistantMessage(req.SessionID, req.Turn, consumed.message))
 
         // 4. 若没有 tool call → 终止
-        if len(result.ToolCalls) == 0 { return nil }
+        if len(consumed.toolCalls) == 0 { return Result{Text: consumed.text}, nil }
 
-        // 5. 顺序执行 tool calls（带执行模式与权限审批）
-        toolResults := make([]tool.Result, 0, len(result.ToolCalls))
-        for _, call := range result.ToolCalls {
-            toolResult, err := a.runTool(ctx, call)
-            if err != nil {
-                // tool 错误回灌给模型，让它处理
-            }
-            toolResults = append(toolResults, toolResult)
+        // 5. 同一批 tool calls 并发执行，结果按 provider 返回顺序回灌
+        results := make([]indexedResult, len(consumed.toolCalls))
+        g, gctx := errgroup.WithContext(ctx)
+        g.SetLimit(len(consumed.toolCalls))
+        for i, call := range consumed.toolCalls {
+            i, call := i, call
+            g.Go(func() error {
+                results[i] = indexedResult{call: call, result: a.runTool(gctx, req.SessionID, req.Turn, call)}
+                return nil
+            })
         }
+        if err := g.Wait(); err != nil { return Result{}, err }
+        toolResults := appendToolResultsInOrder(ctx, req.SessionID, req.Turn, results, &transcriptMessages, &contextMessages)
         turn++
 
-        if a.loopDetector.Record(result.ToolCalls, toolResults) {
-            return a.finalizeWithoutTools(ctx, sess.ID, messages, "repeated tool loop detected")
+        if loopDetector.Record(consumed.toolCalls, toolResults) {
+            return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, "repeated tool loop detected")
         }
     }
 }
@@ -165,10 +187,10 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 要点：
 - **最大 turn 数**：默认不按固定步数截断；只有配置 `max_turns > 0` 时才启用 hard guard。TUI 触顶时可通过 `LimitAsker` 追加一段预算，否则 agent 会发起一次禁用工具的收尾请求。
 - **执行器生命周期**：`Agent` 是轻量执行器,不是长期状态容器。TUI/headless runner 可以按用户 turn 构造新的 `Agent`,并把 `session_id`、`turn`、`history`、`context_history`、rollout writer、permission manager、tool registry 等外置状态注入进去;不要用 agent 对象池承载对话状态。CLI runtime 使用进程内 provider cache 复用同一 provider config 对应的 provider/client,并用 `agent.Factory` 从共享 Options 模板创建新的主/子 Agent。
-- **并行 tool call**：V1 顺序执行，V2 再考虑并行（要保证写操作串行）
+- **并行 tool call**：当前实现会并发执行同一批 provider tool calls，并按原始顺序把结果写回 history/rollout。写类工具仍通过 preview、permission、TOCTOU 校验和工具自身原子性降低冲突风险；跨工具写同一文件的高级调度仍属于后续深化。
 - **loop detection**：内置基础重复检测；最近窗口内相同 tool-call/result 签名重复超过阈值时，agent 不再继续调用工具，而是发起一次禁用工具的收尾请求。更复杂的跨模式/跨会话策略放到 V2 深化。
 - **取消**：`ctx` 由 TUI 的 Ctrl+C 触发 cancel，provider stream 中断
-- **执行模式**：`mode` 从 CLI / profile / config 注入，影响 write/exec tool 的放行路径；TUI 内模式切换只影响当前进程，不写入 session/rollout
+- **执行模式**：`mode` 从 CLI / profile / config 注入，影响 write/exec/network tool 的放行路径；mode 本身不作为 session 元数据持久化，resume 后使用本次运行的有效 mode。TUI slash 切换和模型发起 plan-mode 转换会更新当前进程状态，并以 `mode` activity 写入 rollout 供审计/恢复显示。
 - **活动流**：Agent 对 provider reasoning、tool lifecycle、permission decision 产生结构化 activity 事件。reasoning 只透传 provider 返回的可展示摘要（Anthropic thinking、OpenAI-compatible `reasoning_content` / `reasoning` / `thinking` 等），不伪造隐藏思维链；TUI 将同一轮连续 reasoning delta 合并成一个可展开 thinking 区域，tool lifecycle 与 permission decision 合并到独立的 tool 区域，两个区域可分别折叠/展开。TUI 参考 opencode 的降噪思路：同一 tool call 用 `tool_use_id` 原地更新，默认只显示动作短标题，工具结果细节不展开到聊天区；`todo_write` / `todo_update` 例外,它们的 tool block 只保留审计摘要,TUI 从稳定 `## Todo` result 抽取并维护一个独立 Todo checklist 区块；同一 session 内 `todo_update` 原地刷新当前 checklist,新的 `todo_write` 视为替换清单并把 standalone checklist 移到当前工具事件附近；`task` 子 agent 没有独立 session,但其 start/done、tool lifecycle、permission 等 display-only activity 会镜像到父 session/turn,携带 `parent_tool_use_id`、`subagent_id`,并把 child tool id 命名空间化为 `subagent:<parent-task>:<child-tool>`;TUI 用 `subagent:` 前缀展示并在恢复 session 时重建这些 activity。子 agent reasoning delta 只走 live activity,不逐片持久化。所有内置工具和 `mcp__<server>__<tool>` 动态工具都必须有稳定可读的 running/done 标签，避免退回不明确的 `Working...`；展开 tool 区域后先展示每个工具的摘要，带详情的 write/edit/multiedit 工具项可通过活动焦点展开 colored unified diff；read/ls/glob/bash/task/MCP 等无文件 diff 的工具展开时按普通文本展示限幅后的 tool result 内容，不把 markdown 列表或普通 `+` / `-` 行当作 diff 着色；bash 会把 `<shell_metadata>` 转成普通 metadata 行；streaming partial output 在最终 done/failed 到达时不被空详情或仅 metadata 的详情覆盖；activity 层再次限幅详情时必须显示 `activity detail truncated` 提示，并在存在 tool result truncation footer 时保留 `full_output_path`；展开详情被当前 TUI 视窗裁剪但数据本身未限幅时，消息区底部显示 `[tool detail clipped: ...]` 提示。恢复 session 时，TUI 从 rollout `tool_result` payload 重建相同的摘要和详情，保留 files/truncation metadata，而不是只从 message history 的纯文本 tool_result 回放。
 - **TUI 消息队列**：同一 session 内 Agent turn 仍保持串行。运行中用户输入普通消息并回车时，TUI 只写入本地 FIFO 队列，不并发调用 Agent；当前 stream 正常关闭后自动取队首启动下一轮。排队消息在真正启动前不写入 rollout，避免被中断或编辑后的草稿污染历史；运行中上下方向键优先进入队列编辑，再退回普通历史输入浏览。`/btw [question]` 是队列例外：TUI 立即启动独立旁路 provider 请求，不取消当前 Agent turn，也不把问题放入主队列。
 - **TUI 启动覆盖**：直接运行 `ub` 打开 TUI 时支持 `--provider <name>` 与 `--model <id>`，走与 `ub chat` 相同的 provider/model 选择规则，只影响本次启动，不写回配置。
@@ -184,7 +206,7 @@ func (a *Agent) Run(ctx context.Context, sess *session.Session, userMsg message.
 type Tool interface {
     Name() string
     Description() string
-    Schema() jsonschema.Definition
+    Schema() *jsonschema.Schema
     Risk() Risk                              // safe / write / exec / network
     Execute(ctx context.Context, args json.RawMessage) (Result, error)
 }
@@ -195,6 +217,14 @@ type Tool interface {
 type PreviewableTool interface {
     Tool
     Preview(ctx context.Context, args json.RawMessage) (Preview, error)
+}
+
+// 可选接口：长时间运行或可增量输出的工具实现它，dispatcher 会把
+// StreamEvent 转成 EventToolPartialOutput 推给 TUI；最终仍返回一个
+// 普通 Result 给模型。
+type StreamingTool interface {
+    Tool
+    ExecuteStream(ctx context.Context, args json.RawMessage, events chan<- StreamEvent) (Result, error)
 }
 
 type Preview struct {
@@ -209,9 +239,14 @@ type FileDiff struct {
 }
 
 type Result struct {
-    Content string                           // 文本结果（回给模型的 tool_result）
-    IsError bool
-    Files   []FileChange                     // 执行后的实际改动摘要（可与 Preview 不完全一致，例如并发修改）
+    Content        string                    // 文本结果（回给模型的 tool_result）
+    IsError        bool
+    Files          []FileChange              // 执行后的实际改动摘要（可与 Preview 不完全一致）
+    FullContent    string                    // 可选完整输出，进入 tooloutput 限幅/落盘
+    Truncated      bool
+    OriginalBytes  int
+    FullOutputPath string
+    Metadata       map[string]string         // query/url/provider/parser 等审计字段，不放 secret
 }
 
 type FileChange struct {
@@ -276,9 +311,12 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 // internal/pkg/llm/provider/provider.go
 type Provider interface {
     Name() string
-    Chat(ctx context.Context, req Request) (Stream, error)
     Caps() Caps
+    Chat(ctx context.Context, req Request) (Stream, error)
 }
+
+// 可选：provider 能按模型返回不同能力时实现。
+func CapsForModel(p Provider, model string) Caps
 
 type Caps struct {
     SupportsTools       bool
@@ -288,14 +326,11 @@ type Caps struct {
     SupportsVision      bool
 }
 
-type ModelInfo struct {
-    ID       string
-    Provider string
-    Caps     Caps
-    Price    Price  // 可选：输入/输出 per-1M-token
-    SupportsReasoning bool
-    SupportedEfforts  []ReasoningEffort
-    DefaultEffort     ReasoningEffort
+type Request struct {
+    Model     string
+    Messages  []message.Message
+    Tools     []ToolDefinition
+    Reasoning *reasoning.Config
 }
 
 type Stream interface {
@@ -306,8 +341,9 @@ type Stream interface {
 
 **双层抽象**（借鉴 codex-rs 的 `model-provider` + `model-provider-info`）：
 - `Provider` 是行为接口
-- `ModelInfo` 是元信息（含 Caps），存配置文件 + 内置默认表
-- reasoning 能力按 `用户配置覆盖 > 内置 ModelInfo 表 > 保守未知模型` 解析；未知模型默认不发送 reasoning 参数
+- `internal/pkg/llm/modelinfo.Info` 是模型元信息（reasoning 能力、effort、context window 等），由配置文件 + 内置默认表合并
+- `Provider.Caps()` 描述 provider 默认能力；`CapsForModel(p, model)` 在 provider 支持时叠加模型级能力
+- reasoning 能力按 `用户配置覆盖 > 内置 modelinfo 表 > 保守未知模型` 解析；未知模型默认不发送 reasoning 参数
 
 **所有 provider 的统一可配置项**（不止 openai-compat）：
 
@@ -657,7 +693,7 @@ UI 流程：
 | Log | `slog` 标准库 | CLI 默认 stderr；TUI 默认 `$XDG_STATE_HOME/ub/ub.log` 或 `~/.local/state/ub/ub.log` |
 | Config | `goccy/go-yaml` + `env` 替换 | |
 | 进程管理 | `os/exec` + 自家 PG 控制 | |
-| LSP | `gopls.dev/protocol` 或自家精简实现 | 仅用 diagnostics/references |
+| LSP | `gopls.dev/protocol` 或自家精简实现 | diagnostics / references / hover / completion / document_symbols / rename / code_action；rename/code_action 只返回建议 |
 | MCP | 自家实现 client（参考 modelcontextprotocol 官方 schema） | Go 官方库不成熟时手写 |
 | 测试 | `testing` + `testify/require` | |
 | 录制 | 自家 vcr（内部包） | |
@@ -741,7 +777,7 @@ $ ub doctor
 │ ✗ openai           api.openai.com              NO_API_KEY│
 │ ✓ vllm-local       localhost:8000/v1           reachable │
 │   └─ models: Qwen2.5-Coder-7B, Llama-3.1-8B              │
-│   └─ tool-capable: Qwen2.5-Coder-7B (per ModelInfo)      │
+│   └─ tool-capable: Qwen2.5-Coder-7B (per modelinfo)      │
 ╰──────────────────────────────────────────────────────────╯
 ╭─ external commands ──────────────────────────────────────╮
 │ ✓ rg            14.1.0                                   │
@@ -776,7 +812,7 @@ Suggested dev profile (use --suggest to print full snippet):
 
 ## 13. 开发里程碑
 
-按 35 个迭代组织，权威来源是 [`roadmap.md`](./roadmap.md)。这里只给版本与 Sprint 的对应关系（与 requirements §6 对齐）：
+V1 的 35 个迭代来源 [`roadmap.md`](./roadmap.md) 已完成并作为历史存档；当前主动演进的权威来源是 [`roadmap-v2.md`](./roadmap-v2.md)。这里保留版本与 Sprint 的对应关系（与 requirements §6 对齐）：
 
 | 版本 | Sprint | 迭代 | 关键交付 |
 |---|---|---|---|
@@ -787,12 +823,12 @@ Suggested dev profile (use --suggest to print full snippet):
 | V1 MVP（Sprint 4） | Sprint 4 | I-27 ~ I-28 | 自动 summary、token 估算 |
 | V1 MVP（Sprint 5） | Sprint 5 | I-29 ~ I-32 | MCP（stdio/http/sse）+ LSP（gopls） |
 | V1.1 收尾 | Sprint 6 | I-33 ~ I-35 | session resume、`ub rollout show`、v0.1.0 release |
-| V2 深化 | — | 未排 | 客户端/服务端拆分（HTTP API）、`/config reload` 热加载、loop detection、并行 tool call、更多 provider、skills/hooks |
+| V2 深化 | — | `roadmap-v2.md` | 已落地 ask、task、memory、plan/todo、multiedit、tool streaming、扩展 LSP、tool_result、web 工具、模型发起 plan mode、full-access；仍在规划事件总线、tracing、provider state/prefix cache、sidecar tool process、prompt builder 深化 |
 
 ## 14. 待办与开放问题
 
 - [ ] TUI 运行指示器（footer spinner + elapsed），细节见 [`tui-animation.md`](./tui-animation.md)
-- [ ] LSP 集成深度：V1 只做 diagnostics + references；rename / code action 留 V2
+- [x] LSP 集成深度：diagnostics / references / hover / completion / document_symbols / rename / code_action 已接入；rename / code_action 仅返回建议，不直接落盘
 - [ ] Token 估算用 tiktoken-go？还是各 provider 自家 SDK 返回的 usage？决策：估算用 `tiktoken-go` 估个大概，准确数靠响应里的 usage 字段后置校正
 - [ ] Windows 支持深度（bash 工具走 PowerShell？job 工具进程组语义不同）。先 Linux/macOS，Windows V2
 - [ ] **已决** 配置语言：YAML 主体，JSON Schema 只用于校验，不再支持 JSON 配置文件

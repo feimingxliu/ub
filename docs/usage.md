@@ -368,8 +368,13 @@ agent 可以用：
 
 - `diagnostics(file?)`：查当前文件（或整个 workspace）的错误 / 警告
 - `references(symbol, path?)` 或 `references(file, line, col)`：找符号引用
+- `hover(file, line, col)`：查看当前位置说明
+- `completion(file, line, col, max?)`：获取补全候选
+- `document_symbols(file)`：列出文档符号树
+- `rename(file, line, col, new_name)`：返回 rename 建议编辑，不直接写盘
+- `code_action(file, line, col, end_line?, end_col?)`：列出 code action，不执行 action
 
-ub 在 write / edit 工具执行后会主动给 LSP 发 `didChange`，保证 diagnostics 反映最新内容。
+ub 在 write / edit / multiedit 工具执行后会主动给 LSP 发 `didChange`，保证 diagnostics 反映最新内容。`rename` 和 `code_action` 只提供建议，真正修改仍由 agent 通过 edit / multiedit 走 diff 与权限流程。
 
 ## 10. Plan-then-execute
 
