@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,13 +32,10 @@ func TestDoctorChecksCompatProviderAndCommands(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor", "--plain"})
+	tc := newTestRootCommand("doctor", "--plain")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
 	output := out.String()
@@ -105,13 +101,10 @@ mcp_servers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor", "--plain"})
+	tc := newTestRootCommand("doctor", "--plain")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
 	output := out.String()
@@ -139,13 +132,10 @@ func TestDoctorUsesDevProfile(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--dev", "doctor", "--plain"})
+	tc := newTestRootCommand("--dev", "doctor", "--plain")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor --dev: %v", err)
 	}
 	if !strings.Contains(out.String(), "dev-model") {
@@ -161,24 +151,18 @@ func TestDoctorPlainDisablesStyledOutput(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	styled := &bytes.Buffer{}
-	cmd.SetOut(styled)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor"})
-	if err := cmd.Execute(); err != nil {
+	tc := newTestRootCommand("doctor")
+	styled := tc.out
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor styled: %v", err)
 	}
 	if !strings.Contains(styled.String(), "\x1b[") {
 		t.Fatalf("styled doctor output has no ANSI sequences:\n%s", styled.String())
 	}
 
-	cmd = newRootCmd()
-	plain := &bytes.Buffer{}
-	cmd.SetOut(plain)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor", "--plain"})
-	if err := cmd.Execute(); err != nil {
+	tc = newTestRootCommand("doctor", "--plain")
+	plain := tc.out
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor plain: %v", err)
 	}
 	if strings.Contains(plain.String(), "\x1b[") {
@@ -194,13 +178,10 @@ func TestDoctorJSONReportsMachineReadableOutput(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor", "--json"})
+	tc := newTestRootCommand("doctor", "--json")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor --json: %v", err)
 	}
 	var report struct {
@@ -250,13 +231,10 @@ func TestDoctorOpenAIMissingKeyDoesNotProbe(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor", "--plain"})
+	tc := newTestRootCommand("doctor", "--plain")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor: %v", err)
 	}
 	if probed {
@@ -272,13 +250,10 @@ func TestDoctorSuggest(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "xdg"))
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"doctor", "--plain", "--suggest"})
+	tc := newTestRootCommand("doctor", "--plain", "--suggest")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("doctor --suggest: %v", err)
 	}
 	for _, want := range []string{"suggested dev profile", "profiles:", "dev:", "execution_mode: plan"} {

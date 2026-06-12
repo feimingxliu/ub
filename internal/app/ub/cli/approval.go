@@ -7,7 +7,6 @@ import (
 
 	"github.com/feimingxliu/ub/internal/pkg/core/config"
 	"github.com/feimingxliu/ub/internal/pkg/core/reasoning"
-	"github.com/feimingxliu/ub/internal/pkg/llm/modelinfo"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/approval"
 )
 
@@ -74,21 +73,21 @@ func newApprovalAgentSetup(ctx context.Context, cfg *config.Config, fallbackProv
 	if model == "" {
 		return approvalAgentSetup{}, nil
 	}
+	role := resolveModelRole(modelRoleApproval, providerName, providerCfg, model, cfg.ApprovalAgent.Reasoning)
 	p, err := cachedProvider(firstProviderCache(caches), providerName, providerCfg)
 	if err != nil {
 		return approvalAgentSetup{}, fmt.Errorf("create approval provider %q: %w", providerName, err)
 	}
-	reasoningCfg := modelinfo.RequestConfig(cfg.ApprovalAgent.Reasoning, modelinfo.Resolve(providerName, providerCfg, model))
-	agent, err := approval.NewProviderAgentWithReasoning(p, model, reasoningCfg)
+	agent, err := approval.NewProviderAgentWithReasoning(p, role.Model, role.cloneReasoning())
 	if err != nil {
 		return approvalAgentSetup{}, err
 	}
 	return approvalAgentSetup{
 		Agent:          agent,
-		ProviderName:   providerName,
-		ProviderConfig: providerCfg,
-		Model:          model,
-		Models:         configuredProviderModels(providerCfg, model),
-		Reasoning:      reasoningCfg,
+		ProviderName:   role.ProviderName,
+		ProviderConfig: role.ProviderConfig,
+		Model:          role.Model,
+		Models:         configuredProviderModels(role.ProviderConfig, role.Model),
+		Reasoning:      role.cloneReasoning(),
 	}, nil
 }

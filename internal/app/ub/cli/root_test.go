@@ -1,18 +1,14 @@
 package cli
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 )
 
 func TestRootHelp(t *testing.T) {
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(out)
-	cmd.SetArgs([]string{"--help"})
-	if err := cmd.Execute(); err != nil {
+	tc := newTestRootCommand("--help")
+	out := tc.out
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("--help: %v", err)
 	}
 	if !strings.Contains(out.String(), "ub") {
@@ -45,11 +41,8 @@ func TestVersionNonEmpty(t *testing.T) {
 }
 
 func TestRunWithoutPromptErrors(t *testing.T) {
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"run"})
-	err := cmd.Execute()
+	tc := newTestRootCommand("run")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatalf("expected run without prompt to fail")
 	}

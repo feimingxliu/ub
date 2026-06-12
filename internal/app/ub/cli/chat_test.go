@@ -113,6 +113,28 @@ func TestReadChatHistoryRestoresSummaryContextMessages(t *testing.T) {
 	}
 }
 
+func TestChatSessionStateCloseIsIdempotent(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "ub.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	ro, err := rollout.New(st)
+	if err != nil {
+		t.Fatalf("New rollout: %v", err)
+	}
+	state := &chatSessionState{store: st, rollout: ro}
+
+	if err := state.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if state.store != nil || state.rollout != nil {
+		t.Fatalf("Close left state resources open: store=%v rollout=%v", state.store, state.rollout)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
 func TestRunStartupCleanupPrunesOldSessions(t *testing.T) {
 	temp := t.TempDir()
 	writeChatConfig(t, temp, `default_model: fake/test-model
@@ -252,13 +274,10 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "ping"})
+	tc := newTestRootCommand("chat", "--provider", "fake", "ping")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat: %v", err)
 	}
 	if got := out.String(); got != "pong" {
@@ -278,14 +297,11 @@ func TestChatReadsPromptFromStdin(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetIn(strings.NewReader("hello from stdin"))
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "-"})
+	tc := newTestRootCommand("chat", "--provider", "fake", "-")
+	out := tc.out
+	tc.cmd.SetIn(strings.NewReader("hello from stdin"))
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat stdin: %v", err)
 	}
 	if got := out.String(); got != "stdin-ok" {
@@ -310,13 +326,10 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "second", "hello"})
+	tc := newTestRootCommand("chat", "--provider", "second", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat provider override: %v", err)
 	}
 	if got := out.String(); got != "second" {
@@ -337,12 +350,8 @@ func TestChatRejectsToolCalls(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "hello"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("chat", "--provider", "fake", "hello")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected tool call error")
 	}
@@ -363,13 +372,10 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "hello"})
+	tc := newTestRootCommand("chat", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat inferred provider: %v", err)
 	}
 	if got := out.String(); got != "inferred" {
@@ -395,13 +401,10 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "hello"})
+	tc := newTestRootCommand("chat", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat default provider: %v", err)
 	}
 	if got := out.String(); got != "zed" {
@@ -419,12 +422,9 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "hello"})
+	tc := newTestRootCommand("chat", "hello")
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat first provider fallback: %v", err)
 	}
 	if len(captureRequests) != 1 {
@@ -445,12 +445,9 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "hello"})
+	tc := newTestRootCommand("chat", "hello")
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat inferred provider: %v", err)
 	}
 	if len(captureRequests) != 1 {
@@ -476,12 +473,9 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "vibecoding", "hello"})
+	tc := newTestRootCommand("chat", "--provider", "vibecoding", "hello")
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat provider override: %v", err)
 	}
 	if len(captureRequests) != 1 {
@@ -510,12 +504,9 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "hello"})
+	tc := newTestRootCommand("chat", "hello")
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat reasoning: %v", err)
 	}
 	if len(captureRequests) != 1 {
@@ -547,13 +538,10 @@ profiles:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--dev", "chat", "hello"})
+	tc := newTestRootCommand("--dev", "chat", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat dev profile: %v", err)
 	}
 	if got := out.String(); got != "dev" {
@@ -571,11 +559,8 @@ providers:
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "first"})
-	if err := cmd.Execute(); err != nil {
+	tc := newTestRootCommand("chat", "first")
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("first chat: %v", err)
 	}
 	sessions := readOnlySessions(t, temp)
@@ -585,12 +570,9 @@ providers:
 	sessionID := sessions[0].ID
 
 	captureRequests = nil
-	cmd = newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--session", sessionID, "second"})
-	if err := cmd.Execute(); err != nil {
+	tc = newTestRootCommand("chat", "--session", sessionID, "second")
+	out := tc.out
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("continued chat: %v", err)
 	}
 	if got := out.String(); got != "captured" {
@@ -630,11 +612,8 @@ func TestChatNewCreatesDistinctSession(t *testing.T) {
 	t.Chdir(temp)
 
 	for _, prompt := range []string{"first", "second"} {
-		cmd := newRootCmd()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"chat", "--provider", "fake", "--new", prompt})
-		if err := cmd.Execute(); err != nil {
+		tc := newTestRootCommand("chat", "--provider", "fake", "--new", prompt)
+		if err := tc.cmd.Execute(); err != nil {
 			t.Fatalf("chat --new %q: %v", prompt, err)
 		}
 	}
@@ -652,20 +631,14 @@ func TestChatRejectsSessionErrors(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "--session", "missing", "hello"})
-	err := cmd.Execute()
+	tc := newTestRootCommand("chat", "--provider", "fake", "--session", "missing", "hello")
+	err := tc.cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "session") || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("missing session error = %v", err)
 	}
 
-	cmd = newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "--session", "s1", "--new", "hello"})
-	err = cmd.Execute()
+	tc = newTestRootCommand("chat", "--provider", "fake", "--session", "s1", "--new", "hello")
+	err = tc.cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "cannot use --new with --session") {
 		t.Fatalf("conflict error = %v", err)
 	}
@@ -676,11 +649,8 @@ func TestChatProviderMissingError(t *testing.T) {
 	writeChatConfig(t, temp, `providers: {}`)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "missing", "hello"})
-	err := cmd.Execute()
+	tc := newTestRootCommand("chat", "--provider", "missing", "hello")
+	err := tc.cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "provider") || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("provider missing error = %v", err)
 	}
@@ -707,13 +677,10 @@ func TestChatWithAnthropicProvider(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "anthropic", "--model", "claude-test", "hello"})
+	tc := newTestRootCommand("chat", "--provider", "anthropic", "--model", "claude-test", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat anthropic: %v", err)
 	}
 	if got := out.String(); got != "anthropic-ok" {
@@ -739,13 +706,10 @@ func TestChatWithOpenAIProvider(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "openai", "--model", "gpt-test", "hello"})
+	tc := newTestRootCommand("chat", "--provider", "openai", "--model", "gpt-test", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat openai: %v", err)
 	}
 	if got := out.String(); got != "openai-ok" {
@@ -770,13 +734,10 @@ func TestChatWithCompatProvider(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "compat", "--model", "local-test", "hello"})
+	tc := newTestRootCommand("chat", "--provider", "compat", "--model", "local-test", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat compat: %v", err)
 	}
 	if got := out.String(); got != "compat-ok" {
@@ -812,13 +773,10 @@ func TestChatSelectsFirstProviderModelWhenModelUnset(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "compat", "hello"})
+	tc := newTestRootCommand("chat", "--provider", "compat", "hello")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat compat without model: %v", err)
 	}
 	if got := out.String(); got != "fallback-ok" {
@@ -844,13 +802,10 @@ func TestChatWritesSessionAndRolloutEvents(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "hello rollout"})
+	tc := newTestRootCommand("chat", "--provider", "fake", "hello rollout")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("chat: %v", err)
 	}
 	if got := out.String(); got != "pong" {
@@ -879,12 +834,8 @@ func TestChatWritesProviderErrorEvent(t *testing.T) {
 `)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "hello"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("chat", "--provider", "fake", "hello")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected chat error")
 	}
@@ -934,11 +885,8 @@ func TestChatErrorUpdatesSessionUpdatedAt(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"chat", "--provider", "fake", "--session", "sess_error", "hello"})
-	if err := cmd.Execute(); err == nil {
+	tc := newTestRootCommand("chat", "--provider", "fake", "--session", "sess_error", "hello")
+	if err := tc.cmd.Execute(); err == nil {
 		t.Fatal("expected chat error")
 	}
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -24,13 +23,10 @@ func TestSessionsListEmpty(t *testing.T) {
 	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "ls"})
+	tc := newTestRootCommand("sessions", "ls")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions ls: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "no sessions" {
@@ -71,13 +67,10 @@ func TestSessionsDeleteRemovesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "rm", "current"})
+	tc := newTestRootCommand("sessions", "rm", "current")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions rm: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "deleted current" {
@@ -103,12 +96,8 @@ func TestSessionsDeleteMissingSession(t *testing.T) {
 	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "delete", "missing"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("sessions", "delete", "missing")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected missing session error")
 	}
@@ -126,12 +115,8 @@ func TestSessionsClearRequiresYes(t *testing.T) {
 	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "clear"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("sessions", "clear")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected confirmation error")
 	}
@@ -177,13 +162,10 @@ func TestSessionsClearDeletesCurrentWorkspaceOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "clear", "--yes"})
+	tc := newTestRootCommand("sessions", "clear", "--yes")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions clear: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "deleted 2 sessions" {
@@ -242,13 +224,10 @@ func TestSessionsClearAllDeletesEveryWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "clear", "--all", "--yes"})
+	tc := newTestRootCommand("sessions", "clear", "--all", "--yes")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions clear --all: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "deleted 3 sessions" {
@@ -276,12 +255,8 @@ func TestSessionsClearAllRequiresYes(t *testing.T) {
 	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "clear", "--all"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("sessions", "clear", "--all")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected confirmation error")
 	}
@@ -326,13 +301,10 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "ls"})
+	tc := newTestRootCommand("sessions", "ls")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions ls: %v", err)
 	}
 	got := out.String()
@@ -383,13 +355,10 @@ func TestSessionsListAllGroupsByWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "ls", "--all"})
+	tc := newTestRootCommand("sessions", "ls", "--all")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions ls --all: %v", err)
 	}
 	got := out.String()
@@ -463,13 +432,10 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "search", "needle"})
+	tc := newTestRootCommand("sessions", "search", "needle")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions search: %v", err)
 	}
 	got := out.String()
@@ -497,13 +463,10 @@ func TestSessionsSearchNoMatches(t *testing.T) {
 	setSessionTestHomes(t, temp)
 	t.Chdir(workspace)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "search", "missing"})
+	tc := newTestRootCommand("sessions", "search", "missing")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions search: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "no matches" {
@@ -554,13 +517,10 @@ func TestSessionsListUsesGitRootWorkspace(t *testing.T) {
 	}
 
 	t.Chdir(subdir)
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"sessions", "ls"})
+	tc := newTestRootCommand("sessions", "ls")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("sessions ls: %v", err)
 	}
 	if !strings.Contains(out.String(), "root-session") {

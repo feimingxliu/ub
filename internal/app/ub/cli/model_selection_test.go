@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/feimingxliu/ub/internal/pkg/core/config"
+	"github.com/feimingxliu/ub/internal/pkg/core/reasoning"
 )
 
 func TestSelectProviderModelUsesAnthropicModels(t *testing.T) {
@@ -48,5 +49,43 @@ func TestSelectProviderModelRequiresModelWhenListUnavailable(t *testing.T) {
 	}, "")
 	if err == nil || !strings.Contains(err.Error(), "model required") {
 		t.Fatalf("error = %v, want missing model error", err)
+	}
+}
+
+func TestResolveMainModelRoleBuildsCapabilityReasoningAndLimit(t *testing.T) {
+	cfg := &config.Config{
+		DefaultProvider: "fake",
+		DefaultModel:    "main/model",
+		Reasoning:       reasoning.Config{Effort: reasoning.EffortHigh},
+		Providers: map[string]config.ProviderConfig{
+			"fake": {
+				Type: "fake",
+				Models: map[string]config.ModelConfig{
+					"main/model": {
+						SupportsReasoning: true,
+						SupportedEfforts:  []reasoning.Effort{reasoning.EffortLow, reasoning.EffortHigh},
+						DefaultEffort:     reasoning.EffortLow,
+						MaxContextTokens:  12345,
+					},
+				},
+			},
+		},
+	}
+
+	role, err := resolveMainModelRole(context.Background(), cfg, "", "")
+	if err != nil {
+		t.Fatalf("resolveMainModelRole: %v", err)
+	}
+	if role.Role != modelRoleMain || role.ProviderName != "fake" || role.Model != "main/model" {
+		t.Fatalf("role identity = %#v", role)
+	}
+	if role.MaxContextTokens != 12345 || role.Info.MaxContextTokens != 12345 {
+		t.Fatalf("max context = role %d info %d, want 12345", role.MaxContextTokens, role.Info.MaxContextTokens)
+	}
+	if role.Reasoning == nil || role.Reasoning.Effort != reasoning.EffortHigh {
+		t.Fatalf("reasoning = %#v, want high", role.Reasoning)
+	}
+	if got := strings.Join(role.Efforts, ","); got != "none,low,high" {
+		t.Fatalf("efforts = %q", got)
 	}
 }

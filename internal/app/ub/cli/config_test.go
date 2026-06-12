@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,13 +14,10 @@ func TestConfigShowPrintsDefaultYAML(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "xdg"))
 	t.Chdir(filepath.Join(temp))
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"config", "show"})
+	tc := newTestRootCommand("config", "show")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("config show: %v", err)
 	}
 
@@ -50,13 +46,10 @@ func TestConfigShowRedactsSecrets(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"config", "show"})
+	tc := newTestRootCommand("config", "show")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("config show: %v", err)
 	}
 	if strings.Contains(out.String(), "sk-real-key") {
@@ -85,13 +78,10 @@ profiles:
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--dev", "--mode", "auto", "config", "show"})
+	tc := newTestRootCommand("--dev", "--mode", "auto", "config", "show")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("config show --dev: %v", err)
 	}
 	if !strings.Contains(out.String(), "default_model: fake/dev") {
@@ -107,12 +97,8 @@ func TestConfigShowRejectsProfileAndDevTogether(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "xdg"))
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"--profile", "prod", "--dev", "config", "show"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("--profile", "prod", "--dev", "config", "show")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected conflict error")
 	}
@@ -126,13 +112,10 @@ func TestConfigPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "empty-xdg"))
 	t.Chdir(temp)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"config", "path"})
+	tc := newTestRootCommand("config", "path")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("config path empty: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "(no config files loaded; using built-in defaults)" {
@@ -149,13 +132,10 @@ func TestConfigPath(t *testing.T) {
 	}
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
-	cmd = newRootCmd()
-	out.Reset()
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"config", "path"})
+	tc = newTestRootCommand("config", "path")
+	out = tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("config path with file: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != configPath {

@@ -12,20 +12,18 @@ import (
 )
 
 func TestRunRendersErrorWithoutUsage(t *testing.T) {
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	code := Run([]string{"run"}, out, errOut)
-	if code == 0 {
+	result := runCLITest("run")
+	if result.code == 0 {
 		t.Fatal("Run(run) returned success, want failure")
 	}
-	if !strings.Contains(errOut.String(), "error:") || !strings.Contains(errOut.String(), "prompt required") {
-		t.Fatalf("stderr missing rendered error:\n%s", errOut.String())
+	if !strings.Contains(result.err.String(), "error:") || !strings.Contains(result.err.String(), "prompt required") {
+		t.Fatalf("stderr missing rendered error:\n%s", result.err.String())
 	}
-	if strings.Contains(errOut.String(), "Usage:") {
-		t.Fatalf("stderr should not contain usage:\n%s", errOut.String())
+	if strings.Contains(result.err.String(), "Usage:") {
+		t.Fatalf("stderr should not contain usage:\n%s", result.err.String())
 	}
-	if out.Len() != 0 {
-		t.Fatalf("stdout = %q, want empty", out.String())
+	if result.out.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", result.out.String())
 	}
 }
 
@@ -42,13 +40,11 @@ providers:
 `)
 	t.Chdir(temp)
 
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	code := Run([]string{"run", "--provider", "fake", "-p", "hi"}, out, errOut)
-	if code != 0 {
-		t.Fatalf("Run(run -p) code = %d, stderr:\n%s", code, errOut.String())
+	result := runCLITest("run", "--provider", "fake", "-p", "hi")
+	if result.code != 0 {
+		t.Fatalf("Run(run -p) code = %d, stderr:\n%s", result.code, result.err.String())
 	}
-	if got := out.String(); got != "done" {
+	if got := result.out.String(); got != "done" {
 		t.Fatalf("stdout = %q, want done", got)
 	}
 }
@@ -66,39 +62,33 @@ providers:
 `)
 	t.Chdir(temp)
 
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	code := Run([]string{"--mode", "plan", "run", "--provider", "fake", "-p", "hi"}, out, errOut)
-	if code != 0 {
-		t.Fatalf("Run(--mode plan run -p) code = %d, stderr:\n%s", code, errOut.String())
+	result := runCLITest("--mode", "plan", "run", "--provider", "fake", "-p", "hi")
+	if result.code != 0 {
+		t.Fatalf("Run(--mode plan run -p) code = %d, stderr:\n%s", result.code, result.err.String())
 	}
-	if got := out.String(); got != "plan-ok" {
+	if got := result.out.String(); got != "plan-ok" {
 		t.Fatalf("stdout = %q, want plan-ok", got)
 	}
 }
 
 func TestRunHelpSucceeds(t *testing.T) {
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	code := Run([]string{"--help"}, out, errOut)
-	if code != 0 {
-		t.Fatalf("Run(--help) code = %d, stderr:\n%s", code, errOut.String())
+	result := runCLITest("--help")
+	if result.code != 0 {
+		t.Fatalf("Run(--help) code = %d, stderr:\n%s", result.code, result.err.String())
 	}
-	if !strings.Contains(out.String(), "ub") {
-		t.Fatalf("help output missing program name:\n%s", out.String())
+	if !strings.Contains(result.out.String(), "ub") {
+		t.Fatalf("help output missing program name:\n%s", result.out.String())
 	}
 }
 
 func TestRunInvalidLogLevel(t *testing.T) {
 	t.Setenv("UB_LOG_LEVEL", "verbose")
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	code := Run([]string{"--help"}, out, errOut)
-	if code == 0 {
+	result := runCLITest("--help")
+	if result.code == 0 {
 		t.Fatal("Run with invalid log level returned success")
 	}
-	if !strings.Contains(errOut.String(), "invalid UB_LOG_LEVEL") {
-		t.Fatalf("stderr missing invalid level:\n%s", errOut.String())
+	if !strings.Contains(result.err.String(), "invalid UB_LOG_LEVEL") {
+		t.Fatalf("stderr missing invalid level:\n%s", result.err.String())
 	}
 }
 
@@ -135,20 +125,18 @@ func TestRunDebugLogsToStderrAndKeepsConfigStdoutYAML(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "xdg"))
 	t.Chdir(filepath.Join(temp, "repo"))
 
-	out := &bytes.Buffer{}
-	errOut := &bytes.Buffer{}
-	code := Run([]string{"config", "show"}, out, errOut)
-	if code != 0 {
-		t.Fatalf("Run(config show) code = %d, stderr:\n%s", code, errOut.String())
+	result := runCLITest("config", "show")
+	if result.code != 0 {
+		t.Fatalf("Run(config show) code = %d, stderr:\n%s", result.code, result.err.String())
 	}
-	if !strings.Contains(strings.ToLower(errOut.String()), "debug") {
-		t.Fatalf("stderr missing debug log:\n%s", errOut.String())
+	if !strings.Contains(strings.ToLower(result.err.String()), "debug") {
+		t.Fatalf("stderr missing debug log:\n%s", result.err.String())
 	}
 	var decoded map[string]any
-	if err := yaml.Unmarshal(out.Bytes(), &decoded); err != nil {
-		t.Fatalf("stdout is not YAML:\n%s\nerr: %v", out.String(), err)
+	if err := yaml.Unmarshal(result.out.Bytes(), &decoded); err != nil {
+		t.Fatalf("stdout is not YAML:\n%s\nerr: %v", result.out.String(), err)
 	}
 	if _, ok := decoded["context"]; !ok {
-		t.Fatalf("stdout missing context:\n%s", out.String())
+		t.Fatalf("stdout missing context:\n%s", result.out.String())
 	}
 }

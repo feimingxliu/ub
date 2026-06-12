@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/pkg/core/config"
+	"github.com/feimingxliu/ub/internal/pkg/core/reasoning"
 	"github.com/feimingxliu/ub/internal/pkg/llm/provider"
 )
 
@@ -16,7 +17,7 @@ type summarySetup struct {
 }
 
 func newSummarySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, caches ...*providerCache) (summarySetup, error) {
-	return newProviderModelSetup(ctx, providerName, providerCfg, strings.TrimSpace(fallbackModel), true, "summary", firstProviderCache(caches))
+	return newProviderModelSetup(ctx, modelRoleSummary, providerName, providerCfg, strings.TrimSpace(fallbackModel), true, "summary", firstProviderCache(caches))
 }
 
 func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName string, providerCfg config.ProviderConfig, fallbackModel string, caches ...*providerCache) (summarySetup, error) {
@@ -27,10 +28,10 @@ func newAutoMemorySetup(ctx context.Context, cfg *config.Config, providerName st
 	if err != nil {
 		return summarySetup{}, err
 	}
-	return newProviderModelSetup(ctx, providerName, providerCfg, model, usesCurrent, "auto memory", firstProviderCache(caches))
+	return newProviderModelSetup(ctx, modelRoleAutoMemory, providerName, providerCfg, model, usesCurrent, "auto memory", firstProviderCache(caches))
 }
 
-func newProviderModelSetup(ctx context.Context, providerName string, providerCfg config.ProviderConfig, model string, usesCurrent bool, purpose string, cache *providerCache) (summarySetup, error) {
+func newProviderModelSetup(ctx context.Context, role modelRole, providerName string, providerCfg config.ProviderConfig, model string, usesCurrent bool, purpose string, cache *providerCache) (summarySetup, error) {
 	model, err := selectProviderModel(ctx, providerName, providerCfg, model)
 	if err != nil {
 		return summarySetup{}, fmt.Errorf("select %s model: %w", purpose, err)
@@ -38,13 +39,14 @@ func newProviderModelSetup(ctx context.Context, providerName string, providerCfg
 	if strings.TrimSpace(model) == "" {
 		return summarySetup{}, nil
 	}
+	resolved := resolveModelRole(role, providerName, providerCfg, model, reasoning.Config{})
 	p, err := cachedProvider(cache, providerName, providerCfg)
 	if err != nil {
 		return summarySetup{}, fmt.Errorf("create %s provider %q: %w", purpose, providerName, err)
 	}
 	return summarySetup{
 		Provider:         p,
-		Model:            model,
+		Model:            resolved.Model,
 		UsesCurrentModel: usesCurrent,
 	}, nil
 }

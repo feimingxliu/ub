@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 type rolloutShowOptions struct {
 	JSON  bool
 	Turns string
+	Limit int
 }
 
 func newRolloutCmd() *cobra.Command {
@@ -40,6 +42,7 @@ func newRolloutCmd() *cobra.Command {
 	}
 	showCmd.Flags().BoolVar(&opts.JSON, "json", false, "print raw rollout events as JSONL")
 	showCmd.Flags().StringVar(&opts.Turns, "turns", "", "filter turns, for example 5..10")
+	showCmd.Flags().IntVar(&opts.Limit, "limit", 0, "maximum events to print after filtering (0 means all)")
 	cmd.AddCommand(showCmd)
 	return cmd
 }
@@ -52,6 +55,9 @@ func runRolloutShow(cmd *cobra.Command, sessionID string, opts rolloutShowOption
 	turns, err := parseTurnFilter(opts.Turns)
 	if err != nil {
 		return err
+	}
+	if opts.Limit < 0 {
+		return fmt.Errorf("--limit must be non-negative")
 	}
 	path, err := store.DefaultPath()
 	if err != nil {
@@ -75,20 +81,17 @@ func runRolloutShow(cmd *cobra.Command, sessionID string, opts rolloutShowOption
 		return err
 	}
 
-	var events []rollout.Event
-	if err := ro.ForEach(cmd.Context(), sessionID, func(event rollout.Event) error {
-		if turns.include(event.Turn) {
-			events = append(events, event)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
 	if opts.JSON {
-		return writeRolloutJSONL(cmd.OutOrStdout(), events)
+		return writeRolloutShowJSONL(cmd.Context(), cmd.OutOrStdout(), ro, sessionID, turns, opts.Limit)
 	}
-	return writeRolloutPretty(cmd.OutOrStdout(), *sess, events)
+	return writeRolloutShowPretty(cmd.Context(), cmd.OutOrStdout(), *sess, ro, sessionID, turns, opts.Limit)
+}
+
+var errRolloutShowDone = errors.New("rollout show done")
+
+type rolloutShowReader interface {
+	ForEach(context.Context, string, func(rollout.Event) error) error
+	ForEachFromTurn(context.Context, string, int, func(rollout.Event) error) error
 }
 
 type turnFilter struct {
@@ -161,6 +164,58 @@ func (f turnFilter) include(turn int) bool {
 	return true
 }
 
+func (f turnFilter) after(turn int) bool {
+	return f.set && f.end > 0 && turn > f.end
+}
+
+func forEachRolloutShowEvent(ctx context.Context, reader rolloutShowReader, sessionID string, turns turnFilter, limit int, fn func(rollout.Event) error) error {
+	if reader == nil {
+		return fmt.Errorf("rollout reader is nil")
+	}
+	if limit < 0 {
+		return fmt.Errorf("--limit must be non-negative")
+	}
+	if fn == nil {
+		return fmt.Errorf("rollout show callback is nil")
+	}
+	count := 0
+	visit := func(event rollout.Event) error {
+		if turns.after(event.Turn) {
+			return errRolloutShowDone
+		}
+		if !turns.include(event.Turn) {
+			return nil
+		}
+		if err := fn(event); err != nil {
+			return err
+		}
+		count++
+		if limit > 0 && count >= limit {
+			return errRolloutShowDone
+		}
+		return nil
+	}
+
+	var err error
+	if turns.start > 0 {
+		err = reader.ForEachFromTurn(ctx, sessionID, turns.start, visit)
+	} else {
+		err = reader.ForEach(ctx, sessionID, visit)
+	}
+	if errors.Is(err, errRolloutShowDone) {
+		return nil
+	}
+	return err
+}
+
+func writeRolloutShowJSONL(ctx context.Context, w io.Writer, reader rolloutShowReader, sessionID string, turns turnFilter, limit int) error {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	return forEachRolloutShowEvent(ctx, reader, sessionID, turns, limit, func(event rollout.Event) error {
+		return enc.Encode(event)
+	})
+}
+
 func writeRolloutJSONL(w io.Writer, events []rollout.Event) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
@@ -172,48 +227,86 @@ func writeRolloutJSONL(w io.Writer, events []rollout.Event) error {
 	return nil
 }
 
+func writeRolloutShowPretty(ctx context.Context, w io.Writer, sess store.Session, reader rolloutShowReader, sessionID string, turns turnFilter, limit int) error {
+	style, err := writeRolloutPrettyHeader(w, sess)
+	if err != nil {
+		return err
+	}
+	count := 0
+	err = forEachRolloutShowEvent(ctx, reader, sessionID, turns, limit, func(event rollout.Event) error {
+		if err := writeRolloutPrettyEvent(w, style, event); err != nil {
+			return err
+		}
+		count++
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return writeRolloutPrettyEmpty(w)
+	}
+	return nil
+}
+
 func writeRolloutPretty(w io.Writer, sess store.Session, events []rollout.Event) error {
-	style := newRolloutStyle(w)
-	if _, err := fmt.Fprintf(w, "%s %s\n", style.header("session"), sess.ID); err != nil {
+	style, err := writeRolloutPrettyHeader(w, sess)
+	if err != nil {
 		return err
-	}
-	if _, err := fmt.Fprintf(w, "workspace: %s\n", sess.Workspace); err != nil {
-		return err
-	}
-	if sess.Title != "" {
-		if _, err := fmt.Fprintf(w, "title: %s\n", sess.Title); err != nil {
-			return err
-		}
-	}
-	if sess.Model != "" {
-		if _, err := fmt.Fprintf(w, "model: %s\n", sess.Model); err != nil {
-			return err
-		}
-	}
-	if !sess.UpdatedAt.IsZero() {
-		if _, err := fmt.Fprintf(w, "updated: %s\n", sess.UpdatedAt.Local().Format(time.RFC3339)); err != nil {
-			return err
-		}
 	}
 	if len(events) == 0 {
-		_, err := fmt.Fprintln(w, "\n(no events)")
-		return err
+		return writeRolloutPrettyEmpty(w)
 	}
 	for _, event := range events {
-		if _, err := fmt.Fprintf(
-			w, "\n%s %d  %s  %s\n",
-			style.header("turn"),
-			event.Turn,
-			style.eventType(string(event.Type)),
-			event.Time.Local().Format(time.RFC3339),
-		); err != nil {
-			return err
-		}
-		if err := writeRolloutEvent(w, style, event); err != nil {
+		if err := writeRolloutPrettyEvent(w, style, event); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func writeRolloutPrettyHeader(w io.Writer, sess store.Session) (rolloutStyle, error) {
+	style := newRolloutStyle(w)
+	if _, err := fmt.Fprintf(w, "%s %s\n", style.header("session"), sess.ID); err != nil {
+		return style, err
+	}
+	if _, err := fmt.Fprintf(w, "workspace: %s\n", sess.Workspace); err != nil {
+		return style, err
+	}
+	if sess.Title != "" {
+		if _, err := fmt.Fprintf(w, "title: %s\n", sess.Title); err != nil {
+			return style, err
+		}
+	}
+	if sess.Model != "" {
+		if _, err := fmt.Fprintf(w, "model: %s\n", sess.Model); err != nil {
+			return style, err
+		}
+	}
+	if !sess.UpdatedAt.IsZero() {
+		if _, err := fmt.Fprintf(w, "updated: %s\n", sess.UpdatedAt.Local().Format(time.RFC3339)); err != nil {
+			return style, err
+		}
+	}
+	return style, nil
+}
+
+func writeRolloutPrettyEmpty(w io.Writer) error {
+	_, err := fmt.Fprintln(w, "\n(no events)")
+	return err
+}
+
+func writeRolloutPrettyEvent(w io.Writer, style rolloutStyle, event rollout.Event) error {
+	if _, err := fmt.Fprintf(
+		w, "\n%s %d  %s  %s\n",
+		style.header("turn"),
+		event.Turn,
+		style.eventType(string(event.Type)),
+		event.Time.Local().Format(time.RFC3339),
+	); err != nil {
+		return err
+	}
+	return writeRolloutEvent(w, style, event)
 }
 
 type rolloutStyle struct {

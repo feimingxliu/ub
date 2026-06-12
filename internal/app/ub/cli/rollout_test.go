@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,13 +20,10 @@ import (
 func TestRolloutShowPrettyPrintsFilteredTurns(t *testing.T) {
 	sessionID := createRolloutShowFixture(t)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"rollout", "show", sessionID, "--turns", "2..3"})
+	tc := newTestRootCommand("rollout", "show", sessionID, "--turns", "2..3")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("rollout show: %v", err)
 	}
 	got := out.String()
@@ -67,13 +63,10 @@ func TestRolloutShowPrettyPrintsFilteredTurns(t *testing.T) {
 func TestRolloutShowJSONL(t *testing.T) {
 	sessionID := createRolloutShowFixture(t)
 
-	cmd := newRootCmd()
-	out := &bytes.Buffer{}
-	cmd.SetOut(out)
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"rollout", "show", sessionID, "--json", "--turns", "1"})
+	tc := newTestRootCommand("rollout", "show", sessionID, "--json", "--turns", "1")
+	out := tc.out
 
-	if err := cmd.Execute(); err != nil {
+	if err := tc.cmd.Execute(); err != nil {
 		t.Fatalf("rollout show --json: %v", err)
 	}
 	var events []rollout.Event
@@ -101,6 +94,50 @@ func TestRolloutShowJSONL(t *testing.T) {
 	}
 }
 
+func TestRolloutShowJSONLLimit(t *testing.T) {
+	sessionID := createRolloutShowFixture(t)
+
+	tc := newTestRootCommand("rollout", "show", sessionID, "--json", "--turns", "2..", "--limit", "2")
+	out := tc.out
+
+	if err := tc.cmd.Execute(); err != nil {
+		t.Fatalf("rollout show --json --limit: %v", err)
+	}
+	var events []rollout.Event
+	scanner := bufio.NewScanner(strings.NewReader(out.String()))
+	for scanner.Scan() {
+		var event rollout.Event
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			t.Fatalf("decode JSONL line %q: %v", scanner.Text(), err)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want 2; output:\n%s", len(events), out.String())
+	}
+	if events[0].Turn != 2 || events[0].Type != rollout.TypeAssistantMessage {
+		t.Fatalf("first event = %#v, want turn 2 assistant message", events[0])
+	}
+	if events[1].Turn != 2 || events[1].Type != rollout.TypeToolResult {
+		t.Fatalf("second event = %#v, want turn 2 tool result", events[1])
+	}
+}
+
+func TestRolloutShowRejectsNegativeLimit(t *testing.T) {
+	tc := newTestRootCommand("rollout", "show", "sess", "--limit", "-1")
+
+	err := tc.cmd.Execute()
+	if err == nil {
+		t.Fatal("expected negative limit error")
+	}
+	if !strings.Contains(err.Error(), "--limit must be non-negative") {
+		t.Fatalf("negative limit error = %v", err)
+	}
+}
+
 func TestRolloutShowMissingSession(t *testing.T) {
 	temp := t.TempDir()
 	workspace := filepath.Join(temp, "repo")
@@ -110,17 +147,44 @@ func TestRolloutShowMissingSession(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
 	t.Chdir(workspace)
 
-	cmd := newRootCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"rollout", "show", "missing"})
-
-	err := cmd.Execute()
+	tc := newTestRootCommand("rollout", "show", "missing")
+	err := tc.cmd.Execute()
 	if err == nil {
 		t.Fatal("expected missing session error")
 	}
 	if !strings.Contains(err.Error(), "session") || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("missing session error = %v", err)
+	}
+}
+
+func TestForEachRolloutShowEventUsesStartTurnAndLimit(t *testing.T) {
+	filter, err := parseTurnFilter("3..5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &recordingRolloutShowReader{events: []rollout.Event{
+		{SessionID: "sess", Turn: 1},
+		{SessionID: "sess", Turn: 3},
+		{SessionID: "sess", Turn: 4},
+		{SessionID: "sess", Turn: 5},
+		{SessionID: "sess", Turn: 6},
+	}}
+
+	var got []int
+	if err := forEachRolloutShowEvent(context.Background(), reader, "sess", filter, 2, func(event rollout.Event) error {
+		got = append(got, event.Turn)
+		return nil
+	}); err != nil {
+		t.Fatalf("forEachRolloutShowEvent: %v", err)
+	}
+	if reader.forEachCalls != 0 {
+		t.Fatalf("ForEach calls = %d, want 0", reader.forEachCalls)
+	}
+	if reader.fromTurnCalls != 1 || reader.startTurn != 3 {
+		t.Fatalf("ForEachFromTurn calls/start = %d/%d, want 1/3", reader.fromTurnCalls, reader.startTurn)
+	}
+	if len(got) != 2 || got[0] != 3 || got[1] != 4 {
+		t.Fatalf("visited turns = %v, want [3 4]", got)
 	}
 }
 
@@ -255,4 +319,34 @@ func appendRolloutEventAt(t *testing.T, ro *rollout.SQLite, at time.Time, event 
 	if err := ro.Append(context.Background(), event); err != nil {
 		t.Fatalf("Append(%s): %v", event.Type, err)
 	}
+}
+
+type recordingRolloutShowReader struct {
+	events        []rollout.Event
+	forEachCalls  int
+	fromTurnCalls int
+	startTurn     int
+}
+
+func (r *recordingRolloutShowReader) ForEach(_ context.Context, _ string, fn func(rollout.Event) error) error {
+	r.forEachCalls++
+	return r.each(0, fn)
+}
+
+func (r *recordingRolloutShowReader) ForEachFromTurn(_ context.Context, _ string, startTurn int, fn func(rollout.Event) error) error {
+	r.fromTurnCalls++
+	r.startTurn = startTurn
+	return r.each(startTurn, fn)
+}
+
+func (r *recordingRolloutShowReader) each(startTurn int, fn func(rollout.Event) error) error {
+	for _, event := range r.events {
+		if startTurn > 0 && event.Turn < startTurn {
+			continue
+		}
+		if err := fn(event); err != nil {
+			return err
+		}
+	}
+	return nil
 }
