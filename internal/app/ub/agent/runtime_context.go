@@ -28,7 +28,9 @@ func (c RuntimeContext) normalized() RuntimeContext {
 }
 
 func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message {
-	out := cloneMessages(messages)
+	// Callers pass an owned message slice when building provider requests.
+	// Keep the returned request slice separate, but avoid deep-cloning the
+	// entire tail here; the provider boundary still clones before Chat.
 	prepend := cloneMessages(a.startupPrompt)
 	if modeMsg, ok := a.executionModeMessage(); ok {
 		prepend = append(prepend, modeMsg)
@@ -37,9 +39,11 @@ func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message
 		prepend = append(prepend, memMsg)
 	}
 	if len(prepend) == 0 {
-		return out
+		return messages
 	}
-	return append(prepend, out...)
+	out := make([]message.Message, 0, len(prepend)+len(messages))
+	out = append(out, prepend...)
+	return append(out, messages...)
 }
 
 // RuntimeContextMessages builds the same non-persisted request context prefix
