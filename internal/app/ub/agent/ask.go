@@ -12,6 +12,30 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/workspace/rollout"
 )
 
+// askSchemaHint is appended to ask tool error messages so that models
+// (especially weaker ones) can self-correct on retry.
+const askSchemaHint = `Expected format:
+{
+  "questions": [{
+    "header": "Short section header",
+    "question": "The concrete question to ask the user",
+    "options": [
+      {"label": "Option A", "description": "One sentence explaining this option"},
+      {"label": "Option B", "description": "One sentence explaining that option"}
+    ],
+    "multi_select": false
+  }]
+}
+Each question requires header, question, and options (array of {label, description?} objects, NOT strings). At most 3 questions.`
+
+func askInvalidArgsError(err error) error {
+	return fmt.Errorf("ask: invalid args: %w; %s", err, askSchemaHint)
+}
+
+func askValidationError(err error) error {
+	return fmt.Errorf("%s; %s", err.Error(), askSchemaHint)
+}
+
 type askContextKey struct{}
 
 // AskOption is one user-selectable answer for a structured question.
@@ -98,10 +122,10 @@ func (t *askTool) Risk() tool.Risk { return tool.RiskSafe }
 func (t *askTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Result, error) {
 	var args askArgs
 	if err := tool.UnmarshalArgs(raw, &args); err != nil {
-		return tool.Result{}, fmt.Errorf("ask: invalid args: %w", err)
+		return tool.Result{}, askInvalidArgsError(err)
 	}
 	if err := validateAskQuestions(args.Questions); err != nil {
-		return tool.Result{}, err
+		return tool.Result{}, askValidationError(err)
 	}
 	asker := askerFromContext(ctx)
 	if asker == nil {
