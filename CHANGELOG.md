@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.1] - 2026-06-18
+
+
+### Added
+
+- Show compacting status during context compression ([e897d01](https://github.com/feimingxliu/ub/commit/e897d0153cbc0eab745ca92cce0b2c8959e8e1d4))
+- Inject mid-turn guidance via Enter, queue next turn via Tab ([d5fbfdf](https://github.com/feimingxliu/ub/commit/d5fbfdf78a55bdf28fc980f6c6af158fb9835b7e))
+
+
+### Documentation
+
+- Nudge models to call enter_plan_mode instead of announcing it ([81ca07a](https://github.com/feimingxliu/ub/commit/81ca07ab8864ece603dd900318a518cc313e52aa))
+
+
+### Fixed
+
+- Enforce private-network and domain policy on search provider endpoints ([95b83fc](https://github.com/feimingxliu/ub/commit/95b83fce77cdbee5497311e6988c3047f6793f00))
+- Add schema hint to ask tool error messages for self-correction ([e70000d](https://github.com/feimingxliu/ub/commit/e70000d465a39e3b0aea9516487f2fe8525eb3da))
+- Align input cursor with text via virtual cursor ([f87966e](https://github.com/feimingxliu/ub/commit/f87966eeab8e816d3f5d98e90fb8c6e4c87acbbc))
+
 ## [0.4.0] - 2026-06-12
 
 
@@ -16,6 +36,11 @@ All notable changes to this project are documented here.
 - Sync aux models after resume ([214f5dc](https://github.com/feimingxliu/ub/commit/214f5dc4361acf8734e6684351c1bbfcd611632e))
 - Defer provider model checks on startup ([fc32239](https://github.com/feimingxliu/ub/commit/fc3223911671d714f0b568e8851b0aec66a75d64))
 - Serialize sqlite writes ([dba0af6](https://github.com/feimingxliu/ub/commit/dba0af6798a63a27836223180988ce6e5612a6d8))
+
+
+### Maintenance
+
+- V0.4.0 ([1f8c84b](https://github.com/feimingxliu/ub/commit/1f8c84bbfe3e20e38a21e504a6efb1a47b785a29))
 
 
 ### Refactoring
