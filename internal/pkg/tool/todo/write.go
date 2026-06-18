@@ -68,7 +68,7 @@ func newWriteTool() *writeTool {
 
 func (t *writeTool) Name() string { return "todo_write" }
 func (t *writeTool) Description() string {
-	return "Create or replace the current session execution todo list. Use this for ordinary multi-step work that needs a live progress view without creating a persistent plan artifact. Items may be strings or objects with content, optional id, status, and note. Status values are pending, in_progress, completed, skipped, and failed; at most one item may be in_progress."
+	return "Create or replace the current session execution todo list. Use this for ordinary multi-step work that needs a live progress view without creating a persistent plan artifact. This is an execution-progress checklist, not the planning step itself: when a task needs design decisions or a reviewable plan, call enter_plan_mode and use plan_write or plan_update first, then return to todo_write to track execution once the plan is approved. Items may be strings or objects with content, optional id, status, and note. Status values are pending, in_progress, completed, skipped, and failed; at most one item may be in_progress."
 }
 func (t *writeTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *writeTool) Risk() tool.Risk            { return tool.RiskSafe }

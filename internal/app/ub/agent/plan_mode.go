@@ -85,7 +85,7 @@ type enterPlanModeTool struct {
 func (t *enterPlanModeTool) Name() string { return "enter_plan_mode" }
 
 func (t *enterPlanModeTool) Description() string {
-	return "Ask the user to enter plan mode before doing complex implementation work. Use for new features, multi-file behavior changes, architecture choices, risky migrations, or ambiguous requirements that need read-only investigation and a persistent plan first. Do not use for small typo fixes, simple known bug fixes, already-specified implementation steps, or pure read-only questions. In plan mode, create or revise the plan with plan_write or plan_update, then call exit_plan_mode when the plan is ready for approval."
+	return "Ask the user to enter plan mode before doing complex implementation work. Use for new features, multi-file behavior changes, architecture choices, risky migrations, or ambiguous requirements that need read-only investigation and a persistent plan first. Do not use for small typo fixes, simple known bug fixes, already-specified implementation steps, or pure read-only questions. This tool is the only way to enter plan mode: stating \"entering plan mode\" in text does nothing, so call this tool instead of announcing it. Do not use todo_write as a substitute; todo_write tracks execution progress, not the planning step. In plan mode, create or revise the plan with plan_write or plan_update, then call exit_plan_mode when the plan is ready for approval."
 }
 
 func (t *enterPlanModeTool) Schema() *jsonschema.Schema { return t.schema }
