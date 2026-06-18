@@ -2024,6 +2024,7 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 		{fake.TextDelta("summary of early work"), fake.Done()},
 	}}
 	writer := &recordingRollout{}
+	var events []Event
 	a, err := New(Options{
 		Provider:        main,
 		SummaryProvider: summary,
@@ -2036,6 +2037,9 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 		Context: config.ContextConfig{
 			TriggerRatio:    0.01,
 			KeepRecentTurns: 3,
+		},
+		Events: func(event Event) {
+			events = append(events, event)
 		},
 	})
 	if err != nil {
@@ -2084,6 +2088,17 @@ func TestAgentSummarizesLongHistoryBeforeProviderRequest(t *testing.T) {
 	}
 	if !containsText(res.ContextMessages, "summary of early work") || containsText(res.ContextMessages, "user 1") || containsText(res.ContextMessages, "user 2") {
 		t.Fatalf("result context messages = %#v, want compacted provider context", res.ContextMessages)
+	}
+	// The compaction lifecycle emits a running notice when it starts and a
+	// done notice when it finishes. Both must carry NoticeCompacting so the
+	// TUI can key them together (otherwise the running "compacting" state
+	// never clears). The done summary historically said "summarized ...",
+	// which broke keying — pin the "compacted" wording here.
+	if !hasNoticeActivity(events, NoticeCompacting, "running", "compacting context") {
+		t.Fatalf("events missing compact running notice: %#v", events)
+	}
+	if !hasNoticeActivity(events, NoticeCompacting, "done", "compacted") {
+		t.Fatalf("events missing compact done notice with compacted wording: %#v", events)
 	}
 }
 
@@ -2764,6 +2779,28 @@ func hasActivity(events []Event, kind ActivityKind, text string) bool {
 		if event.Type == EventActivity && event.ActivityKind == kind && strings.Contains(event.Summary, text) {
 			return true
 		}
+	}
+	return false
+}
+
+// hasNoticeActivity reports whether events contain an ActivityNotice with the
+// given Notice kind, Status, and a Summary containing text. Used to pin the
+// compaction lifecycle notices that the TUI keys on.
+func hasNoticeActivity(events []Event, notice NoticeKind, status, text string) bool {
+	for _, event := range events {
+		if event.Type != EventActivity || event.ActivityKind != ActivityNotice {
+			continue
+		}
+		if event.Notice != notice {
+			continue
+		}
+		if status != "" && event.Status != status {
+			continue
+		}
+		if text != "" && !strings.Contains(event.Summary, text) {
+			continue
+		}
+		return true
 	}
 	return false
 }

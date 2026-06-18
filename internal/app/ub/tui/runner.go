@@ -251,6 +251,7 @@ type Event struct {
 	ActivityKind    string
 	Status          string
 	Summary         string
+	Notice          string
 	Decision        string
 	Source          string
 	Reason          string

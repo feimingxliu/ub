@@ -191,6 +191,7 @@ func convertAgentEvent(event agent.Event) tui.Event {
 			ActivityKind:    string(event.ActivityKind),
 			Status:          event.Status,
 			Summary:         event.Summary,
+			Notice:          string(event.Notice),
 			Decision:        event.Decision,
 			Source:          event.Source,
 			Reason:          event.Reason,

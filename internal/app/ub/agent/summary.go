@@ -62,19 +62,41 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 		a.emitContextUsage(estimated, false)
 		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Notice:       NoticeCompacting,
+		Status:       "running",
+		Summary:      "compacting context",
+	})
 	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated, tools)
 	if err != nil {
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityNotice,
+			Notice:       NoticeCompacting,
+			Status:       "failed",
+			Summary:      fmt.Sprintf("compacting context failed: %v", err),
+		})
 		return preparedMessages{}, err
 	}
 	if !ok {
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityNotice,
+			Notice:       NoticeCompacting,
+			Status:       "done",
+			Summary:      "nothing to compact yet",
+		})
 		a.emitContextUsage(estimated, false)
 		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityNotice,
+		Notice:       NoticeCompacting,
 		Status:       "done",
-		Summary:      fmt.Sprintf("summarized %d earlier messages", compacted.compactedMessages),
+		Summary:      fmt.Sprintf("compacted %d earlier messages", compacted.compactedMessages),
 	})
 	a.emitContextUsage(compacted.estimatedTokens, true)
 	return preparedMessages{
@@ -92,8 +114,22 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 	}
 	messages := cloneMessages(req.History)
 	estimated := contextmgr.EstimateRequest(a.withRuntimeContext(messages), nil, a.model)
+	a.emit(Event{
+		Type:         EventActivity,
+		ActivityKind: ActivityNotice,
+		Notice:       NoticeCompacting,
+		Status:       "running",
+		Summary:      "compacting context",
+	})
 	compacted, ok, err := a.compactMessages(ctx, req.SessionID, req.Turn, messages, estimated, nil)
 	if err != nil {
+		a.emit(Event{
+			Type:         EventActivity,
+			ActivityKind: ActivityNotice,
+			Notice:       NoticeCompacting,
+			Status:       "failed",
+			Summary:      fmt.Sprintf("compacting context failed: %v", err),
+		})
 		return CompactResult{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 	}
 	if !ok {
@@ -102,6 +138,7 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 		a.emit(Event{
 			Type:         EventActivity,
 			ActivityKind: ActivityNotice,
+			Notice:       NoticeCompacting,
 			Status:       "done",
 			Summary:      reason,
 		})
@@ -116,6 +153,7 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityNotice,
+		Notice:       NoticeCompacting,
 		Status:       "done",
 		Summary:      fmt.Sprintf("compacted %d earlier messages", compacted.compactedMessages),
 	})
@@ -150,6 +188,7 @@ func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, tu
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityNotice,
+		Notice:       NoticeCompacting,
 		Status:       "running",
 		Summary:      "provider context limit exceeded; compacting and retrying",
 	})
@@ -161,6 +200,7 @@ func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, tu
 		a.emit(Event{
 			Type:         EventActivity,
 			ActivityKind: ActivityNotice,
+			Notice:       NoticeCompacting,
 			Status:       "done",
 			Summary:      "provider context limit exceeded; no earlier messages to compact",
 		})
@@ -169,6 +209,7 @@ func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, tu
 	a.emit(Event{
 		Type:         EventActivity,
 		ActivityKind: ActivityNotice,
+		Notice:       NoticeCompacting,
 		Status:       "done",
 		Summary:      fmt.Sprintf("provider context limit exceeded; compacted %d earlier messages and retrying", compacted.compactedMessages),
 	})

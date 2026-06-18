@@ -31,6 +31,7 @@ const (
 	statusStreaming  = "streaming"
 	statusTool       = "tool"
 	statusShell      = "shell"
+	statusCompacting = "compacting"
 	statusFinalizing = "finalizing"
 	statusSeparator  = " │ "
 	statusCompactSep = "│"

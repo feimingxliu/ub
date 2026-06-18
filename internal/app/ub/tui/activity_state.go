@@ -72,6 +72,10 @@ func activityEventKey(event Event) string {
 			return "subagent:" + subagentID + ":thinking"
 		}
 		return "thinking"
+	case "notice":
+		if event.Notice == "compacting" {
+			return "notice:compacting"
+		}
 	}
 	return ""
 }
@@ -241,7 +245,13 @@ func activityMessage(event Event) message {
 		}
 	case "notice":
 		text := activityEventText(event)
-		return message{role: activityRole, text: text, kind: noticeMessage, title: text}
+		key := activityEventKey(event)
+		msg := message{role: activityRole, text: text, kind: noticeMessage, title: text}
+		if key != "" {
+			msg.key = key
+			msg.status = defaultString(event.Status, "done")
+		}
+		return msg
 	default:
 		text := activityEventText(event)
 		return message{role: activityRole, text: text, kind: noticeMessage, title: text}
@@ -633,6 +643,11 @@ func statusForActivity(event Event) string {
 		return statusTool
 	case "mode":
 		return statusTool
+	case "notice":
+		if event.Status == "running" {
+			return statusCompacting
+		}
+		return statusThinking
 	default:
 		return statusThinking
 	}

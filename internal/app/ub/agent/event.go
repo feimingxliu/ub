@@ -28,6 +28,14 @@ const (
 	ActivityHook       ActivityKind = "hook"
 )
 
+// NoticeKind sub-types an ActivityNotice event so consumers can key on a
+// stable identifier instead of matching summary text.
+type NoticeKind string
+
+const (
+	NoticeCompacting NoticeKind = "compacting"
+)
+
 // Event reports Agent progress to interactive callers such as the TUI.
 type Event struct {
 	Type            EventType
@@ -40,6 +48,7 @@ type Event struct {
 	ActivityKind    ActivityKind
 	Status          string
 	Summary         string
+	Notice          NoticeKind
 	Decision        string
 	Source          string
 	Reason          string
