@@ -19,7 +19,7 @@ func NewModel(opts Options) Model {
 	input.Placeholder = "Type a message or /help"
 	input.Prompt = "› "
 	input.SetStyles(inputTextStyles())
-	input.SetVirtualCursor(false)
+	input.SetVirtualCursor(true)
 	input.SetWidth(inputWidthForTerminal(width, input.Prompt))
 	_ = input.Focus()
 	ctx := opts.Context

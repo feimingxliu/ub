@@ -72,6 +72,14 @@ func (m Model) frameCursor(inputY int) *tea.Cursor {
 	if m.pending != nil || m.pendingAsk != nil || m.pendingPlanMode != nil || m.picker != nil || m.sessions != nil || m.plans != nil || m.rewind != nil || m.btw.visible {
 		return nil
 	}
+	// The textinput uses a virtual cursor (SetVirtualCursor(true)): its View()
+	// renders the cursor character inline as a reverse block at the correct
+	// column, which stays aligned with the text across CJK widths and
+	// horizontal scrolling (the real-cursor path could not account for
+	// textinput's unexported scroll offset and drifted out of sync). Cursor()
+	// returns nil in virtual-cursor mode, so we return nil here and let
+	// bubbletea hide the real terminal cursor. The btw side-question input
+	// still uses a real cursor via inputCursorX (see sideQuestionCursor).
 	cur := m.input.Cursor()
 	if cur == nil {
 		return nil

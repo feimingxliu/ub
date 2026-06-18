@@ -32,17 +32,19 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func TestInputUsesRealCursorForIMERendering(t *testing.T) {
+func TestInputUsesVirtualCursorForAlignment(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test"})
-	if model.input.VirtualCursor() {
-		t.Fatalf("input should use a renderer-owned real cursor")
+	// The input uses a virtual cursor: its View() renders the cursor as a
+	// reverse block inline, which stays aligned with the text across CJK
+	// widths and horizontal scrolling. The real terminal cursor is hidden
+	// (Cursor() returns nil) so it cannot drift out of sync with the
+	// unexported scroll offset. The textarea refactor will revisit IME
+	// handling; until then alignment is the priority.
+	if !model.input.VirtualCursor() {
+		t.Fatalf("input should use a virtual cursor")
 	}
-	cur := model.input.Cursor()
-	if cur == nil {
-		t.Fatalf("input cursor is nil")
-	}
-	if cur.Blink {
-		t.Fatalf("input cursor should not schedule virtual blink redraws")
+	if cur := model.input.Cursor(); cur != nil {
+		t.Fatalf("virtual-cursor input should not expose a real cursor: %+v", cur)
 	}
 	assertInitRequestsWindowSizes(t, model, defaultViewWidth, defaultViewHeight)
 }
@@ -114,14 +116,19 @@ func TestViewCursorTracksInputLine(t *testing.T) {
 	if !view.AltScreen || view.MouseMode != tea.MouseModeCellMotion {
 		t.Fatalf("view flags = alt:%v mouse:%v", view.AltScreen, view.MouseMode)
 	}
-	if view.Cursor == nil {
-		t.Fatalf("view cursor is nil")
+	// The main input uses a virtual cursor (reverse block inline in the
+	// textinput View), so view.Cursor is nil and the real terminal cursor is
+	// hidden. The cursor block tracks the input line because the textinput
+	// View is placed on it by the frame; assert the input stays focused and
+	// the input line is not the last (status) line.
+	if view.Cursor != nil {
+		t.Fatalf("virtual-cursor input should not expose a real cursor: %+v", view.Cursor)
 	}
-	if view.Cursor.Y != inputLine {
-		t.Fatalf("cursor Y = %d, want input line %d\n%s", view.Cursor.Y, inputLine, view.Content)
+	if !model.input.Focused() {
+		t.Fatalf("input not focused\n%s", view.Content)
 	}
-	if view.Cursor.Y == len(lines)-1 {
-		t.Fatalf("cursor should not point at status line:\n%s", view.Content)
+	if inputLine == len(lines)-1 {
+		t.Fatalf("input line should not be the status line:\n%s", view.Content)
 	}
 }
 
@@ -164,8 +171,12 @@ func TestSubmitKeepsSingleFooterAndInputEditable(t *testing.T) {
 	if count := strings.Count(view.Content, "state: idle"); count != 1 {
 		t.Fatalf("status footer count = %d, want 1\n%s", count, view.Content)
 	}
-	if view.Cursor == nil || lineContaining(strings.Split(view.Content, "\n"), "› next") != view.Cursor.Y {
-		t.Fatalf("input cursor did not remain editable:\n%+v\n%s", view.Cursor, view.Content)
+	// The input uses a virtual cursor (reverse block rendered inline in the
+	// textinput View), so view.Cursor is nil and the real terminal cursor is
+	// hidden. Editability is asserted by the input staying focused and the
+	// input line still being rendered with its content.
+	if !model.input.Focused() || lineContaining(strings.Split(view.Content, "\n"), "› next") < 0 {
+		t.Fatalf("input did not remain editable: focused=%v\n%s", model.input.Focused(), view.Content)
 	}
 }
 
@@ -5952,8 +5963,13 @@ func assertCursorOnInputLine(t *testing.T, model Model, marker string) {
 	if inputLine < 0 {
 		t.Fatalf("input marker %q missing:\n%s", marker, view.Content)
 	}
-	if view.Cursor == nil || view.Cursor.Y != inputLine {
-		t.Fatalf("cursor = %+v, want Y %d\n%s", view.Cursor, inputLine, view.Content)
+	// The main input uses a virtual cursor (reverse block rendered inline in
+	// the textinput View), so view.Cursor is nil and the real terminal cursor
+	// is hidden. The cursor block sits on the input line because the
+	// textinput View is placed there by the frame; assert editability via the
+	// input staying focused and the marker line being present.
+	if !model.input.Focused() {
+		t.Fatalf("input not focused for marker %q\n%s", marker, view.Content)
 	}
 }
 
