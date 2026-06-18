@@ -62,6 +62,23 @@ func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) e
 	return finishChatSession(r.cmd, r.state, "", r.providerName, r.model)
 }
 
+// Inject sends user guidance text into the currently running agent loop.
+// The text appears as a user message in the next loop iteration, guiding the
+// model without starting a new turn. It reports false (and drops the text)
+// when no run is active or the inject channel is full, so the caller can keep
+// the UI consistent with what actually reaches the agent.
+func (r *tuiAgentRunner) Inject(text string) bool {
+	if r == nil || r.injectCh == nil {
+		return false
+	}
+	select {
+	case r.injectCh <- text:
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *tuiAgentRunner) ListWorkspaceFiles(ctx context.Context, query string, limit int) ([]string, error) {
 	if r == nil || r.tools == nil || strings.TrimSpace(r.tools.Workspace) == "" {
 		return nil, fmt.Errorf("workspace is unavailable")
@@ -78,6 +95,9 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 	if err != nil {
 		return nil, err
 	}
+	// injectCh is built once on the runner and reused across runs; the agent
+	// loop drains it between iterations and flushes the remainder at Run end,
+	// so it is empty at the start of each run.
 	var parentEvents agent.EventSink
 	factory := agent.NewFactory(agent.Options{
 		Provider:            r.provider,
@@ -107,6 +127,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		MemoryAutoScheduler: r.memoryAutoScheduler,
 		FileHistory:         fileHistory,
 		BackgroundEvents:    r.backgroundEventSink(ctx),
+		Inject:              r.injectCh,
 	})
 	subRunner := &cliSubagentRunner{
 		factory:          factory,

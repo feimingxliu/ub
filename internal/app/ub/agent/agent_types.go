@@ -40,6 +40,7 @@ type Options struct {
 	Asker                Asker
 	Events               EventSink
 	BackgroundEvents     EventSink
+	Inject               <-chan string
 	Reasoning            *reasoning.Config
 	MaxContextTokens     int
 	SummaryProvider      provider.Provider
@@ -76,6 +77,7 @@ type Agent struct {
 	asker                Asker
 	events               EventSink
 	backgroundEvents     EventSink
+	inject               <-chan string
 	reasoning            *reasoning.Config
 	maxContextTokens     int
 	summaryProvider      provider.Provider
@@ -177,6 +179,7 @@ func New(opts Options) (*Agent, error) {
 		asker:                opts.Asker,
 		events:               opts.Events,
 		backgroundEvents:     opts.BackgroundEvents,
+		inject:               opts.Inject,
 		reasoning:            cloneReasoning(opts.Reasoning),
 		maxContextTokens:     opts.MaxContextTokens,
 		summaryProvider:      opts.SummaryProvider,

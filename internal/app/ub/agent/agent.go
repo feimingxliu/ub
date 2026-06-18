@@ -16,10 +16,23 @@ import (
 )
 
 // Run executes one user prompt.
-func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
+func (a *Agent) Run(ctx context.Context, req Request) (result Result, err error) {
 	if req.Turn <= 0 {
 		req.Turn = 1
 	}
+	// Flush any inject guidance the loop never consumed so it still lands in
+	// the rollout and the returned transcript. A cancelled run (Esc interrupt,
+	// context expiry) still flushes via a background context so already-
+	// expressed user intent is not silently dropped. On the error path result
+	// is the zero value and these messages are persisted but not returned —
+	// the next history reconstruction picks them up.
+	defer func() {
+		flushed := a.flushRemainingInjected(context.Background(), req)
+		if err == nil && len(flushed) > 0 {
+			result.Messages = append(result.Messages, flushed...)
+			result.ContextMessages = append(result.ContextMessages, flushed...)
+		}
+	}()
 	defer func() {
 		// Wrapped in a closure so the hooks.Run call itself is deferred,
 		// not just emitHookOutcomes — otherwise the Run would fire before
@@ -180,6 +193,11 @@ loop:
 			if loopDetector.Record(consumed.toolCalls, toolResults) {
 				return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, "repeated tool loop detected; finalizing without tools")
 			}
+			// Drain any user guidance injected mid-run via the inject channel.
+			// Each injected text becomes a user message appended to both the
+			// transcript and context, so the model sees it on the next loop
+			// iteration (before the next provider call).
+			contextMessages, transcriptMessages = a.drainInjected(ctx, req, contextMessages, transcriptMessages)
 		}
 		// Hit the limit. Ask the host whether to keep going before falling
 		// through to finalizeWithoutTools — reasoning models often have more

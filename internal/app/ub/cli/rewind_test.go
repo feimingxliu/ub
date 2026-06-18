@@ -16,6 +16,49 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/workspace/rollout"
 )
 
+func TestTUIRunnerListRewindTargetsDedupesInjectedGuidancePerTurn(t *testing.T) {
+	runner, _ := newRewindTestRunner(t)
+	sid := runner.state.sessionID
+	// Turn 1 has an initial prompt plus a mid-turn inject guidance; both reuse
+	// turn 1. Turn 2 has only its prompt.
+	appendRunnerEvent(t, runner, mustRolloutEvent(rollout.UserMessage(sid, 1, message.Text(message.RoleUser, "initial prompt"))))
+	appendRunnerEvent(t, runner, mustRolloutEvent(rollout.UserMessage(sid, 1, message.Text(message.RoleUser, "guidance while running"))))
+	appendRunnerEvent(t, runner, mustRolloutEvent(rollout.UserMessage(sid, 2, message.Text(message.RoleUser, "second turn"))))
+
+	targets, err := runner.ListRewindTargets(context.Background())
+	if err != nil {
+		t.Fatalf("ListRewindTargets: %v", err)
+	}
+	// Two turns, one target each — the inject on turn 1 must not add a third.
+	if len(targets) != 2 {
+		t.Fatalf("targets len = %d, want 2 (inject must be deduped): %#v", len(targets), targets)
+	}
+	// Descending by turn: turn 2 first, then turn 1.
+	if targets[0].Turn != 2 || targets[0].Text != "second turn" {
+		t.Fatalf("turn 2 target = %#v", targets[0])
+	}
+	if targets[1].Turn != 1 || targets[1].Text != "initial prompt" {
+		t.Fatalf("turn 1 target = %#v, want initial prompt (not the inject)", targets[1])
+	}
+
+	// Rewinding to turn 1 must delete the inject alongside the rest of turn 1.
+	if _, _, err := runner.Rewind(context.Background(), tui.RewindRequest{Turn: 1}); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	var remaining []rollout.Event
+	if err := runner.state.rollout.ForEach(context.Background(), sid, func(e rollout.Event) error {
+		remaining = append(remaining, e)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEach: %v", err)
+	}
+	for _, e := range remaining {
+		if e.Turn >= 1 && e.Type == rollout.TypeUserMessage {
+			t.Fatalf("turn 1 events not deleted; remaining user_message: %#v", e)
+		}
+	}
+}
+
 func TestTUIRunnerListRewindTargetsIncludesCheckpointAffectedFiles(t *testing.T) {
 	runner, temp := newRewindTestRunner(t)
 	writeFile(t, temp, "main.go", "old\n")

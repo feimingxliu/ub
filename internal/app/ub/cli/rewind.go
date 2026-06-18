@@ -116,15 +116,25 @@ func (r *tuiAgentRunner) rewindEvents(ctx context.Context, startTurn int) ([]rol
 }
 
 func rewindTargetsFromEvents(events []rollout.Event) []tui.RewindTarget {
+	// Events are ordered by turn, then time/rowid. A single turn may carry
+	// more than one user_message: the initial prompt plus any mid-turn inject
+	// guidance (which reuses the turn). Deduplicate by turn so each rewind
+	// target is one turn; DeleteFromTurn(N) removes the whole turn including
+	// injects, so the first user_message is the right representative.
 	var targets []tui.RewindTarget
+	seen := map[int]struct{}{}
 	for _, event := range events {
 		if event.Type != rollout.TypeUserMessage {
+			continue
+		}
+		if _, ok := seen[event.Turn]; ok {
 			continue
 		}
 		text, err := rewindUserText(event)
 		if err != nil || strings.TrimSpace(text) == "" {
 			continue
 		}
+		seen[event.Turn] = struct{}{}
 		targets = append(targets, tui.RewindTarget{
 			Turn: event.Turn,
 			Text: text,

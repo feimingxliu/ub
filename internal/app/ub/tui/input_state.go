@@ -149,7 +149,7 @@ func (m Model) queuedPromptView(width int) string {
 	}
 	prefix := fmt.Sprintf("queued: %d", len(m.queuedPrompts))
 	index := 0
-	label := "next"
+	label := "next (TAB)"
 	if m.queueIdx >= 0 && m.queueIdx < len(m.queuedPrompts) {
 		index = m.queueIdx
 		label = fmt.Sprintf("editing %d/%d", m.queueIdx+1, len(m.queuedPrompts))
@@ -158,6 +158,18 @@ func (m Model) queuedPromptView(width int) string {
 	bodyWidth := max(1, contentWidth(width)-runewidth.StringWidth(rail)-2)
 	body := truncateText(fmt.Sprintf("%s%s%s: %s", prefix, statusSeparator, label, m.queuedPrompts[index]), bodyWidth)
 	return m.styles.Render(m.styles.SubtleLine, rail) + m.styles.Render(m.styles.Status.Segment, body)
+}
+
+// runHintView shows a subtle hint line while the agent is running, telling
+// the user that Enter injects guidance and TAB queues for the next turn.
+func (m Model) runHintView(width int) string {
+	if !m.running || len(m.queuedPrompts) > 0 {
+		return ""
+	}
+	hint := "Enter = guide this turn · TAB = queue for next turn"
+	bodyWidth := max(1, contentWidth(width))
+	hint = truncateText(hint, bodyWidth)
+	return m.styles.Render(m.styles.SubtleLine, hint)
 }
 
 func (m *Model) scrollMessages(delta int) {

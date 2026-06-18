@@ -114,6 +114,9 @@ func (m Model) footerFrame(width int) footerFrame {
 	if queued := m.queuedPromptView(width); queued != "" {
 		lines = append(lines, splitFrameLines(queued)...)
 	}
+	if hint := m.runHintView(width); hint != "" {
+		lines = append(lines, splitFrameLines(hint)...)
+	}
 	if m.pending != nil {
 		lines = append(lines, "")
 		lines = append(lines, splitFrameLines(m.modal.View())...)

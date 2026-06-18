@@ -523,6 +523,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.cycleMode()
 		case "tab":
 			if m.running {
+				// While the agent is running, TAB queues the input for the
+				// next turn instead of injecting it into the current run.
+				if m.queueInput() {
+					return m, nil
+				}
 				return m, nil
 			}
 			if m.completeFileMention() {
@@ -554,8 +559,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.resetPromptHistoryNavigation()
 					return m.executeSlash(text)
 				}
-				if m.queueInput() {
+				// If the user is navigating queued prompts (queueIdx >= 0),
+				// Enter saves the edit rather than injecting.
+				if m.queueIdx >= 0 {
+					if m.queueInput() {
+						return m, nil
+					}
 					return m, nil
+				}
+				// While the agent is running, Enter injects the input as
+				// guidance into the current run. Use TAB to queue for the
+				// next turn instead.
+				if text := strings.TrimSpace(m.input.Value()); text != "" && !strings.HasPrefix(text, "/") && !isShellInput(text) {
+					return m.injectGuidance(text)
 				}
 				return m, nil
 			}

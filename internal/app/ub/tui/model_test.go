@@ -461,9 +461,10 @@ func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
 	firstRunID := model.runID
 
 	model = sendText(t, model, "second")
-	updated, cmd = model.Update(keyPress(tea.KeyEnter))
+	// TAB queues the prompt for the next turn while the agent is running.
+	updated, cmd = model.Update(keyPress(tea.KeyTab))
 	if cmd != nil {
-		t.Fatalf("queued enter returned unexpected command")
+		t.Fatalf("queued tab returned unexpected command")
 	}
 	model = assertModel(t, updated)
 	if got, want := model.QueuedPrompts(), []string{"second"}; !reflect.DeepEqual(got, want) {
@@ -472,7 +473,7 @@ func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
 	if got := model.InputValue(); got != "" {
 		t.Fatalf("input = %q, want empty after queueing", got)
 	}
-	if !strings.Contains(viewString(model), "queued: 1") || !strings.Contains(viewString(model), "next: second") {
+	if !strings.Contains(viewString(model), "queued: 1") || !strings.Contains(viewString(model), "next") {
 		t.Fatalf("view missing queued prompt:\n%s", viewString(model))
 	}
 
@@ -502,14 +503,82 @@ func TestModelQueuesPromptWhileRunningAndStartsAfterCurrentRun(t *testing.T) {
 	}
 }
 
+func TestModelInjectsGuidanceOnEnterWhileRunning(t *testing.T) {
+	runner := &scriptedRunner{}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "first")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("first enter returned nil command")
+	}
+	model = assertModel(t, updated)
+
+	// While running, Enter injects guidance into the current run instead of
+	// queuing or starting a new turn.
+	model = sendText(t, model, "be more concise")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+
+	if got, want := runner.injectTexts, []string{"be more concise"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("inject texts = %#v, want %#v", got, want)
+	}
+	if got := model.InputValue(); got != "" {
+		t.Fatalf("input = %q, want empty after inject", got)
+	}
+	if got := model.QueuedPrompts(); len(got) != 0 {
+		t.Fatalf("queued prompts = %#v, want empty (inject does not queue)", got)
+	}
+	if got := model.MessageTexts(); len(got) < 2 || got[len(got)-1] != "be more concise" {
+		t.Fatalf("messages = %#v, want guidance appended", got)
+	}
+	// Inject guidance must not pollute prompt history (↑ navigation).
+	updated, _ = model.Update(keyPress(tea.KeyUp))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got == "be more concise" {
+		t.Fatalf("inject text leaked into prompt history: %q", got)
+	}
+}
+
+func TestModelInjectGuidanceShowsToastWhenDropped(t *testing.T) {
+	runner := &scriptedRunner{injectFail: true}
+	model := NewModel(Options{Runner: runner})
+	model = sendText(t, model, "first")
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatalf("first enter returned nil command")
+	}
+	model = assertModel(t, updated)
+
+	model = sendText(t, model, "dropped guidance")
+	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+
+	if len(runner.injectTexts) != 0 {
+		t.Fatalf("inject texts = %#v, want none (dropped)", runner.injectTexts)
+	}
+	// Guidance was not delivered, so it must not appear as a user message.
+	for _, text := range model.MessageTexts() {
+		if text == "dropped guidance" {
+			t.Fatalf("dropped guidance leaked into messages: %#v", model.MessageTexts())
+		}
+	}
+	// Input is preserved so the user can retry or switch to TAB.
+	if got := model.InputValue(); got != "dropped guidance" {
+		t.Fatalf("input = %q, want preserved text after drop", got)
+	}
+	if !strings.Contains(viewString(model), "guidance dropped") {
+		t.Fatalf("view missing drop toast:\n%s", viewString(model))
+	}
+}
+
 func TestModelEditsQueuedPromptsWithArrowKeys(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}})
 	model.running = true
 	model = sendText(t, model, "first queued")
-	updated, _ := model.Update(keyPress(tea.KeyEnter))
+	updated, _ := model.Update(keyPress(tea.KeyTab))
 	model = assertModel(t, updated)
 	model = sendText(t, model, "second queued")
-	updated, _ = model.Update(keyPress(tea.KeyEnter))
+	updated, _ = model.Update(keyPress(tea.KeyTab))
 	model = assertModel(t, updated)
 
 	updated, cmd := model.Update(keyPress(tea.KeyUp))
@@ -555,7 +624,7 @@ func TestModelSavesQueuedEditOnEnterWhileRunning(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}})
 	model.running = true
 	model = sendText(t, model, "queued")
-	updated, _ := model.Update(keyPress(tea.KeyEnter))
+	updated, _ := model.Update(keyPress(tea.KeyTab))
 	model = assertModel(t, updated)
 
 	updated, _ = model.Update(keyPress(tea.KeyUp))
@@ -572,7 +641,7 @@ func TestModelSavesQueuedEditOnEnterWhileRunning(t *testing.T) {
 	if got, want := model.QueuedPrompts(), []string{"queued edited"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("queued prompts = %#v, want %#v", got, want)
 	}
-	if !strings.Contains(viewString(model), "next: queued edited") {
+	if !strings.Contains(viewString(model), "queued edited") {
 		t.Fatalf("view missing edited queued prompt:\n%s", viewString(model))
 	}
 }
@@ -581,7 +650,7 @@ func TestModelRemovesQueuedPromptImmediatelyWhenEditBecomesEmpty(t *testing.T) {
 	model := NewModel(Options{Runner: &scriptedRunner{}})
 	model.running = true
 	model = sendText(t, model, "queued")
-	updated, _ := model.Update(keyPress(tea.KeyEnter))
+	updated, _ := model.Update(keyPress(tea.KeyTab))
 	model = assertModel(t, updated)
 	updated, _ = model.Update(keyPress(tea.KeyUp))
 	model = assertModel(t, updated)
@@ -599,7 +668,7 @@ func TestModelRemovesQueuedPromptImmediatelyWhenEditBecomesEmpty(t *testing.T) {
 	if got := model.QueuedPrompts(); len(got) != 0 {
 		t.Fatalf("queued prompts = %#v, want empty after deleting edit", got)
 	}
-	if strings.Contains(viewString(model), "queued:") || strings.Contains(viewString(model), "next: queued") {
+	if strings.Contains(viewString(model), "queued:") {
 		t.Fatalf("view still shows deleted queued prompt:\n%s", viewString(model))
 	}
 }
@@ -5431,6 +5500,8 @@ type scriptedRunner struct {
 	rewindState            SessionState
 	rewindResult           RewindResult
 	rewindErr              error
+	injectTexts            []string
+	injectFail             bool
 }
 
 func (r *scriptedRunner) Run(_ context.Context, prompt string, events chan<- Event) error {
@@ -5453,6 +5524,14 @@ func (r *scriptedRunner) Compact(_ context.Context, events chan<- Event) error {
 func (r *scriptedRunner) Doctor(context.Context) (string, error) {
 	r.doctorCalls++
 	return r.doctorReport, r.doctorErr
+}
+
+func (r *scriptedRunner) Inject(text string) bool {
+	if r.injectFail {
+		return false
+	}
+	r.injectTexts = append(r.injectTexts, text)
+	return true
 }
 
 func (r *scriptedRunner) AnswerSideQuestion(_ context.Context, req SideQuestionRequest, events chan<- Event) error {

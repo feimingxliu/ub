@@ -29,6 +29,14 @@ type CompactRunner interface {
 	Compact(ctx context.Context, events chan<- Event) error
 }
 
+// InjectRunner optionally lets the TUI inject user guidance text into the
+// currently running agent loop without starting a new turn. Inject reports
+// whether the guidance was actually delivered; callers should only reflect it
+// in the UI when it returns true.
+type InjectRunner interface {
+	Inject(text string) bool
+}
+
 // DoctorRunner optionally lets slash commands run a local health check.
 type DoctorRunner interface {
 	Doctor(ctx context.Context) (string, error)

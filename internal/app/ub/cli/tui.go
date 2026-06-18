@@ -164,9 +164,17 @@ type tuiAgentRunner struct {
 	limitAsker           agent.LimitAsker
 	asker                agent.Asker
 	planMode             agent.PlanModeController
-	providerCheckMu      sync.Mutex
-	providerChecks       map[string]providerCheck
-	providerCheckGroup   singleflight.Group
+	// injectCh feeds user guidance text into the currently running agent
+	// loop. It is created once when the runner is built and reused across
+	// runs: the agent loop drains it between tool iterations and flushes any
+	// remainder at the end of each Run, so it starts each run empty. Building
+	// it once (rather than per-run) avoids a data race between Inject (TUI
+	// goroutine) and newAgent (run goroutine) over the field, and lets Inject
+	// buffer guidance even in the window before a run's agent loop starts.
+	injectCh           chan string
+	providerCheckMu    sync.Mutex
+	providerChecks     map[string]providerCheck
+	providerCheckGroup singleflight.Group
 
 	// cachedMessages holds the reconstructed InitialMessages for the loaded
 	// session. Populated lazily by Messages() so we only scan the rollout once
@@ -266,6 +274,7 @@ func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.
 		permission:           perm,
 		maxTurns:             cfg.MaxTurns,
 		providerChecks:       map[string]providerCheck{},
+		injectCh:             make(chan string, 16),
 	}
 	closeTools = false
 	return runner, nil

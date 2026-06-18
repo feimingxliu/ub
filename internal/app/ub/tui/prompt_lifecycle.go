@@ -34,6 +34,27 @@ func (m Model) startInternalPrompt(prompt, notice string) (tea.Model, tea.Cmd) {
 	return m.startRunnerPrompt(prompt)
 }
 
+// injectGuidance sends the given text into the currently running agent loop
+// via the InjectRunner interface. The text appears as a user message in the
+// agent's next loop iteration, guiding the model mid-run without starting a
+// new turn. It is not recorded into prompt history (↑ navigation) since it is
+// a mid-turn supplement rather than a standalone prompt.
+func (m Model) injectGuidance(text string) (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(InjectRunner)
+	if !ok {
+		return m, m.showToast(toastNotice, "guidance injection is unavailable in this runner")
+	}
+	if !runner.Inject(text) {
+		return m, m.showToast(toastNotice, "guidance dropped (agent too busy); try again or queue with TAB")
+	}
+	m.messages.append(userRole, text)
+	m.scrollToBottom()
+	m.input.SetValue("")
+	m.files = nil
+	m.resetPromptHistoryNavigation()
+	return m, nil
+}
+
 func (m Model) startRunnerPrompt(prompt string) (tea.Model, tea.Cmd) {
 	if m.runner == nil {
 		return m, nil
