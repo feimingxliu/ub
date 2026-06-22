@@ -72,21 +72,47 @@ func (m Model) frameCursor(inputY int) *tea.Cursor {
 	if m.pending != nil || m.pendingAsk != nil || m.pendingPlanMode != nil || m.picker != nil || m.sessions != nil || m.plans != nil || m.rewind != nil || m.btw.visible {
 		return nil
 	}
-	// The textinput uses a virtual cursor (SetVirtualCursor(true)): its View()
+	// The textarea uses a virtual cursor (SetVirtualCursor(true)): its View()
 	// renders the cursor character inline as a reverse block at the correct
-	// column, which stays aligned with the text across CJK widths and
-	// horizontal scrolling (the real-cursor path could not account for
-	// textinput's unexported scroll offset and drifted out of sync). Cursor()
-	// returns nil in virtual-cursor mode, so we return nil here and let
-	// bubbletea hide the real terminal cursor. The btw side-question input
-	// still uses a real cursor via inputCursorX (see sideQuestionCursor).
+	// column/row, which stays aligned with the text across CJK widths and soft
+	// wrapping. Cursor() returns nil in virtual-cursor mode, so we return nil
+	// here and let bubbletea hide the real terminal cursor. The btw
+	// side-question input still uses a real cursor via inputCursorX (see
+	// sideQuestionCursor).
 	cur := m.input.Cursor()
 	if cur == nil {
 		return nil
 	}
+	// Fallback real-cursor path (only if virtual cursor is ever disabled):
+	// textarea reports cursor X/Y relative to its own content, so shift by the
+	// externally prepended prompt width and the input's vertical offset.
 	cur.Y += inputY
-	cur.X = inputCursorX(m.input.Prompt, m.input.Value(), m.input.Position(), m.input.Width())
+	cur.X += runewidth.StringWidth(inputPromptPrefix)
 	return cur
+}
+
+// inputPromptPrefix is the "› " marker prepended to the first visual line of
+// the textarea by prefixInputView. Continuation lines align under it with
+// spaces of the same width.
+const inputPromptPrefix = "› "
+
+// prefixInputView prepends the input prompt marker to the textarea's rendered
+// view: the first line gets "› ", every continuation line gets a matching
+// width of spaces so wrapped/soft-broken text aligns under the first line.
+func prefixInputView(view string) string {
+	if view == "" {
+		return inputPromptPrefix
+	}
+	lines := strings.Split(view, "\n")
+	indent := strings.Repeat(" ", runewidth.StringWidth(inputPromptPrefix))
+	for i, line := range lines {
+		if i == 0 {
+			lines[i] = inputPromptPrefix + line
+		} else {
+			lines[i] = indent + line
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func inputCursorX(prompt, value string, position, width int) int {
@@ -102,7 +128,7 @@ func inputCursorX(prompt, value string, position, width int) int {
 func (m Model) footerFrame(width int) footerFrame {
 	var lines []string
 	inputLine := len(lines)
-	lines = append(lines, splitFrameLines(m.input.View())...)
+	lines = append(lines, splitFrameLines(prefixInputView(m.input.View()))...)
 	if hint := m.shellHintView(width); hint != "" {
 		lines = append(lines, splitFrameLines(hint)...)
 	}

@@ -30,14 +30,16 @@ func (m *Model) completeFileMention() bool {
 	if strings.TrimSpace(selected) == "" {
 		return false
 	}
-	token, ok := activeFileMention(m.input.Value(), m.input.Position())
+	line, lineIdx, col := m.currentInputLine()
+	token, ok := activeFileMention(line, col)
 	if !ok {
 		m.files = nil
 		return false
 	}
-	next, cursor := insertFileMention(m.input.Value(), token, selected)
+	newLine, newCol := insertFileMention(line, token, selected)
+	next := replaceInputLine(m.input.Value(), lineIdx, newLine)
 	m.input.SetValue(next)
-	m.input.SetCursor(cursor)
+	m.setInputCursor(lineIdx, newCol)
 	m.files = nil
 	m.resetPromptHistoryNavigation()
 	return true
@@ -74,7 +76,8 @@ func (m *Model) refreshFilePicker() {
 		m.files = nil
 		return
 	}
-	token, ok := activeFileMention(value, m.input.Position())
+	line, _, col := m.currentInputLine()
+	token, ok := activeFileMention(line, col)
 	if !ok {
 		m.files = nil
 		return
@@ -201,6 +204,63 @@ func slashCommandArgPrefix(raw, command string) (string, bool) {
 
 func (m Model) selectedSlashIndex(matches []slash.Spec) int {
 	return selectedIndex(m.slashIdx, len(matches))
+}
+
+// currentInputLine returns the logical line the cursor is on, its 0-indexed
+// line number, and the cursor's column (rune offset) within that line. The
+// textarea tracks cursor position as (Line, Column) over logical lines, so we
+// split the value on newlines to fetch the corresponding text.
+func (m *Model) currentInputLine() (line string, lineIdx, col int) {
+	lineIdx = m.input.Line()
+	col = m.input.Column()
+	lines := strings.Split(m.input.Value(), "\n")
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return "", lineIdx, col
+	}
+	return lines[lineIdx], lineIdx, col
+}
+
+// replaceInputLine swaps the logical line at lineIdx with newLine, leaving all
+// other lines intact.
+func replaceInputLine(value string, lineIdx int, newLine string) string {
+	lines := strings.Split(value, "\n")
+	if lineIdx < 0 || lineIdx >= len(lines) {
+		return value
+	}
+	lines[lineIdx] = newLine
+	return strings.Join(lines, "\n")
+}
+
+// setInputCursor moves the textarea cursor to (line, col) over logical lines.
+// The textarea exposes no direct row setter, so we rely on MoveToBegin /
+// MoveToEnd (which set the row directly) for the first and last lines, and
+// CursorDown for intermediate lines. CursorDown crosses soft-wrapped visual
+// rows and, due to a bubbles soft-wrap edge case, can stall without advancing
+// the logical line, so the loop is guarded by a stale-progress check that
+// breaks before an infinite loop. In that rare stall the cursor lands on the
+// nearest reachable line; the inserted text itself is already correct, only
+// the cursor column may be off. SetCursorColumn then pins the column.
+func (m *Model) setInputCursor(line, col int) {
+	last := m.input.LineCount() - 1
+	switch {
+	case line <= 0:
+		m.input.MoveToBegin()
+	case line >= last:
+		m.input.MoveToEnd()
+	default:
+		m.input.MoveToBegin()
+		prev := m.input.Line()
+		for m.input.Line() < line {
+			m.input.CursorDown()
+			if m.input.Line() == prev {
+				// CursorDown stalled on a soft-wrapped line; stop to avoid
+				// spinning forever.
+				break
+			}
+			prev = m.input.Line()
+		}
+	}
+	m.input.SetCursorColumn(col)
 }
 
 func selectedIndex(index, length int) int {

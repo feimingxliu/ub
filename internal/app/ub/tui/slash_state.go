@@ -255,12 +255,14 @@ func helpInputLines() []string {
 		"!<command> - run a local shell command in the workspace",
 		"@<prefix> - search workspace files and insert a @relative/path reference",
 		"/<command> - open slash command suggestions",
+		"Ctrl+J - insert a newline for multiline input (Enter sends); Shift+Enter also works on Kitty-capable terminals",
 	}
 }
 
 func helpKeyboardLines() []string {
 	return []string{
-		"Enter - send prompt; while running, queue a normal prompt; with a selected candidate, accept it",
+		"Enter - send prompt; while running, inject it as mid-turn guidance (Tab queues for next turn); with a selected candidate, accept it",
+		"Ctrl+J - insert a newline (multiline input); the box grows up to ~1/3 of the terminal. Shift+Enter also works on terminals with Kitty keyboard support (WezTerm/Ghostty/Kitty/iTerm2), but not over SSH/tmux",
 		"Ctrl+C - quit the TUI, cancelling the current run first",
 		"Esc - clear activity focus or cancel an active picker/file search; while running, press twice to interrupt the current turn",
 		"Shift+Tab - cycle execution mode: work -> plan -> auto",
@@ -271,7 +273,7 @@ func helpKeyboardLines() []string {
 		"Shift+drag - select text for copy (terminal native, bypasses TUI mouse capture)",
 		"Ctrl+O - expand/collapse the latest activity detail",
 		"Ctrl+N/Ctrl+P - move activity focus; Enter/Space toggles the focused activity",
-		"Up/Down - move through suggestions, queued prompts, or prompt history",
+		"Up/Down - on the first/last line, browse queued prompts or history; on a middle line, move the cursor within multiline input; with a picker open, move its selection",
 		"Tab - complete slash commands/values or insert the selected @ file",
 	}
 }

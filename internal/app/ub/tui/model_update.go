@@ -438,7 +438,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.status.width = msg.Width
-		m.input.SetWidth(inputWidthForTerminal(msg.Width, m.input.Prompt))
+		m.input.MaxHeight = inputMaxHeight(msg.Height)
+		m.input.SetWidth(inputContentWidth(msg.Width))
 		return m, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -504,12 +505,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.moveSlashSelection(-1) {
 				return m, nil
 			}
-			if m.navigateQueuedPrompts(-1) {
+			// Smart switching: when the cursor sits on the first line, Up
+			// navigates prompt history / queued prompts (single-line habit);
+			// on any lower line it moves the cursor up within the textarea.
+			if m.input.Line() == 0 {
+				if m.navigateQueuedPrompts(-1) {
+					return m, nil
+				}
+				if m.navigatePromptHistory(-1) {
+					return m, nil
+				}
 				return m, nil
 			}
-			if m.navigatePromptHistory(-1) {
-				return m, nil
-			}
+			m.input.CursorUp()
+			return m, nil
 		case "down":
 			if m.moveFileSelection(1) {
 				return m, nil
@@ -520,12 +529,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.moveSlashSelection(1) {
 				return m, nil
 			}
-			if m.navigateQueuedPrompts(1) {
+			// Smart switching: when the cursor sits on the last line, Down
+			// navigates prompt history / queued prompts; otherwise it moves
+			// the cursor down within the textarea.
+			if m.input.Line() == m.input.LineCount()-1 {
+				if m.navigateQueuedPrompts(1) {
+					return m, nil
+				}
+				if m.navigatePromptHistory(1) {
+					return m, nil
+				}
 				return m, nil
 			}
-			if m.navigatePromptHistory(1) {
-				return m, nil
-			}
+			m.input.CursorDown()
+			return m, nil
 		case "shift+tab":
 			return m.cycleMode()
 		case "tab":
@@ -549,6 +566,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			return m, cmd
+		case "shift+enter", "ctrl+j":
+			// Insert a newline into the textarea (Enter alone submits). The
+			// textarea's KeyMap binds these to InsertNewline.
+			var nlCmd tea.Cmd
+			m.input, nlCmd = m.input.Update(msg)
+			return m, nlCmd
 		case "enter":
 			if m.loadingMessages {
 				return m, nil

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 
 	"github.com/feimingxliu/ub/internal/app/ub/tui/tuitheme"
 	"github.com/feimingxliu/ub/internal/pkg/core/execution"
@@ -15,12 +15,19 @@ import (
 func NewModel(opts Options) Model {
 	styles := tuitheme.ForTheme(opts.Theme)
 	width, height := normalizedWindowSize(opts.initialWidth, opts.initialHeight)
-	input := textinput.New()
-	input.Placeholder = "Type a message or /help"
-	input.Prompt = "› "
-	input.SetStyles(inputTextStyles())
+	input := textarea.New()
+	input.Placeholder = "Type a message or /help (Ctrl+J newline)"
+	input.Prompt = ""
+	input.ShowLineNumbers = false
+	input.EndOfBufferCharacter = ' '
+	input.SetStyles(textareaTextStyles())
 	input.SetVirtualCursor(true)
-	input.SetWidth(inputWidthForTerminal(width, input.Prompt))
+	input.DynamicHeight = true
+	input.MinHeight = 1
+	input.MaxHeight = inputMaxHeight(height)
+	input.SetWidth(inputContentWidth(width))
+	input.KeyMap = inputKeyMap()
+	input.SetHeight(1)
 	_ = input.Focus()
 	ctx := opts.Context
 	if ctx == nil {

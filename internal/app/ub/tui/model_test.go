@@ -34,12 +34,11 @@ func TestMain(m *testing.M) {
 
 func TestInputUsesVirtualCursorForAlignment(t *testing.T) {
 	model := NewModel(Options{Model: "fake/test"})
-	// The input uses a virtual cursor: its View() renders the cursor as a
-	// reverse block inline, which stays aligned with the text across CJK
-	// widths and horizontal scrolling. The real terminal cursor is hidden
+	// The input (a textarea) uses a virtual cursor: its View() renders the
+	// cursor as a reverse block inline, which stays aligned with the text
+	// across CJK widths and soft wrapping. The real terminal cursor is hidden
 	// (Cursor() returns nil) so it cannot drift out of sync with the
-	// unexported scroll offset. The textarea refactor will revisit IME
-	// handling; until then alignment is the priority.
+	// textarea's internal viewport offset.
 	if !model.input.VirtualCursor() {
 		t.Fatalf("input should use a virtual cursor")
 	}
@@ -117,8 +116,8 @@ func TestViewCursorTracksInputLine(t *testing.T) {
 		t.Fatalf("view flags = alt:%v mouse:%v", view.AltScreen, view.MouseMode)
 	}
 	// The main input uses a virtual cursor (reverse block inline in the
-	// textinput View), so view.Cursor is nil and the real terminal cursor is
-	// hidden. The cursor block tracks the input line because the textinput
+	// textarea View), so view.Cursor is nil and the real terminal cursor is
+	// hidden. The cursor block tracks the input line because the textarea
 	// View is placed on it by the frame; assert the input stays focused and
 	// the input line is not the last (status) line.
 	if view.Cursor != nil {
@@ -172,7 +171,7 @@ func TestSubmitKeepsSingleFooterAndInputEditable(t *testing.T) {
 		t.Fatalf("status footer count = %d, want 1\n%s", count, view.Content)
 	}
 	// The input uses a virtual cursor (reverse block rendered inline in the
-	// textinput View), so view.Cursor is nil and the real terminal cursor is
+	// textarea View), so view.Cursor is nil and the real terminal cursor is
 	// hidden. Editability is asserted by the input staying focused and the
 	// input line still being rendered with its content.
 	if !model.input.Focused() || lineContaining(strings.Split(view.Content, "\n"), "› next") < 0 {
@@ -201,6 +200,226 @@ func TestModelEchoesInputOnEnter(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestShiftEnterInsertsNewline(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	model = sendText(t, model, "line one")
+
+	// Shift+Enter should insert a newline rather than submit.
+	updated, _ := model.Update(keyPress(tea.KeyEnter, tea.ModShift))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "line one\n" {
+		t.Fatalf("after shift+enter input = %q, want %q", got, "line one\n")
+	}
+	// Ctrl+J should also insert a newline.
+	updated, _ = model.Update(keyPress('j', tea.ModCtrl))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "line one\n\n" {
+		t.Fatalf("after ctrl+j input = %q, want %q", got, "line one\n\n")
+	}
+}
+
+func TestMultilineEnterSubmitsWholeText(t *testing.T) {
+	runner := &scriptedRunner{events: []Event{{Type: EventDone}}}
+	model := NewModel(Options{Runner: runner, Model: "fake/test"})
+	model = sendText(t, model, "line one")
+	updated, _ := model.Update(keyPress(tea.KeyEnter, tea.ModShift))
+	model = assertModel(t, updated)
+	model = sendText(t, model, "line two")
+	if got := model.InputValue(); got != "line one\nline two" {
+		t.Fatalf("input = %q, want %q", got, "line one\nline two")
+	}
+
+	// Plain Enter submits the whole multiline value as one user message.
+	updated, cmd := model.Update(keyPress(tea.KeyEnter))
+	model = assertModel(t, updated)
+	if model.InputValue() != "" {
+		t.Fatalf("input = %q, want empty after submit", model.InputValue())
+	}
+	model = drainBatch(t, model, cmd)
+	if runner.calls != 1 || runner.prompts[0] != "line one\nline two" {
+		t.Fatalf("runner calls=%d prompts=%v", runner.calls, runner.prompts)
+	}
+	if got, want := model.MessageTexts(), []string{"line one\nline two"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("messages = %#v, want %#v", got, want)
+	}
+}
+
+func TestUpDownSmartSwitchesBetweenHistoryAndLineMove(t *testing.T) {
+	model := NewModel(Options{
+		Model: "fake/test",
+		Messages: []InitialMessage{
+			{Role: userRole, Text: "previous prompt"},
+		},
+	})
+	// Type two lines so the cursor is not on the first line.
+	model = sendText(t, model, "a")
+	updated, _ := model.Update(keyPress(tea.KeyEnter, tea.ModShift))
+	model = assertModel(t, updated)
+	model = sendText(t, model, "b")
+	if model.input.Line() != 1 {
+		t.Fatalf("cursor line = %d, want 1", model.input.Line())
+	}
+
+	// On a non-first line, Up moves the cursor up within the textarea, not history.
+	updated, _ = model.Update(keyPress(tea.KeyUp))
+	model = assertModel(t, updated)
+	if model.input.Line() != 0 {
+		t.Fatalf("after up on line 1, cursor line = %d, want 0", model.input.Line())
+	}
+	if got := model.InputValue(); got != "a\nb" {
+		t.Fatalf("up changed input = %q, want %q", got, "a\nb")
+	}
+
+	// On the first line, Up navigates prompt history (replaces input).
+	updated, _ = model.Update(keyPress(tea.KeyUp))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "previous prompt" {
+		t.Fatalf("after up on line 0, input = %q, want %q", got, "previous prompt")
+	}
+	// History navigation fills the value and leaves the cursor at the end of
+	// its last line (here the entry is single-line, so Line()==0).
+	if model.input.Line() != 0 {
+		t.Fatalf("after history up, cursor line = %d, want 0", model.input.Line())
+	}
+}
+
+func TestUpDownNavigatesQueuedMultilineDrafts(t *testing.T) {
+	// While running, Up/Down browse the queued-prompt FIFO. Multiline queued
+	// items must be filled in intact, and the user's draft must be saved and
+	// restored verbatim as they navigate in and out of the queue.
+	model := NewModel(Options{Runner: &scriptedRunner{}})
+	model.running = true
+	// Queue a multiline prompt.
+	model = sendText(t, model, "queued line a")
+	updated, _ := model.Update(keyPress(tea.KeyEnter, tea.ModShift))
+	model = assertModel(t, updated)
+	model = sendText(t, model, "queued line b")
+	updated, _ = model.Update(keyPress(tea.KeyTab))
+	model = assertModel(t, updated)
+
+	// Type a single-line draft, then Up into the queue (single-line draft ->
+	// cursor on line 0, so one Up enters the queue).
+	model = sendText(t, model, "my draft")
+	updated, _ = model.Update(keyPress(tea.KeyUp))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "queued line a\nqueued line b" {
+		t.Fatalf("up into queue = %q, want multiline queued item", got)
+	}
+
+	// Down past the last queued prompt restores the draft verbatim.
+	updated, _ = model.Update(keyPress(tea.KeyDown))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "my draft" {
+		t.Fatalf("down back to draft = %q, want my draft", got)
+	}
+}
+
+func TestResizeRecalculatesInputMaxHeight(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = assertModel(t, updated)
+	if got, want := model.input.MaxHeight, inputMaxHeight(24); got != want {
+		t.Fatalf("MaxHeight at h=24 = %d, want %d", got, want)
+	}
+
+	// Shrinking the terminal must lower MaxHeight so the textarea never crowds
+	// out the message area.
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	model = assertModel(t, updated)
+	if got, want := model.input.MaxHeight, inputMaxHeight(12); got != want {
+		t.Fatalf("MaxHeight at h=12 = %d, want %d", got, want)
+	}
+	if model.input.MaxHeight >= inputMaxHeight(24) {
+		t.Fatalf("MaxHeight did not shrink on resize: %d", model.input.MaxHeight)
+	}
+
+	// Width must track too (textarea content width excludes the prompt prefix).
+	updated, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
+	model = assertModel(t, updated)
+	if got, want := model.input.Width(), inputContentWidth(100); got != want {
+		t.Fatalf("Width at w=100 = %d, want %d", got, want)
+	}
+}
+
+func TestPermissionModalPreservesMultilineDraft(t *testing.T) {
+	// A permission modal intercepts keys while open; the multiline draft the
+	// user was typing must survive the modal and still be editable after it
+	// closes.
+	response := make(chan permission.Decision, 1)
+	model := NewModel(Options{Model: "fake/test"})
+	model = sendText(t, model, "first line")
+	updated, _ := model.Update(keyPress(tea.KeyEnter, tea.ModShift))
+	model = assertModel(t, updated)
+	model = sendText(t, model, "second line")
+	if got := model.InputValue(); got != "first line\nsecond line" {
+		t.Fatalf("multiline draft = %q", got)
+	}
+
+	// Open the permission modal.
+	req := PermissionRequest{
+		Request:  permission.Request{Tool: "bash", Risk: tool.RiskExec, Mode: execution.ModeWork},
+		Response: response,
+	}
+	updated, _ = model.Update(permissionRequestMsg{request: req, ok: true})
+	model = assertModel(t, updated)
+	if model.pending == nil {
+		t.Fatalf("permission modal did not open")
+	}
+	// Typing while the modal is open must not corrupt the draft.
+	updated, _ = model.Update(runePress('x'))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "first line\nsecond line" {
+		t.Fatalf("draft changed while modal open = %q", got)
+	}
+
+	// Resolve the modal; the draft is intact and the input is still editable.
+	updated, _ = model.Update(runePress('2')) // Deny
+	model = assertModel(t, updated)
+	if model.pending != nil {
+		t.Fatalf("modal still open after deny")
+	}
+	if got := model.InputValue(); got != "first line\nsecond line" {
+		t.Fatalf("draft lost after modal = %q", got)
+	}
+	if !model.input.Focused() {
+		t.Fatalf("input not focused after modal closed")
+	}
+}
+
+func TestSetInputCursorHandlesSoftWrappedLines(t *testing.T) {
+	model := NewModel(Options{Model: "fake/test"})
+	// Narrow the textarea so a single logical line soft-wraps into multiple
+	// visual rows. Width 20 leaves ~16 content columns after the "› " prefix
+	// and frame margins; a 30-char line is guaranteed to wrap.
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
+	model = assertModel(t, updated)
+	contentW := model.input.Width()
+	longLine := strings.Repeat("a", contentW*2) // wraps to >=2 visual rows
+	if longLine == "" {
+		t.Fatalf("input width is 0")
+	}
+	model.input.SetValue(longLine + "\nsecond")
+	model.input.CursorEnd()
+	if model.input.Line() != 1 {
+		t.Fatalf("cursor line = %d, want 1 before completion", model.input.Line())
+	}
+	if model.input.Height() <= 2 {
+		t.Fatalf("expected soft-wrap to grow height beyond 2, got %d (width=%d line=%d)", model.input.Height(), contentW, len(longLine))
+	}
+
+	// Drive a file-mention completion on the second line so setInputCursor
+	// must restore the cursor there after SetValue resets it to the start.
+	model.files = newFilePicker([]string{"path/to/file.go"}, "", nil)
+	model.input.SetValue(longLine + "\n@path")
+	model.input.CursorEnd()
+	if ok := model.completeFileMention(); !ok {
+		t.Fatalf("completeFileMention returned false")
+	}
+	if model.input.Line() != 1 {
+		t.Fatalf("after completeFileMention cursor line = %d, want 1 (soft-wrap must not strand cursor on line 0)", model.input.Line())
 	}
 }
 
@@ -2219,6 +2438,7 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"@<prefix> - search workspace files",
 		"keyboard:",
 		"Enter - send prompt",
+		"Ctrl+J - insert a newline",
 		"Ctrl+C - quit",
 		"Esc - clear activity focus",
 		"Shift+Tab - cycle execution mode",
@@ -2227,7 +2447,7 @@ func TestSlashHelpListsShortcuts(t *testing.T) {
 		"Ctrl+Home/Ctrl+End - jump to the start/end",
 		"Ctrl+O - expand/collapse",
 		"Ctrl+N/Ctrl+P - move activity focus",
-		"Up/Down - move through suggestions",
+		"Up/Down - on the first/last line",
 		"Tab - complete slash commands",
 		"pickers and permission:",
 		"model/effort/session pickers",
@@ -5964,9 +6184,9 @@ func assertCursorOnInputLine(t *testing.T, model Model, marker string) {
 		t.Fatalf("input marker %q missing:\n%s", marker, view.Content)
 	}
 	// The main input uses a virtual cursor (reverse block rendered inline in
-	// the textinput View), so view.Cursor is nil and the real terminal cursor
+	// the textarea View), so view.Cursor is nil and the real terminal cursor
 	// is hidden. The cursor block sits on the input line because the
-	// textinput View is placed there by the frame; assert editability via the
+	// textarea View is placed there by the frame; assert editability via the
 	// input staying focused and the marker line being present.
 	if !model.input.Focused() {
 		t.Fatalf("input not focused for marker %q\n%s", marker, view.Content)

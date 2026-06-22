@@ -84,15 +84,18 @@ type fileMentionToken struct {
 	prefix string
 }
 
-func activeFileMention(value string, cursor int) (fileMentionToken, bool) {
-	runes := []rune(value)
-	cursor = clampInt(cursor, 0, len(runes))
-	tokenStart := cursor
+// activeFileMention detects a pending @mention on a single logical line at the
+// given column (rune index within that line). Multiline input is handled by
+// the caller, which passes only the cursor's current line.
+func activeFileMention(line string, col int) (fileMentionToken, bool) {
+	runes := []rune(line)
+	col = clampInt(col, 0, len(runes))
+	tokenStart := col
 	for tokenStart > 0 && !unicode.IsSpace(runes[tokenStart-1]) {
 		tokenStart--
 	}
 	at := -1
-	for i := tokenStart; i < cursor; i++ {
+	for i := tokenStart; i < col; i++ {
 		if runes[i] == '@' {
 			at = i
 		}
@@ -102,13 +105,16 @@ func activeFileMention(value string, cursor int) (fileMentionToken, bool) {
 	}
 	return fileMentionToken{
 		start:  at,
-		end:    cursor,
-		prefix: string(runes[at+1 : cursor]),
+		end:    col,
+		prefix: string(runes[at+1 : col]),
 	}, true
 }
 
-func insertFileMention(value string, token fileMentionToken, path string) (string, int) {
-	runes := []rune(value)
+// insertFileMention replaces the mention token on a single logical line with
+// the quoted @path reference and returns the new line plus the column (rune
+// index within that line) where the cursor should land.
+func insertFileMention(line string, token fileMentionToken, path string) (string, int) {
+	runes := []rune(line)
 	token.start = clampInt(token.start, 0, len(runes))
 	token.end = clampInt(token.end, token.start, len(runes))
 	ref := "@" + quoteFileMentionPath(path) + " "

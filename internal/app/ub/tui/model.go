@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 
 	permissiondialog "github.com/feimingxliu/ub/internal/app/ub/tui/dialog/permission"
 	"github.com/feimingxliu/ub/internal/app/ub/tui/tuitheme"
@@ -33,7 +33,7 @@ Process:
 
 // Model is the root Bubble Tea model for the chat shell.
 type Model struct {
-	input            textinput.Model
+	input            textarea.Model
 	messages         messageList
 	status           statusBar
 	styles           tuitheme.Styles
