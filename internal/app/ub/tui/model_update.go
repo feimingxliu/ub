@@ -91,6 +91,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, tea.Quit
 			case "esc":
+				if m.askPrompt.otherMode {
+					m.askPrompt.ExitOtherMode()
+					return m, nil
+				}
 				return m.resolveAsk(true)
 			case "ctrl+home":
 				m.scrollToTop()
@@ -99,9 +103,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scrollToBottom()
 				return m, nil
 			case "enter":
-				return m.resolveAsk(false)
+				if m.askPrompt.HandleEnter() {
+					return m.resolveAsk(false)
+				}
+				return m, nil
 			default:
-				m.askPrompt.HandleKey(key.String())
+				m.askPrompt.HandleKey(key)
 				return m, nil
 			}
 		}

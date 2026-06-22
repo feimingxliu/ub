@@ -87,3 +87,47 @@ func TestAskToolValidArgsNoError(t *testing.T) {
 		t.Fatal("expected IsError=false for valid ask")
 	}
 }
+
+func TestFormatAskResponseWithCustomText(t *testing.T) {
+	questions := []AskQuestion{{
+		Header:   "Backend",
+		Question: "Which store should ub use?",
+		Options: []AskOption{
+			{Label: "SQLite"},
+			{Label: "Postgres"},
+		},
+	}}
+	resp := AskResponse{Answers: []AskAnswer{{
+		Header:   "Backend",
+		Question: "Which store should ub use?",
+		Text:     "my custom store",
+	}}}
+	out := formatAskResponse(resp, questions)
+	if !strings.Contains(out, "my custom store") {
+		t.Fatalf("expected custom text in response, got: %s", out)
+	}
+	if strings.Contains(out, "SQLite") || strings.Contains(out, "Postgres") {
+		t.Fatalf("custom text answer should not list modeled options, got: %s", out)
+	}
+	if !strings.Contains(out, "Backend: my custom store") {
+		t.Fatalf("expected header-prefixed custom text, got: %s", out)
+	}
+}
+
+func TestFormatAskResponseCustomTextPrecedenceOverSelected(t *testing.T) {
+	// When both Text and Selected are set, Text wins (defensive).
+	questions := []AskQuestion{{Header: "H", Question: "Q?", Options: []AskOption{{Label: "A"}}}}
+	resp := AskResponse{Answers: []AskAnswer{{
+		Header:   "H",
+		Question: "Q?",
+		Text:     "custom",
+		Selected: []AskOption{{Label: "A"}},
+	}}}
+	out := formatAskResponse(resp, questions)
+	if !strings.Contains(out, "custom") {
+		t.Fatalf("expected custom text to win, got: %s", out)
+	}
+	if strings.Contains(out, "A") {
+		t.Fatalf("Selected should be ignored when Text present, got: %s", out)
+	}
+}

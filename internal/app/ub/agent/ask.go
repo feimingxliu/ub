@@ -65,7 +65,11 @@ type AskAnswer struct {
 	Header   string      `json:"header,omitempty"`
 	Question string      `json:"question,omitempty"`
 	Selected []AskOption `json:"selected,omitempty"`
-	Skipped  bool        `json:"skipped,omitempty"`
+	// Text holds a free-form "Other" answer the user typed instead of
+	// picking a modeled option. When non-empty it takes precedence over
+	// Selected and is what the model sees as the answer.
+	Text    string `json:"text,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"`
 }
 
 // AskResponse is returned by the host UI after the user answers or skips.
@@ -206,6 +210,15 @@ func formatAskResponse(resp AskResponse, questions []AskQuestion) string {
 		}
 		if answer.Skipped {
 			b.WriteString("skipped")
+			continue
+		}
+		if text := strings.TrimSpace(answer.Text); text != "" {
+			b.WriteString(text)
+			if question != "" {
+				b.WriteString(" (")
+				b.WriteString(question)
+				b.WriteString(")")
+			}
 			continue
 		}
 		var labels []string

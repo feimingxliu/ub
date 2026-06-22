@@ -268,7 +268,7 @@ type FileChange struct {
 - `exec`：bash / job_run / job_kill
 - `network`：web_search / web_fetch
 
-`ask`:让模型在确有用户偏好分叉时发起结构化问题。schema 为 `questions[]`(header、question、options、multi_select),TUI 渲染单选/多选 chooser,把选择摘要回灌为 tool result 并写入 transcript;headless `ub run` 无交互 asker 时不阻塞,而是返回让模型自行判断并说明假设的 tool result。它是 `RiskSafe`,不走 permission approval,plan 模式也可用;子 agent 默认不继承 asker。
+`ask`:让模型在确有用户偏好分叉时发起结构化问题。schema 为 `questions[]`(header、question、options、multi_select),TUI 以分步向导逐题渲染(一次一题,Enter 确认当前题并前进,末题 Enter 整体提交;←/→或 Tab 在题间前后切换),每题选项列表末尾追加一个虚拟 "Other" 项,选中后进入行内自由文本输入作为该题答案;question/option 文本超宽时换行完整显示而非截断。选择摘要回灌为 tool result 并写入 transcript(`ask answered: header: label` 或 `header: <自定义文本>`);headless `ub run` 无交互 asker 时不阻塞,而是返回让模型自行判断并说明假设的 tool result。它是 `RiskSafe`,不走 permission approval,plan 模式也可用;子 agent 默认不继承 asker。
 
 `enter_plan_mode` / `exit_plan_mode`:模型发起的 plan-mode 状态切换。`enter_plan_mode(reason?)` 只在 `work` 模式广告,弹 TUI 确认后把本进程 mode 切到 `plan` 并记住内存态 `pre_plan_mode`;`auto` / `full-access` 默认不广告。`exit_plan_mode(plan_id, summary?)` 只在 `plan` 模式广告,要求带 `plan_write` / `plan_update` 返回的 `plan_id`;缺失时直接返回明确 tool error,不会弹批准框。批准退出时恢复 `pre_plan_mode`(缺失则回到启动有效 mode 或 `work`),拒绝则留在 plan 模式让模型修订同一个 artifact。两者都是 `RiskSafe`,不走 permission approval,但 TUI 会把用户批准/拒绝写成 mode activity 并进入 rollout 审计。
 
