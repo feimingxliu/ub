@@ -15,6 +15,13 @@ import (
 )
 
 // Provider is the behavior interface implemented by every model backend.
+//
+// Chat contract: implementations must not retain references to req.Messages
+// or req.Tools after Chat returns. The caller owns those slices and may reuse
+// or mutate them once the call completes. The Stream returned by Chat must
+// also not reach back into req; any data it needs across Next() calls must be
+// copied during Chat. This lets the agent loop avoid a defensive deep copy at
+// every provider boundary.
 type Provider interface {
 	Name() string
 	Caps() Caps
@@ -46,6 +53,11 @@ type Caps struct {
 }
 
 // Request is the provider-neutral chat request.
+//
+// Messages and Tools are borrowed for the duration of the Chat call only.
+// Providers must finish reading them before returning from Chat and must not
+// hold references in the returned Stream — see the Provider interface comment
+// for the full contract.
 type Request struct {
 	Model     string
 	Messages  []message.Message

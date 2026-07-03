@@ -62,13 +62,17 @@ type CompactResult struct {
 // and triggers context compaction if the estimate exceeds the configured
 // threshold. It returns the (possibly compacted) messages, the provider-facing
 // request messages with runtime context prepended, and the final token estimate.
+//
+// On the non-compact path the returned messages slice is the same one passed
+// in (the caller transfers ownership; no copy is made). On the compact path
+// the returned slice is freshly allocated. Either way the caller may treat the
+// returned messages as owned and append to it.
 func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, tools []provider.ToolDefinition) (preparedMessages, error) {
-	requestMessages := cloneMessages(messages)
-	providerMessages := a.withRuntimeContext(requestMessages)
+	providerMessages := a.withRuntimeContext(messages)
 	estimated := contextmgr.EstimateRequest(providerMessages, tools, a.model)
 	if !a.shouldSummarize(estimated) {
 		a.emitContextUsage(estimated, false)
-		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
+		return preparedMessages{messages: messages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
 	a.emit(Event{
 		Type:         EventActivity,
@@ -77,7 +81,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 		Status:       "running",
 		Summary:      "compacting context",
 	})
-	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated, tools)
+	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, messages, estimated, tools)
 	if err != nil {
 		slog.Warn("context compaction failed", "session", sessionID, "turn", turn, "err", err)
 		a.emit(Event{
@@ -98,7 +102,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 			Summary:      "nothing to compact yet",
 		})
 		a.emitContextUsage(estimated, false)
-		return preparedMessages{messages: requestMessages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
+		return preparedMessages{messages: messages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
 	a.emit(Event{
 		Type:         EventActivity,

@@ -97,7 +97,7 @@ loop:
 			slog.Debug("provider chat request", "session", req.SessionID, "turn", req.Turn, "loop_turn", turn, "model", a.model, "estimated_tokens", prepared.estimatedTokens, "tool_count", len(tools))
 			stream, err := a.provider.Chat(ctx, provider.Request{
 				Model:     a.model,
-				Messages:  cloneMessages(prepared.requestMessages),
+				Messages:  prepared.requestMessages,
 				Tools:     tools,
 				Reasoning: cloneReasoning(a.reasoning),
 			})
@@ -264,7 +264,7 @@ func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn
 	// Without Reasoning the recovery path produces a normal text response.
 	stream, err := a.provider.Chat(ctx, provider.Request{
 		Model:    a.model,
-		Messages: cloneMessages(providerMessages),
+		Messages: providerMessages,
 	})
 	if err != nil {
 		return Result{}, a.recordError(ctx, sessionID, turn, fmt.Errorf("%w: final no-tool request failed: %v", ErrMaxTurns, err))
