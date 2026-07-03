@@ -46,7 +46,12 @@ type autoMemoryCandidate struct {
 
 // MemoryAutoScheduler coalesces post-turn auto-memory extraction so the main
 // agent response path does not synchronously call the small model on every
-// successful turn.
+// successful turn. It batches turns until a threshold is reached (message count
+// or turn count), then runs a single extraction job using the accumulated
+// messages. A background goroutine started by maybeSchedule performs the
+// actual provider call; the scheduler tracks inProgress to avoid overlapping
+// extractions. Hosts that create a fresh Agent per turn should share one
+// scheduler for the session lifetime.
 type MemoryAutoScheduler struct {
 	mu sync.Mutex
 
@@ -76,6 +81,9 @@ func NewMemoryAutoScheduler() *MemoryAutoScheduler {
 	return s
 }
 
+// finishSuccessfulTurn is called when the agent produces a final text reply
+// with no pending tool calls. It emits the EventDone, schedules auto-memory
+// extraction if configured, and runs the post-user-turn hook.
 func (a *Agent) finishSuccessfulTurn(ctx context.Context, sessionID string, turn int, messages []message.Message, text string) {
 	a.emit(Event{Type: EventDone, Text: text})
 	a.scheduleAutoMemory(ctx, sessionID, turn, messages)

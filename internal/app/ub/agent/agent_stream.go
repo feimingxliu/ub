@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/pkg/core/message"
@@ -24,6 +25,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 			break
 		}
 		if err != nil {
+			slog.Warn("stream error", "session", sessionID, "turn", turn, "err", err)
 			return streamResult{}, err
 		}
 		switch event.Type {

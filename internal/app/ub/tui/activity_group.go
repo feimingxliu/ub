@@ -5,12 +5,18 @@ import (
 	"strings"
 )
 
+// appendOrUpdateActivity appends a new activity block or updates an existing
+// one in the live transcript. It also carries through any todo state from the
+// event. Live events arrive in real time during an agent turn.
 func (l *messageList) appendOrUpdateActivity(event Event) {
 	block := activityMessage(event)
 	l.appendOrUpdateBlock(block)
 	l.appendOrUpdateTodo(event)
 }
 
+// appendOrUpdateLiveActivity appends a live event scoped to a specific turn
+// with a "live:turn-N:" key prefix so it does not collide with restored
+// history events from the same turn during resume.
 func (l *messageList) appendOrUpdateLiveActivity(event Event, turn int) {
 	block := activityMessage(event)
 	if turn > 0 && strings.TrimSpace(block.key) != "" {
@@ -20,6 +26,10 @@ func (l *messageList) appendOrUpdateLiveActivity(event Event, turn int) {
 	l.appendOrUpdateTodo(event)
 }
 
+// appendOrUpdateLoadedActivity appends a restored history event with a
+// "history:turn-N:" key prefix. The event is first normalized so its summary
+// text matches the live-format convention, avoiding duplicate rendering when
+// the same event is replayed on resume.
 func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
 	event = normalizeLoadedActivityEvent(event)
 	block := activityMessage(event)
@@ -30,6 +40,9 @@ func (l *messageList) appendOrUpdateLoadedActivity(event Event, turn int) {
 	l.appendOrUpdateTodo(event)
 }
 
+// appendOrUpdateTodo wraps a todo event into a message block and upserts it.
+// When a todo_write event starts a new list, the previous todo block for the
+// same role is removed first so the transcript shows only the current list.
 func (l *messageList) appendOrUpdateTodo(event Event) {
 	block, ok := todoMessageFromEvent(event)
 	if !ok {
@@ -45,6 +58,9 @@ func todoEventStartsNewList(event Event) bool {
 	return strings.TrimSpace(event.ToolName) == "todo_write"
 }
 
+// normalizeLoadedActivityEvent strips redundant summary prefixes (tool title,
+// action name) that were stored by old agent versions, because the restored
+// summary would otherwise read "Read read foo.go" instead of just "foo.go".
 func normalizeLoadedActivityEvent(event Event) Event {
 	if strings.TrimSpace(event.ActivityKind) != "tool" {
 		event.Content = normalizeLoadedActivityDetail(event.Content)
@@ -55,6 +71,11 @@ func normalizeLoadedActivityEvent(event Event) Event {
 	return event
 }
 
+// normalizeLoadedToolSummary strips the leading tool-title label (e.g. "Read")
+// from a loaded summary when it would duplicate the automatically-prefixed
+// tool-action label in the activity message rendering. For summaries that are
+// just the tool name + "failed", it returns empty so the renderer produces
+// "Read failed" instead of "Read Read failed".
 func normalizeLoadedToolSummary(toolName, status, summary string) string {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
@@ -106,6 +127,10 @@ func legacyToolAction(toolName string) string {
 	}
 }
 
+// normalizeLoadedActivityDetail handles backward compatibility for detail
+// content stored by old agent versions that appended "... (truncated)" in free
+// text. It promotes truncation notices to the first line so the TUI renders
+// the notice header consistently regardless of agent version.
 func normalizeLoadedActivityDetail(detail string) string {
 	detail = strings.TrimRight(detail, " \t\r\n")
 	if strings.TrimSpace(detail) == "" {
@@ -141,6 +166,11 @@ func promoteActivityTruncationNotice(detail string) string {
 	return detail
 }
 
+// appendOrUpdateActivityInGroup adds an activity entry to (or updates an entry
+// in) a named group. If the group does not exist, it is created as a collapsible
+// container. A placeholder "Thinking..." entry is removed from the group when
+// the first non-thinking entry arrives. The group title and status are
+// recomputed on each change.
 func (l *messageList) appendOrUpdateActivityInGroup(groupKey, groupName string, event Event) {
 	if strings.TrimSpace(groupKey) == "" {
 		l.appendOrUpdateActivity(event)
@@ -179,6 +209,8 @@ func (l *messageList) appendOrUpdateActivityInGroup(groupKey, groupName string, 
 	l.clampFocus()
 }
 
+// finishActivityGroup marks a group with the given status (done/failed) and
+// finalizes its title. It is a no-op if the group key does not exist.
 func (l *messageList) finishActivityGroup(key, status string) {
 	idx := l.activityGroupIndex(key)
 	if idx < 0 {
@@ -195,6 +227,10 @@ func (l *messageList) finishActivityGroup(key, status string) {
 	l.invalidateRender()
 }
 
+// removePlaceholderActivityGroup removes an activity group that contains only
+// a single "Thinking..." entry (a placeholder that was created before any real
+// activity arrived). This prevents showing an empty group when thinking was
+// the only event for that run. Returns true if the group was removed.
 func (l *messageList) removePlaceholderActivityGroup(key string) bool {
 	idx := l.activityGroupIndex(key)
 	if idx < 0 {
@@ -216,6 +252,9 @@ func (l *messageList) removePlaceholderActivityGroup(key string) bool {
 	return true
 }
 
+// activityGroupIndex searches from the end of the message list for an
+// activity group with the given key. Reverse search matches the most recent
+// group when multiple groups have the same key (should not normally happen).
 func (l messageList) activityGroupIndex(key string) int {
 	for i := len(l.items) - 1; i >= 0; i-- {
 		if l.items[i].role == activityRole && l.items[i].key == key && l.items[i].kind == activityGroupMessage {
@@ -225,6 +264,9 @@ func (l messageList) activityGroupIndex(key string) int {
 	return -1
 }
 
+// appendToolStatus adds a simple tool status line to the transcript. Used
+// by legacy message types that arrive as plain status text rather than
+// structured events.
 func (l *messageList) appendToolStatus(name, state string) {
 	if strings.TrimSpace(name) == "" {
 		name = "tool"
@@ -244,6 +286,9 @@ func (l *messageList) appendToolStatus(name, state string) {
 	l.clampFocus()
 }
 
+// appendPermissionEvent appends a permission decision block to the
+// transcript. Unlike tool activities, permission events are not grouped —
+// each is a standalone message that shows the source, decision, and reason.
 func (l *messageList) appendPermissionEvent(event Event) {
 	text := permissionEventText(event)
 	block := message{
@@ -261,6 +306,10 @@ func (l *messageList) appendPermissionEvent(event Event) {
 	l.clampFocus()
 }
 
+// upsertActivityEntry inserts or replaces an entry in the activity entry
+// list. If the new entry has a matching key, the old entry is replaced;
+// otherwise the new entry is appended. The old entry's collapsed state is
+// preserved on update.
 func upsertActivityEntry(entries []message, entry message) []message {
 	if strings.TrimSpace(entry.key) != "" {
 		for i := range entries {
@@ -276,6 +325,9 @@ func upsertActivityEntry(entries []message, entry message) []message {
 	return append(entries, entry)
 }
 
+// mergeActivityMessage merges two messages of the same kind by delegating to
+// the kind-specific merge. Different-kind messages are treated as replacements
+// (incoming wins).
 func mergeActivityMessage(existing, incoming message) message {
 	if existing.kind == thinkingMessage && incoming.kind == thinkingMessage {
 		return mergeThinkingMessage(existing, incoming)
@@ -286,6 +338,12 @@ func mergeActivityMessage(existing, incoming message) message {
 	return incoming
 }
 
+// mergeToolMessage merges a running-tool update into its existing entry. The
+// detail content is accumulated (with truncation) when the tool is still
+// running; once the tool completes (status != running), the existing detail
+// is preserved only when the incoming detail is not meaningful or contains
+// only shell metadata. The title is preserved from the existing entry when
+// the incoming has a generic running label.
 func mergeToolMessage(existing, incoming message) message {
 	if incoming.status != "running" {
 		if shouldKeepExistingToolDetail(existing, incoming) {
@@ -322,6 +380,10 @@ func appendToolRunningDetail(existing, incoming string) string {
 	return existing + "\n" + incoming
 }
 
+// shouldKeepExistingToolDetail decides whether the running-detail content
+// accumulated so far is more useful than the final detail delivered at
+// completion time. This prevents a verbose running output from being replaced
+// by a short final summary that loses the useful intermediate state.
 func shouldKeepExistingToolDetail(existing, incoming message) bool {
 	existingDetail := strings.TrimSpace(existing.detail)
 	if existingDetail == "" {
@@ -343,6 +405,10 @@ func shouldKeepExistingToolDetail(existing, incoming message) bool {
 	return false
 }
 
+// shellMetadataOnlyDetail returns true when a detail string contains only a
+// <shell_metadata> block and empty stdout/stderr sections — the tool ran but
+// produced no visible output. In that case the accumulated running detail
+// (which may have partial output) should be preserved.
 func shellMetadataOnlyDetail(detail string) bool {
 	if !strings.HasPrefix(detail, "<shell_metadata>") {
 		return false
@@ -369,6 +435,9 @@ func toolDetailHasTruncationNotice(detail string) bool {
 		strings.Contains(detail, "full_output_path=")
 }
 
+// genericRunningToolTitle returns true when a running-tool message has no
+// meaningful title beyond the tool action name. The existing entry's title
+// is preserved in that case to avoid flickering as partial output arrives.
 func genericRunningToolTitle(item message) bool {
 	if item.status != "running" {
 		return false
@@ -377,6 +446,9 @@ func genericRunningToolTitle(item message) bool {
 	return action != "" && strings.TrimSpace(item.title) == action && strings.TrimSpace(item.text) == action
 }
 
+// truncateToolPartialPreview truncates accumulated running tool output to
+// maxToolPartialPreviewRunes. The head is dropped and replaced with an
+// "[earlier output truncated]" marker, preserving only the tail.
 func truncateToolPartialPreview(text string) string {
 	runes := []rune(text)
 	if len(runes) <= maxToolPartialPreviewRunes {

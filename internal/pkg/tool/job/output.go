@@ -46,6 +46,10 @@ func (t *outputTool) ExecuteStream(ctx context.Context, raw json.RawMessage, eve
 	return t.run(ctx, raw, events)
 }
 
+// run is the shared implementation for Execute and ExecuteStream. When
+// events is non-nil and follow=true, output is streamed in real time as
+// it arrives from the background job. A snapshot (non-follow) read always
+// returns immediately with the current ring buffer contents.
 func (t *outputTool) run(ctx context.Context, raw json.RawMessage, events chan<- tool.StreamEvent) (tool.Result, error) {
 	var a outputArgs
 	if err := tool.DecodeArgs("job_output", raw, &a); err != nil {

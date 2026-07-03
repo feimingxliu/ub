@@ -30,6 +30,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return runWithFactory(args, stdout, stderr, newRootCmd)
 }
 
+// runWithFactory is the shared entry point for Execute and tests. It sets up
+// logging (with rotation), runs the cobra command tree, and returns a process
+// exit code. Panics from any command are recovered and rendered to stderr.
 func runWithFactory(args []string, stdout, stderr io.Writer, cmdFactory func() *cobra.Command) (code int) {
 	if stdout == nil {
 		stdout = io.Discard
@@ -130,6 +133,10 @@ type runtimeOptions struct {
 	model    string
 }
 
+// configForProcessStartup loads config early (before cobra parses flags) so
+// that log rotation settings from config are available during logger setup.
+// On error it falls back to defaults rather than failing — logging should
+// always be available.
 func configForProcessStartup(args []string) *config.Config {
 	cfg, _, err := config.LoadWithOptions(preloadRootOptions(args))
 	if err != nil {
@@ -138,6 +145,9 @@ func configForProcessStartup(args []string) *config.Config {
 	return cfg
 }
 
+// preloadRootOptions extracts --profile and --dev from the raw args before
+// cobra has parsed them. This is needed because config loading (and thus
+// log rotation) happens before cobra command execution.
 func preloadRootOptions(args []string) config.LoadOptions {
 	var opts config.LoadOptions
 	for i := 0; i < len(args); i++ {
@@ -159,6 +169,9 @@ func preloadRootOptions(args []string) config.LoadOptions {
 	return opts
 }
 
+// logRotationOptions translates the cleanup config section into rotation
+// parameters for the logger. Returns zero-value options when cleanup is
+// disabled, so the logger runs without rotation.
 func logRotationOptions(cfg *config.Config) logx.RotationOptions {
 	if cfg == nil {
 		cfg = config.Defaults()
@@ -173,6 +186,8 @@ func logRotationOptions(cfg *config.Config) logx.RotationOptions {
 	}
 }
 
+// runStartupMaintenance runs periodic cleanup tasks (old sessions, stale
+// logs, expired tool output spillover) at process start if enabled in config.
 func runStartupMaintenance(cmd *cobra.Command, cfg *config.Config) {
 	maintenance.RunStartup(cmd.Context(), cfg)
 }
@@ -265,6 +280,8 @@ func newConfigCmd() *cobra.Command {
 	return cmd
 }
 
+// loadConfigForCommand loads the merged effective config using flags from
+// the cobra command tree (profile, dev, mode).
 func loadConfigForCommand(cmd *cobra.Command) (*config.Config, []string, error) {
 	opts, err := loadOptionsForCommand(cmd)
 	if err != nil {

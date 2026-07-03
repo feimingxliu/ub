@@ -79,7 +79,8 @@ func (a editArgs) hasLineRange() bool {
 
 // applyEdit returns the new file content and the number of replacements.
 // It returns an error if old is missing or there are multiple matches
-// without replace_all set.
+// without replace_all set. When a line range is specified, applyLineEdit
+// handles the replacement by line number instead of string matching.
 func applyEdit(content string, a editArgs) (string, int, error) {
 	if a.hasLineRange() {
 		return applyLineEdit(content, a)
@@ -103,6 +104,12 @@ type lineSpan struct {
 	end   int
 }
 
+// applyLineEdit replaces a range of complete lines (1-based, inclusive) in
+// the content. When old is provided, it is used as an anchor: the existing
+// lines must contain old as a substring, otherwise the edit is rejected to
+// prevent stale line numbers from silently editing the wrong location.
+// Without old, only single-line edits are allowed (to reduce the risk of
+// silently replacing the wrong lines).
 func applyLineEdit(content string, a editArgs) (string, int, error) {
 	startLine := int(a.StartLine)
 	endLine := int(a.EndLine)
@@ -137,6 +144,10 @@ func applyLineEdit(content string, a editArgs) (string, int, error) {
 	return content[:start] + replacement + content[end:], 1, nil
 }
 
+// lineEditRequiresAnchor returns true when a line-range edit requires an
+// "old" anchor. Multi-line replacements require an anchor to prevent stale
+// line numbers from silently editing the wrong location. Single-line
+// replacements that produce only one logical line do not require an anchor.
 func lineEditRequiresAnchor(startLine, endLine int, replacement string) bool {
 	if endLine != startLine {
 		return true
@@ -159,6 +170,9 @@ func logicalLineCount(s string) int {
 	return strings.Count(s, "\n") + 1
 }
 
+// lineRangeOldMatches checks whether the selected line content matches the
+// old anchor, normalizing line endings. Content ending in \n matches an old
+// without trailing \n to allow flexible client input.
 func lineRangeOldMatches(selected, old, eol string) bool {
 	if selected == old {
 		return true
@@ -170,6 +184,9 @@ func lineRangeOldMatches(selected, old, eol string) bool {
 	return hasLineEnding(selected) && !hasLineEnding(normalizedOld) && selected == normalizedOld+eol
 }
 
+// contentLineSpans computes the byte index range [start, end) for each line in
+// content. Lines are separated by \n; the final line may or may not be
+// newline-terminated.
 func contentLineSpans(content string) []lineSpan {
 	if content == "" {
 		return nil
@@ -189,6 +206,8 @@ func contentLineSpans(content string) []lineSpan {
 	return spans
 }
 
+// dominantLineEnding detects whether the content uses Windows line endings
+// (\r\n) or Unix line endings (\n).
 func dominantLineEnding(content string) string {
 	if strings.Contains(content, "\r\n") {
 		return "\r\n"
@@ -196,6 +215,9 @@ func dominantLineEnding(content string) string {
 	return "\n"
 }
 
+// normalizeReplacementLineEndings converts the replacement text to match the
+// dominant line ending of the target file. Inputs may use \n, \r\n, or \r;
+// the output always uses eol.
 func normalizeReplacementLineEndings(s, eol string) string {
 	if eol == "\n" || s == "" {
 		return s
@@ -209,6 +231,8 @@ func hasLineEnding(s string) bool {
 	return strings.HasSuffix(s, "\n") || strings.HasSuffix(s, "\r")
 }
 
+// editOldNotFoundError constructs a helpful error message when old text is not
+// found, including hints about whitespace and suggestions for recovery.
 func editOldNotFoundError(content, old string) error {
 	hints := []string{
 		"old must match the file exactly, including tabs, spaces, and line endings",

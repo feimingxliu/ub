@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
@@ -141,9 +142,11 @@ func (t *bashTool) run(ctx context.Context, raw json.RawMessage, events chan<- t
 	case waitErr = <-done:
 	case <-timer.C:
 		killGroup(fmt.Sprintf("timeout after %s", timeout))
+		slog.Info("bash timeout", "command", commandPreview(a.Command), "timeout", timeout, "pid", pid)
 		waitErr = <-done
 	case <-ctx.Done():
 		killGroup(fmt.Sprintf("cancelled: %v", ctx.Err()))
+		slog.Info("bash cancelled", "command", commandPreview(a.Command), "err", ctx.Err())
 		waitErr = <-done
 	}
 	duration := time.Since(start)
@@ -252,4 +255,16 @@ func shellCommand(command string) *exec.Cmd {
 		return exec.Command("cmd", "/C", command)
 	}
 	return exec.Command("/bin/sh", "-c", command)
+}
+
+// commandPreview returns a shortened preview of a shell command for logging.
+// Long commands are truncated to avoid flooding the log with full multi-line
+// scripts.
+func commandPreview(command string) string {
+	const maxLen = 200
+	command = strings.TrimSpace(command)
+	if len(command) <= maxLen {
+		return command
+	}
+	return command[:maxLen] + "..."
 }

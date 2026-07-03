@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+// RuleAction determines whether a matched rule allows, asks, or denies
+// the tool call.
 type RuleAction string
 
 const (
@@ -18,6 +20,8 @@ const (
 )
 
 // Rule is a Claude-style permission rule such as "Bash(go test:*)".
+// Pattern is the command-matching portion inside the parentheses; an empty
+// pattern means the rule matches the tool regardless of arguments.
 type Rule struct {
 	Raw     string
 	Action  RuleAction
@@ -96,6 +100,9 @@ func workspaceFromRequest(req Request) string {
 	return strings.TrimSpace(req.Workspace)
 }
 
+// matches tests whether this rule matches the given tool and command.
+// Tool name must match exactly; pattern uses bash-style glob matching
+// (prefix:* or wildcards).
 func (r Rule) matches(req Request, command string) bool {
 	if r.Tool != "" && r.Tool != permissionToolName(req.Tool) {
 		return false
@@ -106,6 +113,10 @@ func (r Rule) matches(req Request, command string) bool {
 	return bashPatternMatch(r.Pattern, command)
 }
 
+// matchAllowRule checks whether any allow rule covers the command. For
+// compound commands (joined by &&, ;, |, etc.), every subcommand must match
+// an allow rule for the whole command to be allowed. Returns the first
+// matching rule.
 func matchAllowRule(rules []Rule, req Request, command string) (Rule, bool) {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -133,6 +144,9 @@ func matchAllowRule(rules []Rule, req Request, command string) (Rule, bool) {
 	return first, true
 }
 
+// matchAnyRule checks whether any deny or ask rule matches the command.
+// Unlike allow rules, matching any single subcommand is sufficient to
+// trigger the rule (deny/ask are disjunctive across subcommands).
 func matchAnyRule(rules []Rule, req Request, command string) (Rule, bool) {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -168,6 +182,11 @@ func (r Rule) matchesWholeCommand(req Request, command string) bool {
 	return r.Pattern == command || r.Pattern == ""
 }
 
+// bashPatternMatch implements the pattern matching for permission rules.
+// It supports three forms:
+//   - "prefix:*" — prefix match (command equals prefix or starts with "prefix ")
+//   - "literal"  — exact match
+//   - "glob*"    — wildcard match compiled to a regexp
 func bashPatternMatch(pattern, command string) bool {
 	pattern = strings.TrimSpace(pattern)
 	command = strings.TrimSpace(command)
@@ -313,6 +332,10 @@ func formatPermissionRule(toolName, pattern string) string {
 	return fmt.Sprintf("%s(%s)", toolName, strings.TrimSpace(pattern))
 }
 
+// splitShellCommands splits a compound shell command into individual
+// subcommands at unquoted &&, ;, |, ||, and && boundaries. Quoted and
+// escaped separators are preserved. This is used by the permission rule
+// matcher to evaluate each subcommand independently.
 func splitShellCommands(command string) []string {
 	var commands []string
 	var b strings.Builder

@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// toolPartialActivity converts a tool-partial-output event into a tool
+// activity event with status "running". This lets the TUI render streaming
+// stdout/stderr as an in-progress tool activity before the final result arrives.
 func toolPartialActivity(event Event) Event {
 	return Event{
 		Type:            EventActivity,
@@ -20,6 +23,9 @@ func toolPartialActivity(event Event) Event {
 	}
 }
 
+// permissionEventText formats a one-line summary of a permission decision:
+// "Permission <source> <decision> <tool>: <reason>". Decision defaults to
+// allow/deny based on the Allowed flag when the Decision field is empty.
 func permissionEventText(event Event) string {
 	source := defaultString(event.Source, "permission")
 	decision := defaultString(event.Decision, "")
@@ -38,6 +44,9 @@ func permissionEventText(event Event) string {
 	return text
 }
 
+// activityEventText produces a human-readable one-line description of an
+// activity event, dispatching by ActivityKind. Subagent events are prefixed
+// with "subagent: " so they are visually distinguishable in the transcript.
 func activityEventText(event Event) string {
 	prefix := subagentActivityPrefix(event)
 	switch strings.TrimSpace(event.ActivityKind) {
@@ -56,6 +65,10 @@ func activityEventText(event Event) string {
 	}
 }
 
+// activityEventKey derives the stable deduplication key for an activity event.
+// Tool and mode events are keyed by ToolUseID so updates replace the same
+// block. Thinking events are keyed by subagent ID (or just "thinking" for
+// the main agent). Notice events use their Notice kind as the key.
 func activityEventKey(event Event) string {
 	subagentID := strings.TrimSpace(event.SubagentID)
 	switch strings.TrimSpace(event.ActivityKind) {
@@ -176,6 +189,11 @@ func planIDFromToolResult(content string) string {
 	return ""
 }
 
+// activityMessage converts an agent Event into a TUI message block for
+// rendering. Each ActivityKind maps to a different messageKind (thinking,
+// tool, permission, notice) with appropriate defaults for status, title,
+// and detail. The key is derived from activityEventKey so repeated events
+// for the same tool call update the same block instead of appending.
 func activityMessage(event Event) message {
 	switch strings.TrimSpace(event.ActivityKind) {
 	case "thinking":
@@ -258,6 +276,10 @@ func activityMessage(event Event) message {
 	}
 }
 
+// todoMessageFromEvent extracts a todo view message from a todo tool event.
+// Returns ok=false when the event is not from a todo tool or has no parseable
+// items. The todo block is rendered as a separate non-collapsible view in the
+// transcript (kind=todoMessage) with a summary title like "Todo: 2 running, 3 pending".
 func todoMessageFromEvent(event Event) (message, bool) {
 	if strings.TrimSpace(event.ActivityKind) != "tool" || !toolDetailUsesTodoStyle(event.ToolName) {
 		return message{}, false
@@ -295,6 +317,9 @@ func todoSessionID(detail string) string {
 	return ""
 }
 
+// todoStatus derives the overall status of a todo list from its items:
+// running if any item is in_progress, queued if any are pending, failed if
+// any failed (partial if some also completed), done otherwise.
 func todoStatus(items []todoDetailItem) string {
 	if len(items) == 0 {
 		return "done"
@@ -314,6 +339,8 @@ func todoStatus(items []todoDetailItem) string {
 	}
 }
 
+// todoTitle builds a summary title like "Todo: 2 running, 3 pending, 1 done"
+// from the item counts. Only non-zero counts are shown.
 func todoTitle(items []todoDetailItem) string {
 	pending, running, completed, skipped, failed := todoCounts(items)
 	var parts []string
@@ -352,6 +379,9 @@ func todoCounts(items []todoDetailItem) (pending, running, completed, skipped, f
 	return pending, running, completed, skipped, failed
 }
 
+// toolStatusFromLegacyState converts old-style tool status strings (started/
+// finished) used by early agent versions into the current status vocabulary
+// (running/done).
 func toolStatusFromLegacyState(state string) string {
 	switch strings.TrimSpace(state) {
 	case "started":
@@ -363,6 +393,9 @@ func toolStatusFromLegacyState(state string) string {
 	}
 }
 
+// activityStatusIcon maps a (messageKind, status) pair to a single-character
+// icon for display in the transcript gutter: ✓ for done, × for failed,
+// … for running, ! for partial failure, ? for pending permission, • for queued.
 func activityStatusIcon(kind messageKind, status string) string {
 	status = strings.ToLower(strings.TrimSpace(status))
 	switch kind {

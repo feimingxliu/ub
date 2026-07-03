@@ -23,13 +23,16 @@ type Reader interface {
 }
 
 // SQLite provides rollout read/write operations over the shared store DB.
+// It uses a prepared insert statement for fast appends and a read-write mutex
+// to serialize writes (SQLite is not safe for concurrent writers).
 type SQLite struct {
 	db     *sql.DB
 	insert *sql.Stmt
 	mu     sync.RWMutex
 }
 
-// New creates a SQLite rollout reader/writer bound to an opened store.
+// New creates a SQLite rollout reader/writer bound to an opened store. It
+// prepares the insert statement once for efficient per-event appends.
 func New(st *store.Store) (*SQLite, error) {
 	if st == nil || st.DB() == nil {
 		return nil, errors.New("rollout store is nil")
@@ -45,7 +48,10 @@ const appendEventSQL = `INSERT INTO events
 	(id, session_id, turn, time, type, payload)
 	VALUES (?, ?, ?, ?, ?, ?)`
 
-// Append inserts one rollout event.
+// Append inserts one rollout event into the events table. The write is
+// serialized via the read lock — concurrent appends are safe because SQLite
+// itself serializes writes, but the prepared statement is not goroutine-safe
+// for concurrent Exec calls.
 func (s *SQLite) Append(ctx context.Context, event Event) error {
 	if err := validateEvent(event); err != nil {
 		return err

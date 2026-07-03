@@ -13,6 +13,8 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/workspace/rollout"
 )
 
+// planModeContextKey is the context key for the PlanModeController that
+// tools (enter_plan_mode/exit_plan_mode) use to request mode transitions.
 type planModeContextKey struct{}
 
 // PlanModeAction identifies a model-requested plan-mode transition.

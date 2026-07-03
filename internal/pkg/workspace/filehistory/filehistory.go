@@ -23,7 +23,10 @@ import (
 )
 
 // Backup records one tracked file's state at a snapshot boundary. Missing is
-// true when the file did not exist in that version.
+// true when the file did not exist in that version. Version is a monotonically
+// increasing counter for the file within the session. BackupFileName is the
+// path (relative to the backup directory) where the file content was saved
+// before modification.
 type Backup struct {
 	BackupFileName string    `json:"backup_file_name,omitempty"`
 	Missing        bool      `json:"missing,omitempty"`
@@ -31,7 +34,10 @@ type Backup struct {
 	BackupTime     time.Time `json:"backup_time"`
 }
 
-// Snapshot captures the file state immediately before a user turn.
+// Snapshot captures the file state immediately before a user turn. It maps
+// each tracked file's relative workspace path to its current Backup metadata.
+// Snapshots are persisted as rollout events and are used by /rewind to restore
+// the workspace to the state before a given user turn.
 type Snapshot struct {
 	Turn               int               `json:"turn"`
 	TrackedFileBackups map[string]Backup `json:"tracked_file_backups"`
@@ -39,25 +45,34 @@ type Snapshot struct {
 }
 
 // EventPayload is stored in rollout events. Updates replace the snapshot for
-// the same turn after a file is first tracked during that turn.
+// the same turn after a file is first tracked during that turn. IsUpdate=true
+// means this payload should replace the existing snapshot for this turn rather
+// than append a new one.
 type EventPayload struct {
 	Snapshot Snapshot `json:"snapshot"`
 	IsUpdate bool     `json:"is_update,omitempty"`
 }
 
-// Change describes a file that would change when applying a snapshot.
+// Change describes a file that would change when rewinding to a snapshot.
+// Path is the relative workspace path; Kind is "modified", "created", or
+// "deleted" relative to the snapshot state.
 type Change struct {
 	Path string
 	Kind string
 }
 
-// State is the in-memory file-history chain reconstructed from rollout.
+// State is the in-memory file-history chain reconstructed from rollout events.
+// Snapshots are ordered by turn (then timestamp). TrackedFiles records every
+// file that has ever been tracked, so MakeSnapshot knows which files to back up
+// even before the first actual backup.
 type State struct {
 	Snapshots    []Snapshot
 	TrackedFiles map[string]struct{}
 }
 
-// Options configures a Manager.
+// Options configures a Manager. Rollout is the event writer used to persist
+// new snapshots; Events is the existing event list loaded at session start for
+// reconstructing previous state.
 type Options struct {
 	Workspace string
 	SessionID string
@@ -65,7 +80,10 @@ type Options struct {
 	Events    []rollout.Event
 }
 
-// Manager owns checkpoint state for one session.
+// Manager owns checkpoint state for one session. It tracks which files the
+// agent has touched, backs up their content before each user turn, and can
+// reconstruct the file state at any previous turn for /rewind. Backups are
+// stored under the ub state directory at state-root/file-history/<sessionID>/.
 type Manager struct {
 	mu        sync.Mutex
 	workspace string
@@ -172,6 +190,10 @@ func normalizeSnapshot(snapshot Snapshot, eventTurn int) Snapshot {
 }
 
 // MakeSnapshot records the workspace state immediately before a user turn.
+// It backs up all currently-tracked files to the backup directory (one file
+// per version), writes a rollout event, and appends the snapshot to the
+// in-memory state. Idempotent: calling MakeSnapshot for a turn that already
+// has a snapshot is a no-op.
 func (m *Manager) MakeSnapshot(ctx context.Context, turn int) error {
 	if m == nil || turn <= 0 {
 		return nil
@@ -202,6 +224,9 @@ func (m *Manager) MakeSnapshot(ctx context.Context, turn int) error {
 	return nil
 }
 
+// backupForSnapshot creates a Backup for a tracked file at the given turn,
+// copying its current content to the backup directory if the file exists.
+// Returns Missing=true when the file does not exist at this point.
 func (m *Manager) backupForSnapshot(rel string, previous *Snapshot) (Backup, error) {
 	rel = normalizeRel(rel)
 	latest, hasLatest := Backup{}, false
@@ -238,7 +263,10 @@ func (m *Manager) backupForSnapshot(rel string, previous *Snapshot) (Backup, err
 	return m.createBackup(abs, rel, nextVersion)
 }
 
-// TrackTool captures any files a known mutating tool may change before Execute.
+// TrackTool inspects a tool call's arguments and registers any file paths
+// that the tool may modify (write/edit/multiedit/bash rm) for file-history
+// tracking. This must be called BEFORE the tool executes so the pre-edit
+// content is captured in the current turn's snapshot.
 func (m *Manager) TrackTool(ctx context.Context, name string, input json.RawMessage) error {
 	if m == nil {
 		return nil
@@ -253,6 +281,8 @@ func (m *Manager) TrackTool(ctx context.Context, name string, input json.RawMess
 }
 
 // TrackPath captures one file's pre-edit contents in the current snapshot.
+// If the file is already tracked in this snapshot, it is a no-op. The snapshot
+// is updated in-place (IsUpdate=true) so the rollout records the latest state.
 func (m *Manager) TrackPath(ctx context.Context, path, cwd string) error {
 	if m == nil {
 		return nil
@@ -287,7 +317,10 @@ func (m *Manager) TrackPath(ctx context.Context, path, cwd string) error {
 	return nil
 }
 
-// ChangedFiles returns files that would change if the target snapshot were applied.
+// ChangedFiles returns files that would change if the target snapshot were
+// applied to the current workspace. Each Change includes the relative path
+// and kind (modified/created/deleted). Returns nil if no snapshot exists for
+// the turn or no files would change.
 func (m *Manager) ChangedFiles(turn int) []Change {
 	if m == nil {
 		return nil
@@ -317,7 +350,11 @@ func (m *Manager) ChangedFiles(turn int) []Change {
 	return out
 }
 
-// Rewind applies the target snapshot to the workspace.
+// Rewind applies the target snapshot to the workspace, restoring each tracked
+// file to its state at that turn. Returns the list of changed files and a list
+// of skipped files (with reasons) for files that could not be restored (e.g.
+// missing backup, path outside workspace). Files that are already at the
+// snapshot state are silently skipped.
 func (m *Manager) Rewind(turn int) ([]Change, []string, error) {
 	if m == nil {
 		return nil, nil, nil
@@ -353,6 +390,10 @@ func (m *Manager) Rewind(turn int) ([]Change, []string, error) {
 	return changed, skipped, nil
 }
 
+// backupForTarget finds the Backup for a file at the target snapshot. If the
+// file is not in the target snapshot directly, it searches later snapshots for
+// the file's version-1 backup (the initial state before any edits in that turn).
+// This handles the case where a file was first tracked mid-turn via TrackPath.
 func (m *Manager) backupForTarget(target Snapshot, rel string) (Backup, bool) {
 	if backup, ok := target.TrackedFileBackups[rel]; ok {
 		return backup, true
@@ -369,6 +410,11 @@ func (m *Manager) backupForTarget(target Snapshot, rel string) (Backup, bool) {
 	return Backup{}, false
 }
 
+// applyBackup restores a single file from its backup. If the backup marks the
+// file as Missing (did not exist at snapshot time), the current file is removed.
+// Otherwise the backup content is copied over the current file, preserving the
+// original file mode. Returns the change kind and whether the file actually
+// changed (unchanged files are not rewritten).
 func (m *Manager) applyBackup(rel string, backup Backup) (string, bool, error) {
 	abs, err := m.absForRel(rel)
 	if err != nil {
@@ -407,6 +453,11 @@ func (m *Manager) applyBackup(rel string, backup Backup) (string, bool, error) {
 	return kind, true, nil
 }
 
+// changeKind compares the current workspace file against its backup to
+// determine what kind of change would occur if the backup were applied:
+// KindCreate if the file was missing and now exists, KindDelete if it existed
+// and is now gone, KindModify if content differs. Returns (kind, changed)
+// where changed=false means the file is already at the backup state.
 func (m *Manager) changeKind(rel string, backup Backup) (string, bool) {
 	abs, err := m.absForRel(rel)
 	if err != nil {
@@ -426,6 +477,10 @@ func (m *Manager) changeKind(rel string, backup Backup) (string, bool) {
 	return tool.KindModify, changed
 }
 
+// createBackup copies a file's current content to the backup directory and
+// returns a Backup metadata record. If the file does not exist, returns a
+// Missing backup (no content is written). Directories produce an error.
+// The backup file is named with a hashed path + version suffix.
 func (m *Manager) createBackup(abs, rel string, version int) (Backup, error) {
 	info, err := os.Stat(abs)
 	if err != nil {
@@ -451,6 +506,9 @@ func (m *Manager) createBackup(abs, rel string, version int) (Backup, error) {
 	return Backup{BackupFileName: name, Version: version, BackupTime: time.Now().UTC()}, nil
 }
 
+// fileChanged compares the current file against its backup. It first checks
+// file mode and size as a fast path, then falls back to a full content hash
+// comparison. A missing current file or missing backup is treated as changed.
 func (m *Manager) fileChanged(abs string, backup Backup) (bool, error) {
 	if backup.Missing {
 		_, err := os.Stat(abs)
@@ -528,6 +586,10 @@ func (m *Manager) snapshotIndex(turn int) int {
 	return -1
 }
 
+// resolveTarget resolves a tool path argument (which may be relative to cwd
+// or absolute) to (abs, rel) where rel is relative to the workspace root.
+// Paths outside the workspace are rejected to prevent tracking files in
+// unrelated directories.
 func (m *Manager) resolveTarget(path, cwd string) (string, string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {

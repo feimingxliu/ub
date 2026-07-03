@@ -8,6 +8,10 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/tool"
 )
 
+// summarizeToolResult builds a one-line summary of a tool result for the
+// activity stream. When the result includes file changes, it lists up to 3
+// file paths with their change kind. Otherwise it uses the first line of the
+// result content (redacted). Empty results show "completed" or "failed".
 func summarizeToolResult(result tool.Result) string {
 	if len(result.Files) > 0 {
 		paths := make([]string, 0, min(len(result.Files), 3))
@@ -53,6 +57,10 @@ func ToolActivityResultWithInput(toolName string, input json.RawMessage, result 
 	return toolActivityResult(toolName, SummarizeToolInput(toolName, input), ToolInputDetail(toolName, input), result)
 }
 
+// toolActivityResult builds the summary and detail strings from the tool
+// name, input summary/detail, and result. When the result has file changes
+// or the input summary is empty, the result summary takes precedence.
+// The detail combines the input detail and the result-specific detail.
 func toolActivityResult(toolName, inputSummary, inputDetail string, result tool.Result) (string, string) {
 	summary := strings.TrimSpace(inputSummary)
 	if len(result.Files) > 0 || summary == "" {
@@ -62,6 +70,8 @@ func toolActivityResult(toolName, inputSummary, inputDetail string, result tool.
 	return truncateActivitySummary(summary), truncateToolActivityDetail(detail)
 }
 
+// joinActivityDetails joins non-empty detail parts with double newlines.
+// This produces a visually separated multi-section detail view in the TUI.
 func joinActivityDetails(parts ...string) string {
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {

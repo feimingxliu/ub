@@ -18,6 +18,9 @@ const (
 	toolResultTruncatedMarker  = "... [tool result truncated:"
 )
 
+// emitThinkingActivity emits a thinking (reasoning) activity event to the
+// EventSink. It returns the emitted event and true if non-empty. See the
+// inline comment below for why whitespace-only input is not suppressed.
 func (a *Agent) emitThinkingActivity(summary, detail string) (Event, bool) {
 	// Use raw equality rather than TrimSpace so paragraph-break deltas
 	// ("\n\n") still emit — they carry the only signal the TUI has to insert
@@ -35,6 +38,9 @@ func (a *Agent) emitThinkingActivity(summary, detail string) (Event, bool) {
 	return event, true
 }
 
+// emitToolActivity emits a tool activity event with the given status
+// (queued/running/done/failed/blocked), summary, detail content, and error
+// flag. It is called at each phase of tool execution lifecycle.
 func (a *Agent) emitToolActivity(call toolCall, status, summary, content string, isError bool) {
 	a.emit(Event{
 		Type:         EventActivity,

@@ -13,6 +13,11 @@ import (
 	"sync"
 )
 
+// sseTransport implements the MCP SSE transport: a long-lived GET connection
+// receives server-pushed messages as Server-Sent Events, while JSON-RPC requests
+// are sent via separate POST calls to an endpoint URL advertised by the server
+// in its initial "endpoint" event. The transport serializes calls via a mutex
+// because the SSE protocol does not natively support multiplexing.
 type sseTransport struct {
 	baseURL  string
 	endpoint string
@@ -25,6 +30,10 @@ type sseTransport struct {
 	mu       sync.Mutex
 }
 
+// newSSETransport establishes the SSE connection and waits for the server's
+// endpoint announcement. It blocks until the endpoint event arrives, an error
+// occurs on the stream, or ctx is cancelled. The returned transport is ready
+// for Call/Notify immediately.
 func newSSETransport(ctx context.Context, cfg SSEConfig) (*sseTransport, error) {
 	if strings.TrimSpace(cfg.URL) == "" {
 		return nil, fmt.Errorf("mcp sse: url is required")
@@ -78,6 +87,9 @@ func newSSETransport(ctx context.Context, cfg SSEConfig) (*sseTransport, error) 
 	}
 }
 
+// Call sends a JSON-RPC request via POST and waits for the matching response
+// on the SSE message channel. Responses are matched by request ID; non-matching
+// messages are skipped. The mutex ensures only one call is in-flight at a time.
 func (t *sseTransport) Call(ctx context.Context, req rpcRequest) (json.RawMessage, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -127,6 +139,8 @@ func (t *sseTransport) Notify(ctx context.Context, method string, params any) er
 	return t.post(ctx, payload)
 }
 
+// Close cancels the SSE stream context and closes the response body,
+// stopping the readLoop goroutine. It is idempotent.
 func (t *sseTransport) Close() error {
 	if t == nil {
 		return nil
@@ -163,6 +177,11 @@ func (t *sseTransport) post(ctx context.Context, payload []byte) error {
 	return nil
 }
 
+// readLoop reads SSE events from the response body line by line, dispatching
+// "endpoint" events to the endpoint channel (once) and "message" events to
+// the messages channel. On scanner error it sends the error to errs; on clean
+// EOF it sends io.EOF so Call unblocks. The messages channel is closed on exit
+// so range loops in Call can detect stream termination.
 func (t *sseTransport) readLoop(endpoint chan<- string) {
 	defer close(t.messages)
 	scanner := bufio.NewScanner(t.body)
@@ -226,6 +245,9 @@ func (t *sseTransport) readLoop(endpoint chan<- string) {
 	}
 }
 
+// resolveEndpoint resolves the server-advertised endpoint URL against the
+// base SSE URL. If the endpoint is absolute it is used as-is; otherwise it is
+// resolved as a relative reference against the base URL.
 func resolveEndpoint(base, endpoint string) (string, error) {
 	ep, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil {

@@ -14,12 +14,21 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/core/message"
 )
 
+// gitSnapshotTimeout caps how long the prompt harness waits for git
+// commands when building the startup snapshot. Git operations are best-effort:
+// a timeout or error produces an empty snapshot rather than blocking startup.
 const gitSnapshotTimeout = 500 * time.Millisecond
 
+// workspaceInstructionFiles lists filenames that are loaded as workspace
+// instructions and injected into the system prompt prefix.
 var workspaceInstructionFiles = []string{"AGENTS.md"}
 
+// gitCommandRunner is the function signature for running git commands,
+// abstracted for testability.
 type gitCommandRunner func(ctx context.Context, dir string, args ...string) (string, error)
 
+// effectivePromptConfig fills in defaults for any unset prompt configuration
+// fields, returning a fully-populated config safe for the prompt builder.
 func effectivePromptConfig(cfg config.PromptConfig) config.PromptConfig {
 	if cfg.WorkspaceInstructions.Enabled == nil {
 		enabled := true

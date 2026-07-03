@@ -13,6 +13,9 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/runtime/permission"
 )
 
+// modelRefreshResultMsg carries the result of asynchronously refreshing
+// model lists from the provider(s). Each sub-result (main/approval/small)
+// has its own error and OK flag so partial failures don't mask successes.
 type modelRefreshResultMsg struct {
 	models           []string
 	modelErr         error
@@ -25,11 +28,17 @@ type modelRefreshResultMsg struct {
 	smallModelsOK    bool
 }
 
+// messagesLoadedMsg carries the result of asynchronously loading session
+// history for resume. err is non-nil when the rollout could not be read.
 type messagesLoadedMsg struct {
 	messages []InitialMessage
 	err      error
 }
 
+// refreshModelLists returns a tea.Cmd that fetches available model lists from
+// the provider(s) in the background. It checks which refresh interfaces the
+// runner implements so it works with any combination of main/approval/small
+// model support. Returns nil when no refresh is needed.
 func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
 	modelRunner, hasModels := runner.(ModelRefreshRunner)
 	approvalRunner, hasApprovalModels := runner.(ApprovalModelRefreshRunner)
@@ -55,6 +64,8 @@ func refreshModelLists(ctx context.Context, runner Runner) tea.Cmd {
 	}
 }
 
+// loadMessagesCmd returns a tea.Cmd that loads session history for resume in
+// the background, producing a messagesLoadedMsg.
 func loadMessagesCmd(ctx context.Context, load func(context.Context) ([]InitialMessage, error)) tea.Cmd {
 	return func() tea.Msg {
 		if load == nil {
@@ -65,6 +76,10 @@ func loadMessagesCmd(ctx context.Context, load func(context.Context) ([]InitialM
 	}
 }
 
+// handleStreamEvent processes one event from the agent's foreground event
+// channel. When the stream is done (ok=false) it resets all running state
+// and starts the next queued prompt. Otherwise it chains to the next event
+// via waitForEventFromUpdate.
 func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	if msg.runID != m.runID {
 		return m, nil
@@ -84,6 +99,10 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// handleBackgroundEvent processes one event from the agent's background event
+// channel (auto-memory, hooks). Background notices are queued while the agent
+// is running and flushed when the turn completes, to avoid interleaving them
+// with the live tool activity stream.
 func (m Model) handleBackgroundEvent(msg backgroundEventMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
@@ -99,6 +118,9 @@ func (m Model) handleBackgroundEvent(msg backgroundEventMsg) (tea.Model, tea.Cmd
 	return m, next
 }
 
+// backgroundTranscriptMessageFromEvent converts a background event into a
+// transcript message for display. Returns ok=false for event types that
+// should not appear in the transcript (e.g. non-activity, non-error events).
 func backgroundTranscriptMessageFromEvent(event Event) (backgroundTranscriptMessage, bool) {
 	switch event.Type {
 	case EventActivity:
@@ -130,6 +152,9 @@ func (m *Model) appendBackgroundTranscriptMessage(msg backgroundTranscriptMessag
 	m.scrollToBottom()
 }
 
+// flushBackgroundQueue appends all queued background messages to the
+// transcript in order. Called when the agent turn completes or the stream
+// ends, so deferred notices appear after the final assistant reply.
 func (m *Model) flushBackgroundQueue() {
 	if len(m.backgroundQueue) == 0 {
 		return
@@ -141,6 +166,9 @@ func (m *Model) flushBackgroundQueue() {
 	}
 }
 
+// handlePermissionRequest displays the permission modal for an incoming
+// permission request from the agent. The request blocks the agent until
+// the user resolves it via resolvePermission.
 func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
@@ -150,6 +178,9 @@ func (m Model) handlePermissionRequest(msg permissionRequestMsg) (tea.Model, tea
 	return m, nil
 }
 
+// handleAskRequest displays the structured ask wizard for an incoming ask
+// request from the agent. The request blocks the agent until the user
+// answers or skips via resolveAsk.
 func (m Model) handleAskRequest(msg askRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
@@ -159,6 +190,8 @@ func (m Model) handleAskRequest(msg askRequestMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handlePlanModeRequest displays the plan-mode confirmation dialog for an
+// incoming enter_plan_mode or exit_plan_mode request from the agent.
 func (m Model) handlePlanModeRequest(msg planModeRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
@@ -168,6 +201,8 @@ func (m Model) handlePlanModeRequest(msg planModeRequestMsg) (tea.Model, tea.Cmd
 	return m, nil
 }
 
+// handleLimitRequest displays the turn-limit extension prompt when the
+// agent hits its max-turns cap and asks the host for permission to continue.
 func (m Model) handleLimitRequest(msg limitRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
@@ -176,6 +211,9 @@ func (m Model) handleLimitRequest(msg limitRequestMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// resolveAsk sends the user's ask response (answered or skipped) back to the
+// agent via the response channel, appends a summary to the transcript, and
+// resumes listening for the next ask request.
 func (m Model) resolveAsk(skipped bool) (tea.Model, tea.Cmd) {
 	var resp agent.AskResponse
 	if skipped {
@@ -195,6 +233,9 @@ func (m Model) resolveAsk(skipped bool) (tea.Model, tea.Cmd) {
 	return m, waitForAsk(m.askReqs)
 }
 
+// resolvePlanMode sends the user's plan-mode decision (approved or denied)
+// back to the agent via the response channel. On approval it applies the
+// mode transition (enter/exit plan) via the runner interface.
 func (m Model) resolvePlanMode(approved bool) (tea.Model, tea.Cmd) {
 	from := m.status.executionMode
 	to := from
@@ -217,6 +258,10 @@ func (m Model) resolvePlanMode(approved bool) (tea.Model, tea.Cmd) {
 	return m, waitForPlanMode(m.planModeReqs)
 }
 
+// applyPlanModeTransition executes the actual mode switch for an approved
+// plan-mode request. It prefers the PlanModeControlRunner interface (which
+// records the pre-plan mode for later restoration) and falls back to the
+// generic ControlRunner.SetMode when unavailable.
 func (m Model) applyPlanModeTransition() (from, to string, err error) {
 	if runner, ok := m.runner.(PlanModeControlRunner); ok {
 		switch m.planModePrompt.request.Action {
@@ -238,6 +283,8 @@ func (m Model) applyPlanModeTransition() (from, to string, err error) {
 	return from, to, err
 }
 
+// resolveLimit sends the turn-limit extension response back to the agent.
+// extra > 0 extends the loop; extra = 0 falls through to the no-tool finalize.
 func (m Model) resolveLimit(extra int) (tea.Model, tea.Cmd) {
 	if m.pendingLimit != nil && m.pendingLimit.Response != nil {
 		m.pendingLimit.Response <- agent.LimitExtensionResponse{ExtraTurns: extra}
@@ -246,6 +293,10 @@ func (m Model) resolveLimit(extra int) (tea.Model, tea.Cmd) {
 	return m, waitForLimit(m.limitReqs)
 }
 
+// handleModelRefreshResult updates the in-memory model lists after an
+// asynchronous provider model-list refresh. If a picker is open for the
+// corresponding model type, it is rebuilt with the new list, preserving the
+// user's current selection when possible.
 func (m Model) handleModelRefreshResult(msg modelRefreshResultMsg) (tea.Model, tea.Cmd) {
 	if msg.modelsOK && msg.modelErr == nil {
 		selected := ""
@@ -292,6 +343,9 @@ func (m Model) handleModelRefreshResult(msg modelRefreshResultMsg) (tea.Model, t
 	return m, nil
 }
 
+// handleMessagesLoaded populates the transcript from session history after
+// an asynchronous load completes (resume). On error it clears the transcript
+// and shows the error message instead.
 func (m Model) handleMessagesLoaded(msg messagesLoadedMsg) (tea.Model, tea.Cmd) {
 	m.loadingMessages = false
 	m.loadMessages = nil
@@ -307,6 +361,9 @@ func (m Model) handleMessagesLoaded(msg messagesLoadedMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+// handleSpinnerTick advances the spinner animation frame while the agent is
+// running. The spinner provides a visual heartbeat so the user knows the
+// agent is still working.
 func (m Model) handleSpinnerTick(_ spinnerTickMsg) (tea.Model, tea.Cmd) {
 	if !m.running {
 		return m, nil
@@ -315,6 +372,10 @@ func (m Model) handleSpinnerTick(_ spinnerTickMsg) (tea.Model, tea.Cmd) {
 	return m, spinnerTickCmd()
 }
 
+// waitForEventFromUpdate processes one agent event: it updates the context
+// usage display, shows any toast notification, and chains to the next event.
+// The toast cmd is batched after the stream cmd so test drains (which take
+// the head of a batch) don't block on the toast tick.
 func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	m.updateContextUsage(event)
 	toastCmd := m.showToastForEvent(event)
@@ -328,6 +389,10 @@ func waitForEventFromUpdate(event Event, m *Model) tea.Cmd {
 	return tea.Batch(next, toastCmd)
 }
 
+// waitForEventFromUpdateInner dispatches one agent event to the appropriate
+// TUI state update. Each case removes the thinking placeholder (if present)
+// before handling the event, because a real event means thinking has ended.
+// The function returns a tea.Cmd that waits for the next event with a timeout.
 func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 	switch event.Type {
 	case EventContext:
@@ -416,6 +481,9 @@ func (m Model) View() tea.View {
 	}
 }
 
+// resolvePermission sends the user's permission decision back to the agent
+// via the response channel and resumes listening for the next permission
+// request. An allow decision also shows a toast confirmation.
 func (m Model) resolvePermission(decision permission.Decision) (tea.Model, tea.Cmd) {
 	if m.pending != nil && m.pending.Response != nil {
 		m.pending.Response <- decision

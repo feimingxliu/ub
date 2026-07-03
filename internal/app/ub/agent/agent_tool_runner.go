@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/pkg/runtime/hook"
@@ -11,6 +12,12 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/workspace/tooloutput"
 )
 
+// runTool executes a single tool call through the full lifecycle: pre-tool
+// hooks, permission checks, preview generation, execution (streaming or
+// plain), result limiting, post-tool hooks, and rollout/activity recording.
+// It always returns a tool.Result — errors from the tool itself are wrapped
+// into an IsError result rather than propagated as Go errors, so the agent
+// loop can feed them back to the model as tool_result content.
 func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call toolCall) tool.Result {
 	ctx = tool.WithSessionID(ctx, sessionID)
 	ctx = tool.WithAgentTurn(ctx, turn)
@@ -46,6 +53,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 		return result
 	}
 	if !toolAvailableInMode(call.Name, a.currentMode()) {
+		slog.Warn("tool blocked by mode", "session", sessionID, "turn", turn, "tool", call.Name, "mode", a.currentMode())
 		result := tool.Result{Content: toolUnavailableInModeMessage(call.Name, a.currentMode()), IsError: true}
 		summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
 		a.emitToolActivity(call, "failed", summary, detail, true)
@@ -88,6 +96,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 			a.recordPermissionActivity(ctx, sessionID, turn, call.Name, string(result.Source), string(result.Decision), result.Reason, result.Allowed)
 		}
 		if !result.Allowed {
+			slog.Info("tool permission denied", "session", sessionID, "turn", turn, "tool", call.Name, "source", result.Source, "reason", result.Reason)
 			reason := strings.TrimSpace(result.Reason)
 			if reason == "" {
 				reason = string(result.Decision)
@@ -105,6 +114,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	}
 	result, err := a.executeToolCall(ctx, t, call)
 	if err != nil {
+		slog.Warn("tool execution failed", "session", sessionID, "turn", turn, "tool", call.Name, "err", err)
 		result := tool.Result{Content: err.Error(), IsError: true}
 		result = a.limitToolResult(sessionID, call, result)
 		summary, detail := ToolActivityResultWithInput(call.Name, call.Input, result)
@@ -205,6 +215,10 @@ func closeToolStreamEvents(events chan tool.StreamEvent) {
 	close(events)
 }
 
+// limitToolResult applies the tooloutput size limits to a tool result,
+// spilling oversized content to disk and replacing it with a reference.
+// If spillover fails (e.g. disk full), it falls back to inline truncation
+// so the agent loop is never blocked by a storage error.
 func (a *Agent) limitToolResult(sessionID string, call toolCall, result tool.Result) tool.Result {
 	limited, err := tooloutput.LimitResult(result, tooloutput.LimitOptions{
 		SessionID: sessionID,
@@ -230,6 +244,10 @@ func (a *Agent) limitToolResult(sessionID string, call toolCall, result tool.Res
 	return limited
 }
 
+// permissionObserver returns a callback that records approval-agent
+// decisions as permission activity events in the rollout. It is invoked
+// synchronously from within permission.Manager.Ask when the auto-mode
+// approval agent makes a decision.
 func (a *Agent) permissionObserver(ctx context.Context, sessionID string, turn int, toolName string, observed *bool) func(permission.ApprovalObservation) {
 	return func(obs permission.ApprovalObservation) {
 		if observed != nil {

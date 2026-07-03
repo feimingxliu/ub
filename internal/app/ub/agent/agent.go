@@ -4,6 +4,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/pkg/core/message"
@@ -15,7 +16,12 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Run executes one user prompt.
+// Run executes one user prompt through the full provider/tool loop. It
+// streams assistant responses, dispatches tool calls concurrently, persists
+// every event to the rollout, and returns the final text plus the complete
+// transcript. The loop terminates when the model produces a reply with no
+// tool calls, when the turn limit is reached, or when context overflow or
+// stream errors prove unrecoverable.
 func (a *Agent) Run(ctx context.Context, req Request) (result Result, err error) {
 	if req.Turn <= 0 {
 		req.Turn = 1
@@ -48,6 +54,8 @@ func (a *Agent) Run(ctx context.Context, req Request) (result Result, err error)
 		SessionID: req.SessionID,
 		Turn:      req.Turn,
 	}))
+
+	slog.Debug("agent run start", "session", req.SessionID, "turn", req.Turn, "model", a.model)
 
 	userMsg := message.Text(message.RoleUser, req.Prompt)
 	transcriptMessages := cloneMessages(req.History)
@@ -86,6 +94,7 @@ loop:
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 			}
 			contextMessages = prepared.messages
+			slog.Debug("provider chat request", "session", req.SessionID, "turn", req.Turn, "loop_turn", turn, "model", a.model, "estimated_tokens", prepared.estimatedTokens, "tool_count", len(tools))
 			stream, err := a.provider.Chat(ctx, provider.Request{
 				Model:     a.model,
 				Messages:  cloneMessages(prepared.requestMessages),
@@ -98,10 +107,12 @@ loop:
 					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, recoveryErr)
 				}
 				if recovered.recovered {
+					slog.Info("context overflow recovered", "session", req.SessionID, "turn", req.Turn)
 					contextOverflowRecoveryUsed = true
 					contextMessages = recovered.messages
 					continue
 				}
+				slog.Warn("provider chat failed", "session", req.SessionID, "turn", req.Turn, "err", err)
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 			}
 			consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
@@ -153,8 +164,10 @@ loop:
 			}
 			if len(consumed.toolCalls) == 0 {
 				if len(consumed.message.Content) == 0 {
+					slog.Warn("empty provider response", "session", req.SessionID, "turn", req.Turn, "reasoning_len", consumed.reasoningLen)
 					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, emptyResponseError(consumed.reasoningLen))
 				}
+				slog.Info("agent run complete", "session", req.SessionID, "turn", req.Turn, "loop_turns", turn, "reply_len", len(consumed.text))
 				a.finishSuccessfulTurn(ctx, req.SessionID, req.Turn, transcriptMessages, consumed.text)
 				return Result{Text: consumed.text, Messages: transcriptMessages, ContextMessages: contextMessages}, nil
 			}
@@ -189,6 +202,7 @@ loop:
 					return Result{}, err
 				}
 			}
+			slog.Debug("tool batch complete", "session", req.SessionID, "turn", req.Turn, "loop_turn", turn, "tools_called", len(consumed.toolCalls))
 			turn++
 			if loopDetector.Record(consumed.toolCalls, toolResults) {
 				return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, "repeated tool loop detected; finalizing without tools")
@@ -219,9 +233,14 @@ loop:
 		}
 		break
 	}
+	slog.Info("agent run hit turn limit", "session", req.SessionID, "turn", req.Turn, "limit", limit)
 	return a.finalizeWithoutTools(ctx, req.SessionID, req.Turn, contextMessages, transcriptMessages, fmt.Sprintf("tool loop reached %d turns; finalizing without tools", limit))
 }
 
+// finalizeWithoutTools sends one last no-tool provider request so the model
+// can summarize what it has gathered so far. It is used when the tool loop
+// hits its turn limit or when repeated-tool detection triggers. Reasoning
+// is deliberately omitted to avoid reasoning-model empty-response issues.
 func (a *Agent) finalizeWithoutTools(ctx context.Context, sessionID string, turn int, contextMessages, transcriptMessages []message.Message, summary string) (Result, error) {
 	if strings.TrimSpace(summary) == "" {
 		summary = "tool loop finalizing without tools"

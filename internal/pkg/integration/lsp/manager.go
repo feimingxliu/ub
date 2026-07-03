@@ -17,6 +17,8 @@ import (
 )
 
 // Manager owns configured LSP clients and routes file sync operations.
+// It is created by LazyManager.Start on first use and holds the running
+// language server processes for the workspace.
 type Manager struct {
 	root    string
 	servers []*server
@@ -24,7 +26,9 @@ type Manager struct {
 
 // LazyManager defers starting language servers until an LSP query needs them.
 // Filesystem change notifications are ignored until startup has happened; the
-// first query syncs its target file before asking the server.
+// first query syncs its target file before asking the server. This avoids
+// the cost of spawning gopls/rust-analyzer/etc. for sessions that never use
+// LSP tools.
 type LazyManager struct {
 	root    string
 	configs map[string]config.LSPServerConfig
@@ -35,6 +39,8 @@ type LazyManager struct {
 	startErr error
 }
 
+// server holds one running language server client and the file types it
+// handles. File types are matched against file extensions to route queries
 type server struct {
 	name      string
 	client    *Client
@@ -105,6 +111,10 @@ func StartConfigured(ctx context.Context, root string, configs map[string]config
 	return m, warnings
 }
 
+// ensureStarted lazily starts all configured LSP servers on first use.
+// It is idempotent and thread-safe: subsequent calls return the cached
+// Manager or the cached error. This defers the cost of spawning language
+// servers until an LSP tool is actually called.
 func (m *LazyManager) ensureStarted(ctx context.Context) (*Manager, error) {
 	if m == nil {
 		return nil, fmt.Errorf("lsp: no language server configured")
@@ -131,6 +141,11 @@ func (m *LazyManager) ensureStarted(ctx context.Context) (*Manager, error) {
 	return nil, m.startErr
 }
 
+// withLazyManager runs fn against the underlying Manager, automatically
+// restarting the LSP servers once if the first call fails with
+// ErrServerUnavailable (indicating the server process died). This provides
+// transparent recovery from crashed language servers without surfacing the
+// error to the caller on the first attempt.
 func withLazyManager[T any](lm *LazyManager, ctx context.Context, fn func(*Manager) (T, error)) (T, error) {
 	var zero T
 	manager, err := lm.ensureStarted(ctx)
@@ -153,6 +168,9 @@ func withLazyManager[T any](lm *LazyManager, ctx context.Context, fn func(*Manag
 	return out, err
 }
 
+// resetManager tears down a dead Manager so the next ensureStarted call
+// spawns fresh language server processes. The old Manager is closed to
+// release its stdio pipes.
 func (m *LazyManager) resetManager(manager *Manager) {
 	if m == nil || manager == nil {
 		return

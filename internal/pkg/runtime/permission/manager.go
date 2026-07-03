@@ -69,7 +69,11 @@ func (m *Manager) SetApprovalAgent(agent approval.Agent) {
 	m.mu.Unlock()
 }
 
-// Ask returns the permission decision for one tool call.
+// Ask evaluates one tool call through the full permission pipeline:
+// execution-mode gating → safe-risk auto-allow → blacklist check →
+// deny/allow/ask rules (project + session) → approval agent (auto mode) →
+// human approval. It returns the final decision, never blocking without an
+// asker configured.
 func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 	mode, err := execution.ParseMode(string(req.Mode))
 	if err != nil {
@@ -154,6 +158,9 @@ func (m *Manager) Ask(ctx context.Context, req Request) (Result, error) {
 	return m.applyHumanDecision(decision, req, command)
 }
 
+// requiresExplicitApproval returns true for exec and network risk levels,
+// which must pass through rules/approval regardless of mode. Safe and write
+// risks are handled by execution-mode gating before reaching this check.
 func requiresExplicitApproval(risk tool.Risk) bool {
 	switch risk {
 	case tool.RiskExec, tool.RiskNetwork:
@@ -174,6 +181,8 @@ func notifyApprovalObserver(req Request, decision approval.Decision, reason stri
 	})
 }
 
+// askHuman delegates to the configured Asker (TUI prompt or headless
+// fallback). Returns an error if no asker is configured.
 func (m *Manager) askHuman(ctx context.Context, req Request) (Decision, error) {
 	if m.asker == nil {
 		return "", fmt.Errorf("permission: human asker is required")
@@ -181,6 +190,9 @@ func (m *Manager) askHuman(ctx context.Context, req Request) (Decision, error) {
 	return m.asker.Ask(ctx, req)
 }
 
+// applyHumanDecision converts a human Decision into a Result, persisting
+// session or project rules for "always" decisions. Project rules are written
+// to .ub/permissions.yaml; session rules are kept in memory only.
 func (m *Manager) applyHumanDecision(decision Decision, req Request, command string) (Result, error) {
 	switch decision {
 	case DecisionAllow:
@@ -278,6 +290,9 @@ func projectPatternRules(toolName, command string) ([]Rule, error) {
 	return rules, nil
 }
 
+// similarCommandPattern derives a prefix pattern (e.g. "npm run:*") from a
+// full command string. The field count heuristic keeps package-manager script
+// names and make targets while collapsing arguments.
 func similarCommandPattern(command string) string {
 	fields := strings.Fields(strings.TrimSpace(command))
 	if len(fields) == 0 {
@@ -305,6 +320,8 @@ func similarPatternFieldCount(fields []string) int {
 	}
 }
 
+// ruleReason builds a human-readable explanation of which rule matched,
+// distinguishing pattern rules, exact-command rules, and tool-level rules.
 func ruleReason(rule Rule) string {
 	switch {
 	case rule.Pattern != "" && strings.Contains(rule.Pattern, "*"):

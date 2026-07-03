@@ -13,6 +13,11 @@ const (
 	repeatedToolMaxRepeats = 5
 )
 
+// loop_detector detects repeated identical tool-call/result patterns
+// within a sliding window. When the same interaction signature (tool name +
+// input + result content + error flag, SHA-256 hashed) appears more than
+// maxRepeats times within windowSize turns, Record returns true so the agent
+// loop can finalize without tools instead of spinning indefinitely.
 type toolLoopDetector struct {
 	window     []string
 	windowSize int
@@ -26,6 +31,10 @@ func newToolLoopDetector(windowSize, maxRepeats int) *toolLoopDetector {
 	}
 }
 
+// Record hashes the current batch of tool calls and results into a
+// signature, appends it to the sliding window, and returns true if the
+// current signature has been seen more than maxRepeats times within the
+// window — indicating a stuck loop.
 func (d *toolLoopDetector) Record(calls []toolCall, results []tool.Result) bool {
 	if d == nil {
 		return false
@@ -48,6 +57,9 @@ func (d *toolLoopDetector) Record(calls []toolCall, results []tool.Result) bool 
 	return repeats > d.maxRepeats
 }
 
+// toolInteractionSignature produces a deterministic SHA-256 hash of one
+// batch of tool calls and their results. Empty call batches produce an
+// empty string (no signature), which causes Record to reset the window.
 func toolInteractionSignature(calls []toolCall, results []tool.Result) string {
 	if len(calls) == 0 {
 		return ""

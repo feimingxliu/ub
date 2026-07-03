@@ -7,6 +7,11 @@ import (
 	"strings"
 )
 
+// SummarizeToolInput produces a concise one-line summary of a tool call's
+// arguments for display in the TUI activity stream. Each tool has a custom
+// case that extracts the most relevant fields (path, command, pattern, etc.)
+// without dumping raw JSON. Sensitive values (API keys, tokens) are redacted
+// via redactText before inclusion.
 func SummarizeToolInput(name string, raw json.RawMessage) string {
 	var body map[string]any
 	if len(raw) > 0 {
@@ -268,6 +273,9 @@ func ToolInputDetail(name string, raw json.RawMessage) string {
 	return strings.TrimRight(b.String(), " \t\r\n")
 }
 
+// decodeToolInput unmarshals a tool input RawMessage into a map. Returns
+// an empty map (not nil) for empty input so callers can safely index it.
+// Returns ok=false on JSON decode errors.
 func decodeToolInput(raw json.RawMessage) (map[string]any, bool) {
 	if len(raw) == 0 {
 		return map[string]any{}, true
@@ -403,6 +411,9 @@ func firstLine(text string) string {
 	return strings.TrimSpace(text)
 }
 
+// redactText returns "[redacted]" when the key name or value contains
+// sensitive markers (api_key, token, password, etc.). This prevents
+// credentials from leaking into the TUI activity stream and rollout.
 func redactText(key, value string) string {
 	if isSensitive(key) || isSensitive(value) {
 		return "[redacted]"
@@ -410,6 +421,9 @@ func redactText(key, value string) string {
 	return value
 }
 
+// isSensitive checks whether a string contains any sensitive marker
+// (api_key, authorization, bearer, password, secret, token). Used by
+// redactText to guard against credential leakage in activity summaries.
 func isSensitive(text string) bool {
 	text = strings.ToLower(text)
 	for _, marker := range []string{"api_key", "apikey", "authorization", "bearer ", "password", "passwd", "secret", "token"} {

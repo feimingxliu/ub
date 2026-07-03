@@ -61,7 +61,12 @@ type Options struct {
 	FileHistoryToolsOnly bool
 }
 
-// Agent runs a single headless agent loop.
+// Agent runs a single headless agent loop: it sends messages to a provider,
+// streams the response, dispatches any tool calls, persists events to the
+// rollout, and repeats until the model produces a final reply or the turn
+// limit is reached. Agent is designed to be lightweight and stateless between
+// runs — conversation history lives in Request and the rollout, not in Agent
+// fields. A Factory creates fresh Agent instances from a shared template.
 type Agent struct {
 	provider             provider.Provider
 	tools                *tool.Registry
@@ -99,7 +104,10 @@ type Agent struct {
 	fileHistoryToolsOnly bool
 }
 
-// Request is one Agent run input.
+// Request is one Agent run input. History and ContextHistory carry the
+// conversation so far; Prompt is the new user message for this turn.
+// ContextHistory may differ from History when context compaction has shrunk
+// the message list sent to the provider.
 type Request struct {
 	SessionID      string
 	Turn           int
@@ -108,19 +116,26 @@ type Request struct {
 	Prompt         string
 }
 
-// Result is the final Agent run output.
+// Result is the final Agent run output. Text is the last assistant reply,
+// Messages is the full transcript (including tool results), and
+// ContextMessages is the potentially-compacted message slice that was sent
+// to the provider on the last iteration.
 type Result struct {
 	Text            string
 	Messages        []message.Message
 	ContextMessages []message.Message
 }
 
+// toolCall captures one tool invocation parsed from a provider stream.
 type toolCall struct {
 	ID    string
 	Name  string
 	Input json.RawMessage
 }
 
+// streamResult holds the aggregated output of consuming one provider stream:
+// accumulated text, the assembled assistant message, any tool calls, and the
+// total reasoning character count (used for empty-response diagnostics).
 type streamResult struct {
 	text         string
 	message      message.Message

@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// truncateActivitySummary collapses whitespace and truncates an activity
+// summary to maxActivitySummaryRunes. Reasoning summaries often contain
+// embedded "\n\n" paragraph breaks that would push the TUI footer
+// off-screen; collapsing whitespace prevents that while preserving content.
 func truncateActivitySummary(text string) string {
 	// Activity summaries are rendered as a single-line label (chip or status
 	// row). Collapse all interior whitespace so reasoning summaries — which the
@@ -18,14 +22,25 @@ func truncateActivitySummary(text string) string {
 	return string(runes[:maxActivitySummaryRunes-3]) + "..."
 }
 
+// truncateActivityDetail truncates activity detail content to
+// maxActivityDetailRunes. When truncating, it preserves any tool-result
+// truncation footer (e.g. "... [tool result truncated: ...]\nfull_output_path=...")
+// so the TUI can still link to the full output.
 func truncateActivityDetail(text string) string {
 	return truncateActivityDetailToRunes(text, maxActivityDetailRunes)
 }
 
+// truncateToolActivityDetail truncates tool activity detail to a higher
+// limit (maxToolActivityDetailRunes) than general activity detail, since tool
+// output is typically more useful to the user than reasoning text.
 func truncateToolActivityDetail(text string) string {
 	return truncateActivityDetailToRunes(text, maxToolActivityDetailRunes)
 }
 
+// truncateActivityDetailToRunes is the shared truncation implementation.
+// It prepends a truncation notice and preserves a tool-result footer if one
+// exists at the end of the text. The budget for the preview is calculated
+// after reserving space for the notice and footer.
 func truncateActivityDetailToRunes(text string, maxRunes int) string {
 	text = strings.TrimRight(text, " \t\r\n")
 	if strings.TrimSpace(text) == "" {
@@ -57,6 +72,9 @@ func truncateActivityDetailToRunes(text string, maxRunes int) string {
 	return prefix + preview + suffix
 }
 
+// toolResultTruncationFooter extracts the trailing "... [tool result truncated:"
+// footer from a detail string, so it can be preserved when the detail itself
+// is truncated. Returns (footer, true) if found.
 func toolResultTruncationFooter(text string) (string, bool) {
 	index := strings.LastIndex(text, toolResultTruncatedMarker)
 	if index < 0 {

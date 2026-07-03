@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	_ "embed"
@@ -30,6 +31,9 @@ var summaryPromptTemplate string
 //go:embed summary_short_prompt.txt
 var summaryShortPromptTemplate string
 
+// preparedMessages holds the message slices and token estimate produced by
+// prepareMessages. messages is the compacted history (without runtime context);
+// requestMessages is what gets sent to the provider (with runtime context prepended).
 type preparedMessages struct {
 	messages        []message.Message
 	requestMessages []message.Message
@@ -54,6 +58,10 @@ type CompactResult struct {
 	Reason            string
 }
 
+// prepareMessages estimates the token count for the upcoming provider request
+// and triggers context compaction if the estimate exceeds the configured
+// threshold. It returns the (possibly compacted) messages, the provider-facing
+// request messages with runtime context prepended, and the final token estimate.
 func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, tools []provider.ToolDefinition) (preparedMessages, error) {
 	requestMessages := cloneMessages(messages)
 	providerMessages := a.withRuntimeContext(requestMessages)
@@ -71,6 +79,7 @@ func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int,
 	})
 	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, requestMessages, estimated, tools)
 	if err != nil {
+		slog.Warn("context compaction failed", "session", sessionID, "turn", turn, "err", err)
 		a.emit(Event{
 			Type:         EventActivity,
 			ActivityKind: ActivityNotice,

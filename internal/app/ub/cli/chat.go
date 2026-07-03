@@ -20,11 +20,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// chatOptions configures a headless chat session.
 type chatOptions struct {
 	SessionID string
 	New       bool
 }
 
+// chatSessionState holds the store, rollout, and conversation state for a
+// single headless chat session. It is created by runChat and closed when the
+// command finishes.
 type chatSessionState struct {
 	store          *store.Store
 	rollout        *rollout.SQLite
@@ -35,6 +39,9 @@ type chatSessionState struct {
 	sessionID      string
 }
 
+// Close releases the rollout writer and store, returning the first error
+// encountered. It is idempotent: calling Close on an already-closed state
+// is a no-op.
 func (s *chatSessionState) Close() error {
 	if s == nil {
 		return nil
@@ -55,6 +62,9 @@ func (s *chatSessionState) Close() error {
 	return err
 }
 
+// runAgent executes a single headless agent turn: it resolves the provider
+// and model from config/flags, creates a session, builds the agent with the
+// full tool set, runs one prompt, and prints the result to stdout.
 func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {

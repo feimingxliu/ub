@@ -15,6 +15,8 @@ import (
 
 const defaultDuckDuckGoSearchURL = "https://html.duckduckgo.com/html/"
 
+// searchRequest is the internal search query representation, independent of
+// the provider-specific HTTP API format.
 type searchRequest struct {
 	Query   string
 	Recency int
@@ -22,6 +24,7 @@ type searchRequest struct {
 	Limit   int
 }
 
+// searchResult is one normalized search hit returned by any backend.
 type searchResult struct {
 	Title     string
 	URL       string
@@ -29,10 +32,15 @@ type searchResult struct {
 	Published string
 }
 
+// searchBackend abstracts over different search providers (DuckDuckGo, Brave,
+// Tavily, SerpAPI, SearXNG). Each implementation translates a searchRequest
+// into its native API format and normalizes results into searchResult.
 type searchBackend interface {
 	Search(ctx context.Context, req searchRequest) ([]searchResult, error)
 }
 
+// searchBackendFor selects the appropriate search backend based on the
+// configured provider name in opts. Defaults to DuckDuckGo (zero-config).
 func searchBackendFor(opts Options, client *http.Client) searchBackend {
 	return httpSearchBackend{
 		opts:   opts,
