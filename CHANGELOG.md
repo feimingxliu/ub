@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.2] - 2026-07-03
+
+
+### Added
+
+- Step-wise ask wizard with Other input and wrapping ([3cc4b80](https://github.com/feimingxliu/ub/commit/3cc4b80be169f74cb3307c5c3cc145fc18b65eaa))
+- Multiline textarea input with smart Up/Down navigation ([921e49c](https://github.com/feimingxliu/ub/commit/921e49ce4d2376900ac412e0f2116a06a72a3a04))
+
+
+### Documentation
+
+- Add doc comments and structured logging across agent, CLI, TUI, and infrastructure packages ([f7fa826](https://github.com/feimingxliu/ub/commit/f7fa82654c5aa33c3fd647f85c2aa16b3e4c9369))
+
+
+### Performance
+
+- Drop defensive message clones at provider and compaction boundaries ([ef5d066](https://github.com/feimingxliu/ub/commit/ef5d06685cac4e1398db61d0b2f10d89bae121a9))
+
 ## [0.4.1] - 2026-06-18
 
 
@@ -21,6 +39,11 @@ All notable changes to this project are documented here.
 - Enforce private-network and domain policy on search provider endpoints ([95b83fc](https://github.com/feimingxliu/ub/commit/95b83fce77cdbee5497311e6988c3047f6793f00))
 - Add schema hint to ask tool error messages for self-correction ([e70000d](https://github.com/feimingxliu/ub/commit/e70000d465a39e3b0aea9516487f2fe8525eb3da))
 - Align input cursor with text via virtual cursor ([f87966e](https://github.com/feimingxliu/ub/commit/f87966eeab8e816d3f5d98e90fb8c6e4c87acbbc))
+
+
+### Maintenance
+
+- V0.4.1 ([a8c53b5](https://github.com/feimingxliu/ub/commit/a8c53b503a58fa9d64eefb191ba5a20524bd7e15))
 
 ## [0.4.0] - 2026-06-12
 
