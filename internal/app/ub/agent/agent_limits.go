@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ErrMaxTurns is returned when a run exceeds its provider/tool loop limit.
@@ -17,6 +18,18 @@ const maxTurnsFinalInstruction = "Tool iteration limit reached for this turn. Do
 const maxOutputTokensRecoveryLimit = 3
 
 const outputTokensRecoveryInstruction = "Output token limit hit. Resume directly — no apology, no recap of what you were doing. Pick up mid-thought if that is where the cut happened. Break remaining work into smaller pieces."
+
+// truncatedToolCallRecoveryInstruction is injected as a user message when a
+// provider stream ends mid-JSON for a tool call (likely max_output_tokens hit
+// during output). The model should retry the truncated call.
+const truncatedToolCallRecoveryInstruction = "A tool call was truncated mid-stream (likely the output token limit was hit). Retry the tool call with complete arguments."
+
+// isToolCallTruncatedError returns true when the provider reports that a tool
+// call's JSON arguments were cut off mid-stream, typically because the model
+// hit its max_output_tokens limit while serializing the tool call.
+func isToolCallTruncatedError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "arguments truncated mid-stream")
+}
 
 // emptyResponseError builds the error returned when a provider stream
 // completes with neither a text/tool-use reply nor a usable assistant message.

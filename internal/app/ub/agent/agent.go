@@ -118,6 +118,16 @@ loop:
 			consumed, err := a.consumeStream(ctx, req.SessionID, req.Turn, stream, prepared.estimatedTokens)
 			closeErr := stream.Close()
 			if err != nil {
+				// Tool call arguments truncated mid-stream (e.g. max_output_tokens
+				// hit mid-json) is recoverable: inject a user message telling the
+				// model to retry the truncated call, rather than aborting the turn.
+				if isToolCallTruncatedError(err) {
+					slog.Warn("tool call truncated mid-stream, asking model to retry", "session", req.SessionID, "turn", req.Turn, "err", err)
+					a.emit(Event{Type: EventError, Content: err.Error(), IsError: true, Err: err})
+					injected := message.Text(message.RoleUser, truncatedToolCallRecoveryInstruction)
+					contextMessages = append(contextMessages, injected)
+					continue
+				}
 				recovered, recoveryErr := a.recoverContextOverflow(ctx, req.SessionID, req.Turn, contextMessages, prepared.estimatedTokens, tools, err, contextOverflowRecoveryUsed)
 				if recoveryErr != nil {
 					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, recoveryErr)
@@ -130,6 +140,13 @@ loop:
 				return Result{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 			}
 			if closeErr != nil {
+				if isToolCallTruncatedError(closeErr) {
+					slog.Warn("tool call truncated mid-stream (close), asking model to retry", "session", req.SessionID, "turn", req.Turn, "err", closeErr)
+					a.emit(Event{Type: EventError, Content: closeErr.Error(), IsError: true, Err: closeErr})
+					injected := message.Text(message.RoleUser, truncatedToolCallRecoveryInstruction)
+					contextMessages = append(contextMessages, injected)
+					continue
+				}
 				recovered, recoveryErr := a.recoverContextOverflow(ctx, req.SessionID, req.Turn, contextMessages, prepared.estimatedTokens, tools, closeErr, contextOverflowRecoveryUsed)
 				if recoveryErr != nil {
 					return Result{}, a.recordError(ctx, req.SessionID, req.Turn, recoveryErr)

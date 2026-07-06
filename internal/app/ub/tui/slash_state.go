@@ -236,6 +236,17 @@ func (m Model) startGoalCommand(args []string) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	// Ensure a session exists before creating the goal. On a fresh TUI launch
+	// the runner's state is nil (it is lazily created on the first prompt), so
+	// /goal would otherwise fail with "no active session".
+	if sessionRunner, ok := runner.(SessionRunner); ok && sessionRunner.CurrentSessionID() == "" {
+		state, err := sessionRunner.NewSession(m.ctx)
+		if err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		m.applySessionState(state)
+	}
 	// Create the goal, then start the agent with a goal-oriented prompt.
 	if err := runner.CreateGoal(objective, 0, 0); err != nil {
 		m.messages.append(systemRole, err.Error())
