@@ -62,6 +62,19 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 			break
 		}
 		if g == nil || goaltool.IsTerminal(g.Status) {
+			if g != nil {
+				// Emit a final status notice so the TUI can show the terminal
+				// state (complete / blocked / budget_limited) in the status bar.
+				finalEvt := tui.Event{
+					Type:         tui.EventActivity,
+					ActivityKind: "notice",
+					Notice:       "goal_status",
+					Status:       string(g.Status),
+					Summary:      fmt.Sprintf("Goal %s: %s", g.Status, truncateGoalObjective(g.Objective, 60)),
+					Content:      g.Objective,
+				}
+				sendTUIEvent(ctx, events, finalEvt)
+			}
 			break
 		}
 		// Record usage for the completed turn.

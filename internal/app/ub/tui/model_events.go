@@ -87,7 +87,9 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		m.running = false
 		m.status.state = statusIdle
-		m.status.goalStatus = ""
+		// Preserve goal status for the status bar — the goal loop may be
+		// transitioning between turns. The next startRunnerPrompt call or
+		// goal_inject notice will update it to the correct value.
 		m.cancel = nil
 		m.pending = nil
 		m.pendingAsk = nil
