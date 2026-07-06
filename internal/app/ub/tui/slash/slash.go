@@ -29,6 +29,7 @@ var specs = []Spec{
 	{Name: "small-model", Usage: "/small-model [model]", Description: "show or switch the auto memory model"},
 	{Name: "mode", Usage: "/mode <work|plan|auto|full-access>", Description: "switch execution mode"},
 	{Name: "compact", Usage: "/compact", Description: "compact earlier session context"},
+	{Name: "goal", Usage: "/goal [objective|clear]", Description: "show current goal, set a new objective, or clear the goal"},
 	{Name: "init", Usage: "/init [guidance]", Description: "run an agent pass to create or update AGENTS.md"},
 	{Name: "plans", Usage: "/plans [plan-id]", Description: "show plan artifacts or open one in $EDITOR"},
 	{Name: "plan-edit", Usage: "/plan-edit <plan-id>", Description: "open a plan artifact in $EDITOR"},

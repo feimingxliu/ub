@@ -87,6 +87,7 @@ func (m Model) handleStreamEvent(msg streamEventMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		m.running = false
 		m.status.state = statusIdle
+		m.status.goalStatus = ""
 		m.cancel = nil
 		m.pending = nil
 		m.pendingAsk = nil
@@ -411,6 +412,12 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		// matching the Codex-style interleaved transcript.
 		m.messages.appendOrUpdateLiveActivity(event, m.status.turn)
 		m.status.state = statusForActivity(event)
+		// Update goal status indicator from goal notice events.
+		if event.Notice == "goal_status" || event.Notice == "goal_created" {
+			m.status.goalStatus = event.Status
+		} else if event.Notice == "goal_inject" {
+			m.status.goalStatus = "active"
+		}
 		if summary := strings.TrimSpace(event.Summary); summary != "" && strings.TrimSpace(event.ActivityKind) != "thinking" {
 			m.activitySummary = summary
 		}
@@ -462,6 +469,7 @@ func waitForEventFromUpdateInner(event Event, m *Model) tea.Cmd {
 		m.messages.append(errorRole, defaultString(event.Content, "agent failed"))
 		m.running = false
 		m.status.state = statusIdle
+		m.status.goalStatus = ""
 		m.cancel = nil
 		m.clearEscInterruptConfirm()
 		return nil

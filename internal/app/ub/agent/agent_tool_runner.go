@@ -148,6 +148,9 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	if call.Name == "enter_plan_mode" || call.Name == "exit_plan_mode" {
 		a.recordModeActivity(ctx, sessionID, turn, call, result)
 	}
+	if call.Name == "create_goal" || call.Name == "update_goal" || call.Name == "get_goal" {
+		a.recordGoalActivity(ctx, sessionID, turn, call, result)
+	}
 	summary, content := ToolActivityResultWithInput(call.Name, call.Input, result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
 	if call.Name == "remember" && !result.IsError {

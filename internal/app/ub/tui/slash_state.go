@@ -47,6 +47,8 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "compact":
 		return m.startCompact()
+	case "goal":
+		return m.startGoalCommand(cmd.Args)
 	case "init":
 		return m.startInitCommand(cmd.Args)
 	case "plan-edit":
@@ -205,6 +207,43 @@ func (m Model) executeSlash(input string) (tea.Model, tea.Cmd) {
 		m.messages.append(systemRole, "unknown slash command "+cmd.Name)
 		return m, nil
 	}
+}
+
+func (m Model) startGoalCommand(args []string) (tea.Model, tea.Cmd) {
+	runner, ok := m.runner.(GoalRunner)
+	if !ok {
+		m.messages.append(systemRole, "goal is unavailable in this runner")
+		return m, nil
+	}
+	// /goal clear — delete the current goal.
+	if len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0]), "clear") {
+		if err := runner.ClearGoal(); err != nil {
+			m.messages.append(systemRole, err.Error())
+			return m, nil
+		}
+		m.status.goalStatus = ""
+		m.messages.append(systemRole, "goal cleared")
+		return m, nil
+	}
+	objective := strings.TrimSpace(strings.Join(args, " "))
+	if objective == "" {
+		// No args: show current goal status.
+		status := runner.GoalStatus()
+		if status == "" {
+			m.messages.append(systemRole, "no goal is set for this session")
+		} else {
+			m.messages.append(systemRole, "goal: "+status)
+		}
+		return m, nil
+	}
+	// Create the goal, then start the agent with a goal-oriented prompt.
+	if err := runner.CreateGoal(objective, 0, 0); err != nil {
+		m.messages.append(systemRole, err.Error())
+		return m, nil
+	}
+	m.status.goalStatus = "active"
+	prompt := "I have created a goal for you. Use get_goal to check its status, then work toward completing it. When done, call update_goal(status=\"complete\").\n\nObjective: " + objective
+	return m.startInternalPrompt(prompt, "goal mode started: "+truncateText(objective, 200))
 }
 
 func (m Model) startInitCommand(args []string) (tea.Model, tea.Cmd) {

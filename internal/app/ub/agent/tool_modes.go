@@ -121,7 +121,7 @@ func toolAvailableInMode(name string, mode execution.Mode) bool {
 
 func toolAllowedInPlanMode(name string) bool {
 	switch name {
-	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update", "exit_plan_mode":
+	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update", "exit_plan_mode", "create_goal", "update_goal", "get_goal":
 		return true
 	default:
 		return false

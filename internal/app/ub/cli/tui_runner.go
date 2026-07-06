@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/feimingxliu/ub/internal/app/ub/agent"
 	"github.com/feimingxliu/ub/internal/app/ub/tui"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/hook"
+	goaltool "github.com/feimingxliu/ub/internal/pkg/tool/goal"
 )
 
 func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- tui.Event) error {
@@ -18,24 +20,79 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		}
 		r.state = state
 	}
-	a, err := r.newAgent(ctx, events)
-	if err != nil {
-		return err
+	// runOnce performs a single agent turn. It returns (done, error) where
+	// done=true means the loop should stop (no active goal, or terminal goal).
+	// On error, finishChatSession is NOT called here — the caller handles it.
+	runOnce := func(prompt string) (done bool, err error) {
+		a, err := r.newAgent(ctx, events)
+		if err != nil {
+			return true, err
+		}
+		result, err := a.Run(ctx, agent.Request{
+			SessionID:      r.state.sessionID,
+			Turn:           r.state.nextTurn,
+			History:        r.state.history,
+			ContextHistory: r.state.contextHistory,
+			Prompt:         prompt,
+		})
+		if err != nil {
+			return true, err
+		}
+		r.state.history = result.Messages
+		r.state.contextHistory = result.ContextMessages
+		r.state.nextTurn++
+		return false, nil
 	}
-	result, err := a.Run(ctx, agent.Request{
-		SessionID:      r.state.sessionID,
-		Turn:           r.state.nextTurn,
-		History:        r.state.history,
-		ContextHistory: r.state.contextHistory,
-		Prompt:         prompt,
-	})
+	// First turn: run the user's prompt.
+	done, err := runOnce(prompt)
 	if err != nil {
 		_ = finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 		return err
 	}
-	r.state.history = result.Messages
-	r.state.contextHistory = result.ContextMessages
-	r.state.nextTurn++
+	if done {
+		return finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
+	}
+	// Goal auto-continuation loop: after each turn, if the session has an
+	// active (non-terminal) goal, inject a continuation prompt and run again.
+	goalContinueCount := 0
+	for {
+		g, loadErr := goaltool.Load(r.state.sessionID)
+		if loadErr != nil {
+			slog.Warn("goal load error", "session", r.state.sessionID, "err", loadErr)
+			break
+		}
+		if g == nil || goaltool.IsTerminal(g.Status) {
+			break
+		}
+		// Record usage for the completed turn.
+		if usageErr := goaltool.RecordUsage(r.state.sessionID, 0); usageErr != nil {
+			slog.Warn("goal record usage error", "err", usageErr)
+		}
+		// Re-check after usage recording (budget may have been hit).
+		g, _ = goaltool.Load(r.state.sessionID)
+		if g == nil || goaltool.IsTerminal(g.Status) {
+			break
+		}
+		goalContinueCount++
+		// Emit a continuation notice event so the TUI can show the status.
+		evt := tui.Event{
+			Type:         tui.EventActivity,
+			ActivityKind: "notice",
+			Notice:       "goal_inject",
+			Status:       "running",
+			Summary:      fmt.Sprintf("Goal continuing (%d): %s", goalContinueCount, truncateGoalObjective(g.Objective, 60)),
+			Content:      g.Objective,
+		}
+		sendTUIEvent(ctx, events, evt)
+		contPrompt := agent.GoalContinuationPrompt(g)
+		done, err = runOnce(contPrompt)
+		if err != nil {
+			break
+		}
+		if done {
+			break
+		}
+	}
 	return finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 }
 
@@ -201,4 +258,12 @@ func (r *tuiAgentRunner) Close() error {
 		err = closeErr
 	}
 	return err
+}
+
+func truncateGoalObjective(objective string, maxRunes int) string {
+	runes := []rune(strings.TrimSpace(objective))
+	if len(runes) <= maxRunes {
+		return string(runes)
+	}
+	return string(runes[:maxRunes]) + "..."
 }

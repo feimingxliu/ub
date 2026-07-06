@@ -68,6 +68,16 @@ type ControlRunner interface {
 	Models() []string
 }
 
+// GoalRunner optionally lets slash commands create/check goal state.
+type GoalRunner interface {
+	// CreateGoal writes a new active goal for the current session.
+	CreateGoal(objective string, tokenBudget, turnBudget int) error
+	// GoalStatus returns the current goal summary or empty if none.
+	GoalStatus() string
+	// ClearGoal deletes the goal for the current session.
+	ClearGoal() error
+}
+
 // PlanModeControlRunner optionally lets slash commands and model-requested
 // plan-mode tools share one in-memory transition path.
 type PlanModeControlRunner interface {

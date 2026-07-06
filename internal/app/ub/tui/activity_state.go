@@ -89,6 +89,9 @@ func activityEventKey(event Event) string {
 		if event.Notice == "compacting" {
 			return "notice:compacting"
 		}
+		if event.Notice == "goal_inject" || event.Notice == "goal_status" || event.Notice == "goal_created" {
+			return "notice:goal"
+		}
 	}
 	return ""
 }

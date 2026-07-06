@@ -33,7 +33,10 @@ const (
 type NoticeKind string
 
 const (
-	NoticeCompacting NoticeKind = "compacting"
+	NoticeCompacting  NoticeKind = "compacting"
+	NoticeGoalCreated NoticeKind = "goal_created"
+	NoticeGoalStatus  NoticeKind = "goal_status"
+	NoticeGoalInject  NoticeKind = "goal_inject"
 )
 
 // Event reports Agent progress to interactive callers such as the TUI.

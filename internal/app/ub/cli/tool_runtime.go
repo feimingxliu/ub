@@ -14,6 +14,7 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/runtime/permission"
 	"github.com/feimingxliu/ub/internal/pkg/tool"
 	"github.com/feimingxliu/ub/internal/pkg/tool/fs"
+	goaltool "github.com/feimingxliu/ub/internal/pkg/tool/goal"
 	"github.com/feimingxliu/ub/internal/pkg/tool/job"
 	lsptool "github.com/feimingxliu/ub/internal/pkg/tool/lsp"
 	mcptool "github.com/feimingxliu/ub/internal/pkg/tool/mcp"
@@ -96,6 +97,9 @@ func newToolRuntime(ctx context.Context, cfg *config.Config) (*toolRuntime, erro
 		return nil, err
 	}
 	if err := todotool.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := goaltool.Register(reg); err != nil {
 		return nil, err
 	}
 	for _, register := range []func(*tool.Registry, string) error{

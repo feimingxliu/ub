@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/feimingxliu/ub/internal/app/ub/tui"
+	goaltool "github.com/feimingxliu/ub/internal/pkg/tool/goal"
 	mcptool "github.com/feimingxliu/ub/internal/pkg/tool/mcp"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/rollout"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/store"
@@ -186,6 +187,56 @@ func (r *tuiAgentRunner) CurrentSessionID() string {
 		return ""
 	}
 	return r.state.sessionID
+}
+
+// CreateGoal implements tui.GoalRunner. It writes a new active goal for the
+// current session. If a goal already exists and is non-terminal, it returns
+// an error.
+func (r *tuiAgentRunner) CreateGoal(objective string, tokenBudget, turnBudget int) error {
+	sessionID := r.CurrentSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	existing, err := goaltool.Load(sessionID)
+	if err != nil {
+		return err
+	}
+	if existing != nil && !goaltool.IsTerminal(existing.Status) {
+		return fmt.Errorf("an active goal already exists (status=%s)", existing.Status)
+	}
+	return goaltool.Save(sessionID, &goaltool.Goal{
+		SessionID:   sessionID,
+		Objective:   objective,
+		Status:      goaltool.StatusActive,
+		TokenBudget: tokenBudget,
+		TurnBudget:  turnBudget,
+		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   time.Now().UTC(),
+	})
+}
+
+// GoalStatus implements tui.GoalRunner. It returns a one-line summary of the
+// current goal, or empty if no goal exists.
+func (r *tuiAgentRunner) GoalStatus() string {
+	sessionID := r.CurrentSessionID()
+	if sessionID == "" {
+		return ""
+	}
+	g, err := goaltool.Load(sessionID)
+	if err != nil || g == nil {
+		return ""
+	}
+	return fmt.Sprintf("status=%s objective=%s turns=%d tokens=%d", g.Status, truncateGoalObjective(g.Objective, 80), g.TurnsUsed, g.TokensUsed)
+}
+
+// ClearGoal implements tui.GoalRunner. It deletes the goal for the current
+// session.
+func (r *tuiAgentRunner) ClearGoal() error {
+	sessionID := r.CurrentSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("no active session")
+	}
+	return goaltool.Delete(sessionID)
 }
 
 func (r *tuiAgentRunner) Messages() []tui.InitialMessage {

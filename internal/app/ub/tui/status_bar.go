@@ -23,6 +23,7 @@ type statusBar struct {
 	contextMaxTokens  int
 	contextRatio      float64
 	contextKind       string
+	goalStatus        string
 }
 
 const (
@@ -72,6 +73,9 @@ func (s statusBar) render(width int, styles tuitheme.Styles) (string, helpSpan) 
 		segments = append(segments, segment)
 	}
 	segments = append(segments, statusSegment{label: "state", value: state, semantic: "state"})
+	if s.goalStatus != "" {
+		segments = append(segments, statusSegment{label: "goal", value: s.goalStatus, semantic: "goal"})
+	}
 	if s.turn > 0 {
 		segments = append(segments, statusSegment{label: "turn", value: fmt.Sprintf("%d", s.turn)})
 	}
@@ -126,7 +130,7 @@ func fitStatusSegments(segments []statusSegment, width int, styles tuitheme.Styl
 		return out
 	}
 
-	for _, label := range []string{"cwd", "turn", "ctx est", "ctx last", "effort", "model", "mode"} {
+	for _, label := range []string{"cwd", "turn", "goal", "ctx est", "ctx last", "effort", "model", "mode"} {
 		out = removeStatusSegment(out, label)
 		if statusSegmentsWidth(out, styles) <= width {
 			return out
@@ -280,6 +284,8 @@ func statusSegmentStyle(segment statusSegment, styles tuitheme.Styles) lipgloss.
 		return base.Copy().Foreground(modeStyle(segment.value, styles).GetForeground())
 	case "state":
 		return base.Copy().Foreground(stateStyle(segment.value, styles).GetForeground())
+	case "goal":
+		return base.Copy().Foreground(goalStyle(segment.value, styles).GetForeground())
 	case "help":
 		return base.Copy().Foreground(styles.Status.Value.GetForeground()).Bold(true)
 	default:
@@ -305,6 +311,19 @@ func stateStyle(state string, styles tuitheme.Styles) lipgloss.Style {
 	case statusIdle:
 		return styles.Status.StateIdle
 	case "failed", "error":
+		return styles.Status.StateError
+	default:
+		return styles.Status.StateBusy
+	}
+}
+
+func goalStyle(value string, styles tuitheme.Styles) lipgloss.Style {
+	switch value {
+	case "active":
+		return styles.Status.StateBusy
+	case "complete":
+		return styles.Status.StateIdle
+	case "blocked", "budget_limited":
 		return styles.Status.StateError
 	default:
 		return styles.Status.StateBusy

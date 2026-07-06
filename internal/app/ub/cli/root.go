@@ -115,6 +115,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().Lookup("resume").NoOptDefVal = resumeSelectSentinel
 
 	root.AddCommand(newRunCmd())
+	root.AddCommand(newGoalCmd())
 	root.AddCommand(newChatCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newDoctorCmd())
