@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.3] - 2026-07-06
+
+
+### Added
+
+- Add goal mode for autonomous long-running tasks ([091d992](https://github.com/feimingxliu/ub/commit/091d99293e7cc576591fbd8c55ba16244f9451c3))
+
+
+### Fixed
+
+- Add WORKSPACE column to sessions ls output ([f6e8991](https://github.com/feimingxliu/ub/commit/f6e899164095d9cf5997b6fbd6b4a2f6fd270111))
+- Prevent status bar goal indicator from disappearing mid-cycle ([667ab05](https://github.com/feimingxliu/ub/commit/667ab056ec9a6d6574a87b521b4b40e03dbd4628))
+- Two goal-mode bugs — /goal no-active-session and truncated tool call recovery ([ad67641](https://github.com/feimingxliu/ub/commit/ad676416783ef22d02a8713f5925549afe4cbf6f))
+
 ## [0.4.2] - 2026-07-03
 
 
@@ -14,6 +28,11 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - Add doc comments and structured logging across agent, CLI, TUI, and infrastructure packages ([f7fa826](https://github.com/feimingxliu/ub/commit/f7fa82654c5aa33c3fd647f85c2aa16b3e4c9369))
+
+
+### Maintenance
+
+- V0.4.2 ([067fff3](https://github.com/feimingxliu/ub/commit/067fff3f87546817093b0ddc4a42789b1926a5db))
 
 
 ### Performance
