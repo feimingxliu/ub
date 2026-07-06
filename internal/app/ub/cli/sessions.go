@@ -140,7 +140,7 @@ func printAllSessions(out io.Writer, sessions []store.Session) error {
 
 func printSessionTable(out io.Writer, sessions []store.Session) error {
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(w, "ID\tUPDATED\tTITLE\tPROVIDER\tMODEL"); err != nil {
+	if _, err := fmt.Fprintln(w, "ID\tWORKSPACE\tUPDATED\tTITLE\tPROVIDER\tMODEL"); err != nil {
 		return err
 	}
 	for _, sess := range sessions {
@@ -157,8 +157,9 @@ func printSessionTable(out io.Writer, sessions []store.Session) error {
 			model = "-"
 		}
 		if _, err := fmt.Fprintf(
-			w, "%s\t%s\t%s\t%s\t%s\n",
+			w, "%s\t%s\t%s\t%s\t%s\t%s\n",
 			sess.ID,
+			shortenWorkspaceForDisplay(sess.Workspace),
 			sess.UpdatedAt.Local().Format(time.RFC3339),
 			title,
 			provider,

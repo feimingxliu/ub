@@ -308,7 +308,7 @@ func TestSessionsListShowsCurrentWorkspaceOnly(t *testing.T) {
 		t.Fatalf("sessions ls: %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"ID", "UPDATED", "TITLE", "MODEL", "current", "Current Session", "fake/model"} {
+	for _, want := range []string{"ID", "WORKSPACE", "UPDATED", "TITLE", "MODEL", "current", "Current Session", "fake/model"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("sessions ls output missing %q:\n%s", want, got)
 		}
