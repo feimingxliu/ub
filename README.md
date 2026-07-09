@@ -90,14 +90,14 @@ See [`docs/design.md`](docs/design.md) for the long version.
 | [`docs/usage.md`](docs/usage.md) | TUI keymap · slash commands · execution modes · permission flow · workflows |
 | [`docs/design.md`](docs/design.md) | Architecture, module boundaries, data flow |
 | [`docs/roadmap.md`](docs/roadmap.md) | V1 six-sprint iteration plan (historical) |
-| [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 roadmap — features, architecture, ecosystem |
+| [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 roadmap — current baseline and next-stage planning |
 | [`README.zh-CN.md`](README.zh-CN.md) | 中文文档 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Contributor workflow, tests, commit style, PR checklist |
 | [`AGENTS.md`](AGENTS.md) | AI-agent collaboration notes |
 
 ## 🛣️ Status
 
-V1 scope ([`docs/roadmap.md`](docs/roadmap.md)) is feature-complete and tagged releases are available. Current releases are still `v0.x`, so expect rough edges and API churn before `v1.0.0`.
+V1 scope ([`docs/roadmap.md`](docs/roadmap.md)) is feature-complete and tagged releases are available. The V2 roadmap is aligned to the current `v0.4.x` baseline; next work is focused on context-window inference, compaction quality, prompt builder layering, provider prefix cache, observability, and eval. Current releases are still `v0.x`, so expect rough edges and API churn before `v1.0.0`.
 
 If something looks wrong, [open an issue](https://github.com/feimingxliu/ub/issues). PRs welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions.
 

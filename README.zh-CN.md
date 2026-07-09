@@ -88,13 +88,13 @@ ub doctor --plain                   # 体检
 | [`docs/usage.md`](docs/usage.md) | TUI 键位 · Slash 命令 · 执行模式 · 权限审批 · 常见工作流 |
 | [`docs/design.md`](docs/design.md) | 架构、模块边界、数据流 |
 | [`docs/roadmap.md`](docs/roadmap.md) | V1 路线图：6 个 Sprint 35 个迭代（历史档案）|
-| [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 路线图：功能、架构、生态演进 |
+| [`docs/roadmap-v2.md`](docs/roadmap-v2.md) | V2 路线图：当前基线与下一阶段规划 |
 | [`README.md`](README.md) | English version |
 | [`AGENTS.md`](AGENTS.md) | 仓库协作规范（commit 风格、测试要求） |
 
 ## 🛣️ 现状
 
-V1 范围（[`docs/roadmap.md`](docs/roadmap.md)）已经 feature-complete,且已有 tagged release 可用。当前 release 仍是 `v0.x`,预期还会有粗糙的边角和 `v1.0.0` 前的 API 变动。
+V1 范围（[`docs/roadmap.md`](docs/roadmap.md)）已经 feature-complete,且已有 tagged release 可用。V2 路线图已对齐当前 `v0.4.x` 基线;下一阶段聚焦上下文窗口预测、压缩质量、prompt builder 分层、provider prefix cache、可观测性和 eval。当前 release 仍是 `v0.x`,预期还会有粗糙的边角和 `v1.0.0` 前的 API 变动。
 
 有问题请[开 issue](https://github.com/feimingxliu/ub/issues)。欢迎 PR,贡献约定见 [`AGENTS.md`](AGENTS.md)。
 

@@ -15,6 +15,7 @@
 | `ub --mode work\|plan\|auto\|full-access` | 启动时指定执行模式 |
 | `ub --profile <name>` / `--dev` | 选择 profile（`--dev` 等价 `--profile dev`） |
 | `ub run -p "..."` | 无头模式跑一次 agent loop（CI / 脚本） |
+| `ub goal -p "..."` | 无头 goal mode：把 prompt 当作目标自动续跑，直到完成、阻塞或预算耗尽 |
 | `ub chat "..."` | 单轮直接对话，不带工具、不进 rollout（验证 provider 通路用） |
 | `ub sessions ls` | 列出当前工作区的 session |
 | `ub sessions rm <id>` | 删除指定 session（事件 CASCADE 一起删） |
@@ -123,6 +124,7 @@ agent 运行中再输入内容时，发送方式决定它的去向：
 | `/mode` | `<work\|plan\|auto\|full-access>` | 切换执行模式（也可按 `Shift+Tab` 循环切） |
 | `/compact` | — | 主动触发上下文压缩（默认用当前主模型生成摘要） |
 | `/btw` | `[question]` | 打开独立 BTW 视图；带问题时立即旁路询问，不排队、不打断当前 turn、不写入主历史。回答按普通助手消息 Markdown 渲染；视图内直接输入追问并按 `Enter` 继续，底部显示 BTW 专属状态行（`answering` 表示模型回答中，`idle` 表示可继续追问），`PgUp`/`PgDown` 或滚轮只滚动 BTW 输出，`Esc` 返回主对话并清空 BTW 历史，`Ctrl+Y` 复制最新答案，`Ctrl+U` 清空当前记录并留在 BTW |
+| `/goal` | `[objective\|clear]` | 无参数展示当前 goal；带 objective 创建 active goal 并启动一轮 goal-oriented agent；`clear` 清除当前 session goal |
 | `/profile` | `<name>` | 显示切换 profile 的提示（需要重启 ub 才生效，因为 profile 影响启动期加载） |
 
 ## 4. 执行模式
@@ -238,7 +240,7 @@ context:
 - coding-agent 行为原则:先读文件再改、优先专用工具、失败后先诊断、只汇报真实验证状态
 - workspace instructions:工作区根目录的 `AGENTS.md`
 - git snapshot:启动时的 branch / default branch / `git status --short` / 最近提交,并明确标注为非实时快照
-- durable memory:全局指令与项目自动记忆,见 §13
+- durable memory:全局指令与项目自动记忆,见 §14
 
 相关配置:
 
@@ -457,7 +459,33 @@ ub 提供 plan artifact 和 session todo 两层工作流:
 
 5. **中断恢复**:下次会话从上次 tool result / rollout 中取回 `path` 后可直接 `read` 这个 state-root 下的 plan,或用 `plan_update_step(plan_id="...")` 继续标记进度。plan artifact 是用户 state 数据,不会写入工作区或参与 git。session todo 会随 session id 保存在 state-root 下,可继续用 `todo_update` 更新。
 
-## 11. Agent loop 上限
+## 11. Goal mode
+
+Goal mode 面向"请你围绕这个目标连续推进"的长任务。它不替代 plan/todo:
+
+- **goal**：跨 turn 的 objective、预算、状态和停止条件。
+- **plan**：可 review/edit 的持久方案 artifact。
+- **todo**：当前 session 的实时执行清单。
+
+TUI 内可以用 slash command 创建或查看 goal:
+
+```text
+/goal 修复当前项目里和上下文压缩相关的两个剩余 TODO,并更新文档
+/goal
+/goal clear
+```
+
+创建后,TUI 状态栏会显示 goal 状态。agent 应通过 `get_goal()` 查看目标和预算,工作完成且验证通过后调用 `update_goal(status="complete")`;如果连续遇到同一个阻塞条件,才用 `update_goal(status="blocked", block_reason="...")`。
+
+无头模式可以直接跑:
+
+```bash
+ub goal -p "修复 flaky tests 并跑完整验证" --turn-budget 12 --token-budget 200000
+```
+
+`ub goal` 会预创建 session-scoped goal,然后自动续跑 agent turn,直到 goal 进入 complete / blocked / paused,或达到 turn/token 预算。goal state 保存在 `$XDG_STATE_HOME/ub/goals/<session-id>.json`;删除 session 时会随 session artifacts 一起清理。
+
+## 12. Agent loop 上限
 
 主 agent 默认不按固定 tool-use 轮数截断；它会持续到模型停止调用工具、用户中断、provider 出错、上下文触发压缩/失败，或命中重复工具循环保护。这样长任务不会因为一个小的默认 cap 在中途停住。
 
@@ -469,7 +497,7 @@ max_turns: 80
 
 触顶后，TUI 会询问是否继续给一段额外预算；无头模式会发起一次禁用工具的收尾请求，让模型用已获得的信息回答。重复调用相同工具并拿到相同结果时，agent 会提前触发同样的禁用工具收尾路径。
 
-## 12. Subagents(派发子任务)
+## 13. Subagents(派发子任务)
 
 `task(prompt, max_turns?)` 工具让主 agent 派发一个**子 agent**跑一个 self-contained 子任务,把子任务的最终回答作为 tool result 拿回来。典型用法:
 
@@ -486,7 +514,7 @@ max_turns: 80
 
 后续 §4-01 agent loop 解耦完成后,会扩成"子 agent 独立模型 / 工具集 / TUI 多 pane"等完整能力。
 
-## 13. Workspace 持久记忆
+## 14. Workspace 持久记忆
 
 ub 维护两类 durable memory,并另外加载工作区指令。每次 agent 开跑时都会注入到 system prompt:
 
@@ -554,7 +582,7 @@ memory:
 
 自动归纳只接受受控 JSON 候选,随后仍会经过 category 校验、隐私过滤、冲突合并和衰减策略;被拒绝的候选不会写入 memory。
 
-## 14. 长输出落盘(spillover)
+## 15. 长输出落盘(spillover)
 
 ub 会把每次 tool result 在 inline 限额内的预览 + 完整内容落盘到磁盘。磁盘路径默认是 `<XDG_STATE_HOME 或 ~/.local/state>/ub/tool_outputs/<sessionID>/<toolUseID>.txt`,模型在 result 的 footer 里会拿到 `full_output_path=<绝对路径>` 提示,可以用 `read` 工具或新引入的 `tool_result(tool_use_id)` 工具拉回。
 
@@ -598,7 +626,7 @@ stderr_total=<bytes>
 
 `job_output(job_id, follow=true, timeout_ms?)` 会通过 streaming partial output 先推当前 ring buffer 快照,再推新增 stdout/stderr,直到 job 退出、`timeout_ms` 到期或请求取消。最终 result 仍是上面的快照格式;如果 follow 自身到期,会额外包含 `follow_timeout=true`。
 
-## 15. Hooks(生命周期 shell 钩子)
+## 16. Hooks(生命周期 shell 钩子)
 
 在 `~/.config/ub/config.yaml` 或项目 `.ub/config.yaml` 的 `hooks` 段挂载 shell 命令,在 agent 关键节点触发:
 
@@ -633,7 +661,7 @@ hooks:
 
 工作区(`.ub/config.yaml`)与用户(`~/.config/ub/config.yaml`)的 hook 列表是 **追加合并**,不是覆盖 —— 工作区 hook 接在用户 hook 后面跑。
 
-## 16. 故障排查
+## 17. 故障排查
 
 | 症状 | 原因 / 解决 |
 |---|---|
