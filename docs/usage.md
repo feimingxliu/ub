@@ -200,6 +200,8 @@ permissions:
 
 每次发请求前，agent 会估算 `(input tokens + reserve_output_tokens) / model.max_context`。超过阈值（默认 0.8）触发：
 
+`model.max_context` 由 ContextWindowResolver 统一决定：显式配置的 `providers.<name>.models.<model>.max_context_tokens` 最高优先；否则使用当前模型/provider 能力，并结合相同 provider endpoint/model 的历史成功 usage 和 context overflow 修正。解析结果带 source/confidence，供 runtime event 和后续 ContextDecision 使用。
+
 1. 用当前主对话模型跑摘要 prompt 模板
 2. 保留最近 `keep_recent_turns` 个完整 user turn（按 token budget 截断，但按 user turn 边界对齐）
 3. tool result 默认限幅 12 KiB / 400 行，完整输出落到 `$XDG_STATE_HOME/ub/tool-output/`，rollout 里只存 preview + truncation metadata
@@ -208,6 +210,8 @@ permissions:
 压缩不会删除或隐藏 session 里的原始对话消息。恢复 session 时，TUI 仍按完整 transcript 展示；只是下一次发送给 provider 的请求上下文会从最近的 summary + 保留原文窗口开始。
 
 如果本地估算没有提前触发，但 provider 返回可识别的上下文超限错误，agent 会强制执行一次同样的压缩流程并重试同一轮请求。重试后仍超限或仍失败时，ub 返回 provider 的原始错误，避免在失败循环里反复摘要。
+
+窗口观察缓存在 `$XDG_STATE_HOME/ub/context-windows/`（未设置 XDG 时为 `~/.local/state/ub/context-windows/`）。缓存按 provider、清理敏感部分后的 base URL 和完整 model ID 隔离，只保存 token 数；可以安全删除。缓存损坏或不可写时 ub 会记录 warning 并回退到静态窗口，不影响正常请求。
 
 压缩时不会把全部待压缩历史无条件一次性丢给 summary 模型。若 summary prompt 本身超过 summary 模型预算，agent 会按完整 user turn 分块摘要，再合并这些块摘要。单个 user turn 自身超预算时，ub 会返回明确错误，而不是按 message 或字符切碎语义。
 
@@ -688,6 +692,7 @@ hooks:
 | 鼠标点击不响应 / 块没法展开 | 确认没有 modal / 选择器开着（按 `Esc` 关掉）；如终端不支持鼠标，用 `Ctrl+O` / `Ctrl+N` / `Ctrl+P` + `Enter` 替代 |
 | 切到 plan 模式后 write/bash/task/memory 工具报错 | 这是预期：plan 模式只允许 read / ls / glob / grep / ask / plan_write / plan_update / exit_plan_mode；切回 `work` 或批准 `exit_plan_mode` |
 | 长会话越来越慢 | 主动 `/compact`；调小 `context.tool_results.max_chars`；切到更长 context 的模型 |
+| context 百分比与后端实际窗口不符 | 优先在模型配置中设置 `max_context_tokens`；也可删除 `$XDG_STATE_HOME/ub/context-windows/` 下的派生缓存，让 ub 从静态能力重新学习 |
 | 在 `/proj/sub` 看不到 `/proj` 的 session | sessions 按 cwd 字符串隔离；`cd` 到原 cwd 再 `ub --resume` |
 | 想检查 prompt 组成 | `ub prompt inspect` 查看 section manifest；确需正文时使用 `ub prompt inspect --show-content`（可能包含项目指令或 memory） |
 | Agent 卡在某轮不出来 | `Esc` 中断当前轮；如果是 plan 模式下试图写文件，先看 tool error 信息再 retry |

@@ -9,6 +9,7 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/core/execution"
 	"github.com/feimingxliu/ub/internal/pkg/core/message"
 	"github.com/feimingxliu/ub/internal/pkg/core/reasoning"
+	"github.com/feimingxliu/ub/internal/pkg/llm/contextwindow"
 	"github.com/feimingxliu/ub/internal/pkg/llm/provider"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/hook"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/permission"
@@ -43,6 +44,7 @@ type Options struct {
 	Inject               <-chan string
 	Reasoning            *reasoning.Config
 	MaxContextTokens     int
+	ContextWindow        *contextwindow.Resolver
 	SummaryProvider      provider.Provider
 	SummaryModel         string
 	AutoMemoryProvider   provider.Provider
@@ -85,6 +87,7 @@ type Agent struct {
 	inject               <-chan string
 	reasoning            *reasoning.Config
 	maxContextTokens     int
+	contextWindow        *contextwindow.Resolver
 	summaryProvider      provider.Provider
 	summaryModel         string
 	autoMemoryProvider   provider.Provider
@@ -195,6 +198,7 @@ func New(opts Options) (*Agent, error) {
 		inject:               opts.Inject,
 		reasoning:            cloneReasoning(opts.Reasoning),
 		maxContextTokens:     opts.MaxContextTokens,
+		contextWindow:        opts.ContextWindow,
 		summaryProvider:      opts.SummaryProvider,
 		summaryModel:         strings.TrimSpace(opts.SummaryModel),
 		autoMemoryProvider:   opts.AutoMemoryProvider,

@@ -159,6 +159,7 @@ func (r *tuiAgentRunner) ListWorkspaceFiles(ctx context.Context, query string, l
 func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) (*agent.Agent, error) {
 	resolvedReasoning := cloneReasoningConfig(r.reasoning)
 	maxContext := r.currentModelInfo().MaxContextTokens
+	contextWindow := newContextWindowResolver(r.providerName, r.providerCfg, r.model, maxContext, r.provider)
 	runtime := agentRuntimeContext(r.tools.Workspace)
 	hooksRunner := hook.New(r.cfg.Hooks)
 	fileHistory, err := newFileHistoryManager(ctx, r.tools.Workspace, r.state.sessionID, r.state.rollout)
@@ -183,6 +184,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Asker:               r.asker,
 		Reasoning:           resolvedReasoning,
 		MaxContextTokens:    maxContext,
+		ContextWindow:       contextWindow,
 		SummaryProvider:     r.summaryProvider,
 		SummaryModel:        r.summaryModel,
 		AutoMemoryProvider:  r.autoMemoryProvider,

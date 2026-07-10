@@ -52,6 +52,25 @@ func TestConvertAgentEventToolPartialOutput(t *testing.T) {
 	}
 }
 
+func TestConvertAgentEventContextWindowMetadata(t *testing.T) {
+	got := convertAgentEvent(agent.Event{
+		Type:              agent.EventContext,
+		ContextUsedTokens: 32000,
+		ContextMaxTokens:  64000,
+		ContextRatio:      0.5,
+		ContextMaxSource:  "learned_overflow",
+		ContextConfidence: "high",
+	})
+	if got.Type != tui.EventContext ||
+		got.ContextUsedTokens != 32000 ||
+		got.ContextMaxTokens != 64000 ||
+		got.ContextRatio != 0.5 ||
+		got.ContextMaxSource != "learned_overflow" ||
+		got.ContextConfidence != "high" {
+		t.Fatalf("converted context event = %#v", got)
+	}
+}
+
 func TestResolveResumeSessionIDRequiresExplicitID(t *testing.T) {
 	got, err := resolveResumeSessionID("sess_123")
 	if err != nil {

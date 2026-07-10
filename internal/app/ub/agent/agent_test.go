@@ -19,6 +19,7 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/core/message"
 	"github.com/feimingxliu/ub/internal/pkg/core/reasoning"
 	contextmgr "github.com/feimingxliu/ub/internal/pkg/llm/context"
+	"github.com/feimingxliu/ub/internal/pkg/llm/contextwindow"
 	"github.com/feimingxliu/ub/internal/pkg/llm/provider"
 	"github.com/feimingxliu/ub/internal/pkg/llm/provider/fake"
 	"github.com/feimingxliu/ub/internal/pkg/runtime/approval"
@@ -2221,13 +2222,19 @@ func TestAgentCompactsAndRetriesAfterContextOverflowStreamError(t *testing.T) {
 	main := &scriptProvider{
 		caps: provider.Caps{MaxContextTokens: 1_000_000},
 		scripts: []fake.Script{
-			{fake.Error("This model's maximum context length is 8192 tokens. Reduce the prompt.")},
+			{fake.Usage(9000, 0), fake.Error("This model's maximum context length is 8192 tokens. Reduce the prompt.")},
 			{fake.TextDelta("final after stream retry"), fake.Done()},
 		},
 	}
 	summary := &scriptProvider{scripts: []fake.Script{
 		{fake.TextDelta("stream overflow summary"), fake.Done()},
+		{fake.TextDelta("stream overflow summary after learned limit"), fake.Done()},
 	}}
+	window, err := contextwindow.New(contextwindow.Options{ProviderTokens: 1_000_000})
+	if err != nil {
+		t.Fatalf("new context window resolver: %v", err)
+	}
+	var events []Event
 	a, err := New(Options{
 		Provider:        main,
 		SummaryProvider: summary,
@@ -2235,7 +2242,11 @@ func TestAgentCompactsAndRetriesAfterContextOverflowStreamError(t *testing.T) {
 		Permission:      perm,
 		Model:           "fake/model",
 		Mode:            execution.ModeWork,
+		ContextWindow:   window,
 		Context:         config.ContextConfig{TriggerRatio: 0.99, KeepRecentTurns: 3},
+		Events: func(event Event) {
+			events = append(events, event)
+		},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -2250,8 +2261,26 @@ func TestAgentCompactsAndRetriesAfterContextOverflowStreamError(t *testing.T) {
 	if len(main.requests) != 2 {
 		t.Fatalf("main requests = %d, want initial + retry", len(main.requests))
 	}
-	if len(summary.requests) != 1 {
-		t.Fatalf("summary requests = %d, want 1", len(summary.requests))
+	if len(summary.requests) != 2 {
+		t.Fatalf("summary requests = %d, want recovery compact plus learned-limit preflight compact", len(summary.requests))
+	}
+	resolved := window.Resolve()
+	if resolved.MaxTokens != 8192 || resolved.Source != contextwindow.SourceLearnedOverflow || resolved.Confidence != contextwindow.ConfidenceHigh {
+		t.Fatalf("resolved context window = %#v", resolved)
+	}
+	contextEvent, ok := firstContextEvent(events)
+	if !ok || contextEvent.ContextMaxTokens != 1_000_000 || contextEvent.ContextMaxSource != string(contextwindow.SourceProviderCaps) {
+		t.Fatalf("initial context event = %#v, ok=%v", contextEvent, ok)
+	}
+	foundLearned := false
+	for _, event := range events {
+		if event.Type == EventContext && event.ContextMaxTokens == 8192 && event.ContextMaxSource == string(contextwindow.SourceLearnedOverflow) && event.ContextConfidence == string(contextwindow.ConfidenceHigh) {
+			foundLearned = true
+			break
+		}
+	}
+	if !foundLearned {
+		t.Fatalf("events missing learned context window metadata: %#v", events)
 	}
 }
 
@@ -2491,7 +2520,7 @@ func TestAgentManualCompactSummarizesHistory(t *testing.T) {
 		t.Fatalf("events missing summary: %#v", writer.events)
 	}
 	contextEvent, ok := firstContextEvent(events)
-	if !ok || contextEvent.ContextMaxTokens != 1000 || contextEvent.ContextUsedTokens <= 0 || contextEvent.ContextRatio <= 0 || !contextEvent.ContextReset {
+	if !ok || contextEvent.ContextMaxTokens != 1000 || contextEvent.ContextUsedTokens <= 0 || contextEvent.ContextRatio <= 0 || !contextEvent.ContextReset || contextEvent.ContextMaxSource != string(contextwindow.SourceProviderCaps) || contextEvent.ContextConfidence != string(contextwindow.ConfidenceMedium) {
 		t.Fatalf("context event = %#v, ok=%v", contextEvent, ok)
 	}
 	if events[len(events)-1].Type != EventDone {
@@ -2698,12 +2727,17 @@ func TestAgentUsageCalibratesTokenEstimate(t *testing.T) {
 	main := &scriptProvider{scripts: []fake.Script{
 		{fake.Usage(before*1000, 1), fake.TextDelta("ok"), fake.Done()},
 	}}
+	window, err := contextwindow.New(contextwindow.Options{ProviderTokens: 8192})
+	if err != nil {
+		t.Fatalf("new context window resolver: %v", err)
+	}
 	a, err := New(Options{
-		Provider:   main,
-		Tools:      reg,
-		Permission: perm,
-		Model:      model,
-		Mode:       execution.ModeWork,
+		Provider:      main,
+		Tools:         reg,
+		Permission:    perm,
+		Model:         model,
+		Mode:          execution.ModeWork,
+		ContextWindow: window,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -2714,6 +2748,10 @@ func TestAgentUsageCalibratesTokenEstimate(t *testing.T) {
 	after := contextmgr.Estimate(msgs, model)
 	if after <= before {
 		t.Fatalf("estimate after usage = %d, before = %d, want larger", after, before)
+	}
+	resolved := window.Resolve()
+	if resolved.MaxTokens < before*1000 || resolved.Source != contextwindow.SourceLearnedUsage || resolved.Confidence != contextwindow.ConfidenceLow {
+		t.Fatalf("resolved context window after usage = %#v", resolved)
 	}
 }
 

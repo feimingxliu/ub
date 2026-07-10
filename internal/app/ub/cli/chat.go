@@ -133,6 +133,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 
 	hooksRunner := hook.New(cfg.Hooks)
 	memoryAutoScheduler := agent.NewMemoryAutoScheduler()
+	contextWindow := newContextWindowResolver(providerName, providerCfg, model, mainRole.MaxContextTokens, p)
 	factory := agent.NewFactory(agent.Options{
 		Provider:            p,
 		Tools:               tools.Registry,
@@ -143,6 +144,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 		MaxTurns:            cfg.MaxTurns,
 		Reasoning:           mainRole.cloneReasoning(),
 		MaxContextTokens:    mainRole.MaxContextTokens,
+		ContextWindow:       contextWindow,
 		SummaryProvider:     summarySetup.Provider,
 		SummaryModel:        summarySetup.Model,
 		AutoMemoryProvider:  autoMemorySetup.Provider,

@@ -13,6 +13,7 @@ import (
 	"github.com/feimingxliu/ub/internal/pkg/core/config"
 	"github.com/feimingxliu/ub/internal/pkg/core/message"
 	contextmgr "github.com/feimingxliu/ub/internal/pkg/llm/context"
+	"github.com/feimingxliu/ub/internal/pkg/llm/contextwindow"
 	"github.com/feimingxliu/ub/internal/pkg/llm/provider"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/rollout"
 	"github.com/feimingxliu/ub/internal/pkg/workspace/tooloutput"
@@ -195,7 +196,11 @@ type contextOverflowRecovery struct {
 }
 
 func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int, tools []provider.ToolDefinition, providerErr error, alreadyRecovered bool) (contextOverflowRecovery, error) {
-	if alreadyRecovered || !isContextOverflowError(providerErr) {
+	if !isContextOverflowError(providerErr) {
+		return contextOverflowRecovery{}, nil
+	}
+	a.observeContextWindowOverflow(providerErr, estimated)
+	if alreadyRecovered {
 		return contextOverflowRecovery{}, nil
 	}
 	a.emit(Event{
@@ -411,7 +416,8 @@ func (a *Agent) emitContextUsage(used int, reset bool) {
 	if used <= 0 {
 		return
 	}
-	maxContext := a.effectiveMaxContextTokens()
+	window := a.effectiveContextWindow()
+	maxContext := window.MaxTokens
 	ratio := 0.0
 	if maxContext > 0 {
 		ratio = float64(used) / float64(maxContext)
@@ -423,6 +429,8 @@ func (a *Agent) emitContextUsage(used int, reset bool) {
 		ContextRatio:      ratio,
 		ContextReset:      reset,
 		ContextKind:       "est",
+		ContextMaxSource:  string(window.Source),
+		ContextConfidence: string(window.Confidence),
 	})
 }
 
@@ -430,7 +438,8 @@ func (a *Agent) emitActualContextUsage(used int) {
 	if used <= 0 {
 		return
 	}
-	maxContext := a.effectiveMaxContextTokens()
+	window := a.effectiveContextWindow()
+	maxContext := window.MaxTokens
 	ratio := 0.0
 	if maxContext > 0 {
 		ratio = float64(used) / float64(maxContext)
@@ -441,14 +450,56 @@ func (a *Agent) emitActualContextUsage(used int) {
 		ContextMaxTokens:  maxContext,
 		ContextRatio:      ratio,
 		ContextKind:       "last",
+		ContextMaxSource:  string(window.Source),
+		ContextConfidence: string(window.Confidence),
 	})
 }
 
 func (a *Agent) effectiveMaxContextTokens() int {
-	if a.maxContextTokens > 0 {
-		return a.maxContextTokens
+	return a.effectiveContextWindow().MaxTokens
+}
+
+func (a *Agent) effectiveContextWindow() contextwindow.Resolution {
+	if a.contextWindow != nil {
+		return a.contextWindow.Resolve()
 	}
-	return provider.CapsForModel(a.provider, a.model).MaxContextTokens
+	if a.maxContextTokens > 0 {
+		return contextwindow.Resolution{
+			MaxTokens:  a.maxContextTokens,
+			Source:     contextwindow.SourceConfig,
+			Confidence: contextwindow.ConfidenceExact,
+		}
+	}
+	maxTokens := provider.CapsForModel(a.provider, a.model).MaxContextTokens
+	if maxTokens > 0 {
+		return contextwindow.Resolution{
+			MaxTokens:  maxTokens,
+			Source:     contextwindow.SourceProviderCaps,
+			Confidence: contextwindow.ConfidenceMedium,
+		}
+	}
+	return contextwindow.Resolution{
+		Source:     contextwindow.SourceUnknown,
+		Confidence: contextwindow.ConfidenceUnknown,
+	}
+}
+
+func (a *Agent) observeContextWindowUsage(inputTokens int) {
+	if a.contextWindow == nil || inputTokens <= 0 {
+		return
+	}
+	if err := a.contextWindow.ObserveAccepted(inputTokens); err != nil {
+		slog.Warn("persist context window usage observation", "model", a.model, "err", err)
+	}
+}
+
+func (a *Agent) observeContextWindowOverflow(providerErr error, estimatedTokens int) {
+	if a.contextWindow == nil || providerErr == nil {
+		return
+	}
+	if err := a.contextWindow.ObserveOverflow(providerErr, estimatedTokens); err != nil {
+		slog.Warn("persist context window overflow observation", "model", a.model, "err", err)
+	}
 }
 
 type summaryWindowOptions struct {

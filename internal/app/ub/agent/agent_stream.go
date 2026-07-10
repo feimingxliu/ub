@@ -19,6 +19,7 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 	var reasoningSignature strings.Builder
 	var blocks []message.ContentBlock
 	var calls []toolCall
+	acceptedInputTokens := 0
 	for {
 		event, err := stream.Next(ctx)
 		if errors.Is(err, io.EOF) {
@@ -70,6 +71,9 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 		case provider.EventUsage:
 			if event.Usage != nil {
 				observeInputUsage(a.model, estimatedTokens, event.Usage.InputTokens)
+				if event.Usage.InputTokens > acceptedInputTokens {
+					acceptedInputTokens = event.Usage.InputTokens
+				}
 				a.emitActualContextUsage(event.Usage.InputTokens)
 				if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
 					return rollout.UsageWithDetails(sessionID, turn, usagePayload(event.Usage))
@@ -89,6 +93,9 @@ func (a *Agent) consumeStream(ctx context.Context, sessionID string, turn int, s
 		}
 	}
 done:
+	// A usage event can precede a provider error. Only teach the context-window
+	// resolver from requests that reached a successful done/EOF boundary.
+	a.observeContextWindowUsage(acceptedInputTokens)
 	if err := a.persistAccumulatedThinking(ctx, sessionID, turn, reasoningText.String()); err != nil {
 		return streamResult{}, err
 	}

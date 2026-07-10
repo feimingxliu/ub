@@ -206,6 +206,8 @@ func convertAgentEvent(event agent.Event) tui.Event {
 			ContextRatio:      event.ContextRatio,
 			ContextReset:      event.ContextReset,
 			ContextKind:       event.ContextKind,
+			ContextMaxSource:  event.ContextMaxSource,
+			ContextConfidence: event.ContextConfidence,
 		}
 	case agent.EventToolPartialOutput:
 		return tui.Event{
