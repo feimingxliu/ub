@@ -31,13 +31,7 @@ func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message
 	// Callers pass an owned message slice when building provider requests.
 	// Keep the returned request slice separate, but avoid deep-cloning the
 	// entire tail here; the provider boundary still clones before Chat.
-	prepend := cloneMessages(a.startupPrompt)
-	if modeMsg, ok := a.executionModeMessage(); ok {
-		prepend = append(prepend, modeMsg)
-	}
-	if memMsg, ok := a.memoryMessage(); ok {
-		prepend = append(prepend, memMsg)
-	}
+	prepend := promptMessages(a.promptRegistry.mainSections(a.currentMode()))
 	if len(prepend) == 0 {
 		return messages
 	}
@@ -51,14 +45,8 @@ func (a *Agent) withRuntimeContext(messages []message.Message) []message.Message
 // should share the main conversation's stable prompt prefix without recording a
 // new user turn.
 func RuntimeContextMessages(runtime RuntimeContext, workspaceRoot string, promptCfg config.PromptConfig, mode execution.Mode, memoryMaxChars int) []message.Message {
-	out := buildStartupPromptMessages(runtime, workspaceRoot, promptCfg)
-	if modeMsg, ok := executionModeMessageForMode(mode); ok {
-		out = append(out, modeMsg)
-	}
-	if memMsg, ok := memoryMessageForWorkspace(workspaceRoot, memoryMaxChars); ok {
-		out = append(out, memMsg)
-	}
-	return out
+	registry := newPromptRegistry(runtime, workspaceRoot, promptCfg, memoryMaxChars)
+	return promptMessages(registry.mainSections(mode))
 }
 
 // NoToolRuntimeContextMessages builds a small non-persisted context prefix for
@@ -66,22 +54,8 @@ func RuntimeContextMessages(runtime RuntimeContext, workspaceRoot string, prompt
 // and memory context, but omits coding-agent, workspace, git, and mode prompts
 // that mention tool use.
 func NoToolRuntimeContextMessages(runtime RuntimeContext, workspaceRoot string, memoryMaxChars int) []message.Message {
-	var out []message.Message
-	if runtimeMsg, ok := runtime.noToolMessage(); ok {
-		out = append(out, runtimeMsg)
-	}
-	if memMsg, ok := memoryMessageForWorkspace(workspaceRoot, memoryMaxChars); ok {
-		out = append(out, memMsg)
-	}
-	return out
-}
-
-// memoryMessage returns a role=system message containing the
-// <memory>...</memory> envelope of the current memory sources.
-// Returns ok=false when the agent has no workspace configured or
-// when no memory content exists.
-func (a *Agent) memoryMessage() (message.Message, bool) {
-	return memoryMessageForWorkspace(a.workspaceRoot, a.memoryMaxChars)
+	registry := newNoToolPromptRegistry(runtime, workspaceRoot, memoryMaxChars)
+	return promptMessages(registry.noToolSections())
 }
 
 func memoryMessageForWorkspace(workspaceRoot string, maxChars int) (message.Message, bool) {
@@ -97,10 +71,6 @@ func memoryMessageForWorkspace(workspaceRoot string, maxChars int) (message.Mess
 		return message.Message{}, false
 	}
 	return message.Text(message.RoleSystem, "<memory>\n"+body+"\n</memory>"), true
-}
-
-func (a *Agent) executionModeMessage() (message.Message, bool) {
-	return executionModeMessageForMode(a.currentMode())
 }
 
 func executionModeMessageForMode(value execution.Mode) (message.Message, bool) {

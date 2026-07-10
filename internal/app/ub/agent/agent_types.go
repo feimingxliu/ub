@@ -91,12 +91,10 @@ type Agent struct {
 	autoMemoryModel      string
 	contextCfg           config.ContextConfig
 	promptCfg            config.PromptConfig
-	runtime              RuntimeContext
-	startupPrompt        []message.Message
+	promptRegistry       *promptRegistry
 	toolOutputState      string
 	hooks                hook.Runner
 	workspaceRoot        string
-	memoryMaxChars       int
 	memoryCfg            config.MemoryConfig
 	memoryAutoScheduler  *MemoryAutoScheduler
 	subagentRunner       tool.SubagentRunner
@@ -203,12 +201,10 @@ func New(opts Options) (*Agent, error) {
 		autoMemoryModel:      strings.TrimSpace(opts.AutoMemoryModel),
 		contextCfg:           opts.Context,
 		promptCfg:            promptCfg,
-		runtime:              runtime,
-		startupPrompt:        buildStartupPromptMessages(runtime, workspaceRoot, promptCfg),
+		promptRegistry:       newPromptRegistry(runtime, workspaceRoot, promptCfg, opts.MemoryMaxChars),
 		toolOutputState:      toolOutputState,
 		hooks:                hooks,
 		workspaceRoot:        workspaceRoot,
-		memoryMaxChars:       opts.MemoryMaxChars,
 		memoryCfg:            opts.Memory,
 		memoryAutoScheduler:  memoryAutoScheduler,
 		subagentRunner:       opts.SubagentRunner,

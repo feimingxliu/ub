@@ -118,6 +118,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newGoalCmd())
 	root.AddCommand(newChatCmd())
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newPromptCmd())
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newRolloutCmd())
 	root.AddCommand(newSessionsCmd())

@@ -51,19 +51,7 @@ func effectivePromptConfig(cfg config.PromptConfig) config.PromptConfig {
 }
 
 func buildStartupPromptMessages(runtime RuntimeContext, workspaceRoot string, cfg config.PromptConfig) []message.Message {
-	cfg = effectivePromptConfig(cfg)
-	var out []message.Message
-	out = append(out, codingAgentInstructionsMessage())
-	if runtimeMsg, ok := runtime.message(); ok {
-		out = append(out, runtimeMsg)
-	}
-	if instructionMsg, ok := workspaceInstructionsMessage(workspaceRoot, cfg.WorkspaceInstructions); ok {
-		out = append(out, instructionMsg)
-	}
-	if gitMsg, ok := gitSnapshotMessage(workspaceRoot, cfg.GitSnapshot, realGitCommand); ok {
-		out = append(out, gitMsg)
-	}
-	return out
+	return promptMessages(buildStartupPromptSections(runtime.normalized(), workspaceRoot, cfg, realGitCommand))
 }
 
 func codingAgentInstructionsMessage() message.Message {

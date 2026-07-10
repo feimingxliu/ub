@@ -137,6 +137,7 @@
 - F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量，provider 返回 usage 后上报最近实际 input token；TUI MUST 区分 `ctx est` 与 `ctx last`，且普通 usage 校准不得伪装成压缩导致的下降
 - F-CTX-7：Agent 发起 provider 请求时 MUST 携带当前 runtime context（workspace cwd、shell、OS 与路径规则），但该上下文 MUST NOT 写入 rollout 历史，避免恢复 session 后累积过期路径
 - F-CTX-8：模型可见 tool result MUST 按 `context.tool_results` 做统一限幅；超限时完整输出写入 ub state 的 tool-output 文件，rollout 只保存模型可见 preview 与 truncation metadata，恢复 session 不得重新灌入完整大输出
+- F-CTX-9：provider 请求前缀 MUST 通过固定顺序的 prompt section registry 构造，至少为 coding-agent、runtime、workspace instructions、Git snapshot、execution mode 与 memory 提供稳定 ID、状态、来源、稳定性、字符/token 估算和截断元数据；只有 `included` section 进入 provider messages，main、只读和 no-tool 请求 MUST 复用同一 registry 模型且保持各自现有语义
 
 ### 4.8 配置
 
@@ -190,6 +191,7 @@
   - 已配置 MCP server 启动连通性
   - API key 环境变量是否就位
   - 可选 `--suggest`：输出建议的 `profiles.dev` 配置片段供复制
+- F-DEV-6：`ub prompt inspect` MUST 只读取当前有效配置、canonical workspace、workspace instructions、Git snapshot 与 memory，输出文本或 `--json` prompt manifest；命令 MUST 不调用 provider、不初始化工具运行时、不创建 session/rollout 或执行 startup maintenance。正文默认 MUST 省略，只有显式 `--show-content` 才可展示
 
 ## 5. 非功能性需求
 

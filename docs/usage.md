@@ -26,6 +26,7 @@
 | `ub rollout show <id> --turns 5..10` | 只看第 5 到 10 轮 |
 | `ub config show` | 打印合并后的有效配置 |
 | `ub config path` | 列出本次加载用到的配置文件 |
+| `ub prompt inspect` / `ub prompt inspect --json` | 检查当前 workspace 的 prompt section、来源、状态、大小与 token 估算；默认不显示正文 |
 | `ub doctor` / `ub doctor --plain` | 环境健康检查（plain 关闭颜色，CI 友好） |
 
 > **会话隔离**：sessions 按 `cwd` 字符串严格隔离。在 `/proj` 和 `/proj/sub` 启动会被视作不同工作区，互相看不到对方的历史。
@@ -241,6 +242,20 @@ context:
 - workspace instructions:工作区根目录的 `AGENTS.md`
 - git snapshot:启动时的 branch / default branch / `git status --short` / 最近提交,并明确标注为非实时快照
 - durable memory:全局指令与项目自动记忆,见 §14
+
+这些内容通过固定顺序的 prompt section registry 组装：`coding_agent`、`runtime`、`workspace_instructions`、`git_snapshot`、`execution_mode`、`memory`。只有状态为 `included` 的 section 会进入 provider 请求；被配置关闭、当前无内容或不适用于 no-tool 请求的 section 分别显示为 `disabled`、`unavailable`、`omitted`。
+
+可以在不调用 provider、不创建 session 的情况下检查当前有效 prompt：
+
+```sh
+ub prompt inspect                         # 文本 manifest，默认不显示正文
+ub prompt inspect --json                  # 机器可读 manifest
+ub --mode plan prompt inspect             # 检查 plan mode section
+ub prompt inspect --model gpt-5.2         # 指定 token 估算使用的模型
+ub prompt inspect --show-content           # 显式展示正文，可能包含项目指令或 memory
+```
+
+字符数和 token 数用于诊断，不代表 provider 的精确计费。默认输出不会包含 `AGENTS.md` 或 memory 正文；只有显式使用 `--show-content` 才会展示。
 
 相关配置:
 
@@ -674,7 +689,7 @@ hooks:
 | 切到 plan 模式后 write/bash/task/memory 工具报错 | 这是预期：plan 模式只允许 read / ls / glob / grep / ask / plan_write / plan_update / exit_plan_mode；切回 `work` 或批准 `exit_plan_mode` |
 | 长会话越来越慢 | 主动 `/compact`；调小 `context.tool_results.max_chars`；切到更长 context 的模型 |
 | 在 `/proj/sub` 看不到 `/proj` 的 session | sessions 按 cwd 字符串隔离；`cd` 到原 cwd 再 `ub --resume` |
-| 想看完整 prompt | `UB_LOG_LEVEL=debug UB_LOG_FILE=/tmp/ub.log ub ...`，日志里有 provider 请求 |
+| 想检查 prompt 组成 | `ub prompt inspect` 查看 section manifest；确需正文时使用 `ub prompt inspect --show-content`（可能包含项目指令或 memory） |
 | Agent 卡在某轮不出来 | `Esc` 中断当前轮；如果是 plan 模式下试图写文件，先看 tool error 信息再 retry |
 | rollout 数据库被锁 | SQLite WAL 模式下少见，多半是另一个 ub 进程没退干净；`ps -ef | grep ub` 检查 |
 | 命令未被审批就直接被拒 | 黑名单命中（`rm -rf /` 类）；这是有意拦截，参数稍微改一下（如显式列举目录）就能正常进入审批 |
