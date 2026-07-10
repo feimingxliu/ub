@@ -2,7 +2,7 @@
 
 当前 `buildStartupPromptMessages` 在 Agent 构造时生成 coding-agent、runtime、workspace instructions 与 Git snapshot；`withRuntimeContext` 在每次 provider 请求前再附加 execution mode 与 memory。`RuntimeContextMessages` 和 `NoToolRuntimeContextMessages` 各自重复了部分组装逻辑，summary prompt 与 tool schema 又位于其它文件。消息本身没有 section identity，因此无法可靠检查来源、截断、稳定性或未来 cache eligibility。
 
-这次 change 跨越 Agent prompt 组装、CLI 命令和测试，但必须保持 provider-facing message 的内容、角色与顺序兼容。实现仍位于 `internal/app/ub/agent` 包内，先稳定 registry 契约；是否进一步拆成 `agent/prompt` 子包留给后续重构，避免本次同时引入包迁移和行为变化。
+这次 change 跨越 Agent prompt 组装、CLI 命令和测试，但必须保持 provider-facing message 的内容、角色与顺序兼容。实现仍位于 `internal/agent` 包内，先稳定 registry 契约；是否进一步拆成 `agent/prompt` 子包留给后续重构，避免本次同时引入包迁移和行为变化。
 
 ## Goals / Non-Goals
 

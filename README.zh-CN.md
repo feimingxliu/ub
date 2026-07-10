@@ -76,7 +76,7 @@ ub doctor --plain                   # 体检
         mcp / jobs)    + 黑名单)
 ```
 
-从 `internal/app/ub/tui/model.go` 跟一次按键开始,经过 `internal/app/ub/agent/`、`internal/pkg/tool/`、`internal/pkg/runtime/permission/`,最后落到 `internal/pkg/workspace/rollout/`——整个控制流就这一条线。
+从 `internal/tui/model.go` 跟一次按键开始,经过 `internal/agent/`、`internal/tool/`、`internal/permission/`,最后落到 `internal/rollout/`——整个控制流就这一条线。
 
 完整设计参见 [`docs/design.md`](docs/design.md)。
 

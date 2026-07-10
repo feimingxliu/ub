@@ -24,7 +24,7 @@ guidance lives in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - Some tests use local `httptest` sockets. If sandboxing blocks loopback binds,
   rerun the same test with the required local-socket permission before claiming
   validation.
-- Run `make schema` after changing `internal/pkg/core/config` types and commit
+- Run `make schema` after changing `internal/config` types and commit
   `api/config.schema.json`.
 - Use smoke commands such as `./ub --version`, `./ub run --help`, and
   `./ub config show` for CLI-visible changes.

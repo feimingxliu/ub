@@ -8,7 +8,7 @@ Define the OpenAI-compatible provider used for local and third-party Chat Comple
 
 ### Requirement: OpenAI 兼容 provider 创建
 
-系统 SHALL 提供 `internal/pkg/llm/provider/compat` provider，并通过 provider 工厂注册 `type: openai-compat`。provider MUST 支持 `base_url`、`api_key`、`headers` 和 `timeout`，且 `base_url` MUST 显式配置。
+系统 SHALL 提供 `internal/provider/compat` provider，并通过 provider 工厂注册 `type: openai-compat`。provider MUST 支持 `base_url`、`api_key`、`headers` 和 `timeout`，且 `base_url` MUST 显式配置。
 
 #### Scenario: 工厂创建 compat provider
 

@@ -94,7 +94,7 @@
 
 ### Requirement: Manager 接口扩展
 
-系统 SHALL 把 `internal/pkg/tool/lsp.Manager` 接口从原 3 个方法扩展为 8 个:在 `Diagnostics`、`References`、`ReferencesBySymbol` 之外增加 `Hover`、`Completion`、`DocumentSymbols`、`Rename`、`CodeActions`。`tool/lsp.Register` 在 `manager != nil` 时 MUST 注册全部 7 个工具(diagnostics + references + 5 个新工具);`manager == nil` 时 MUST 不注册任何工具且 MUST 不返回错误(保持现状)。
+系统 SHALL 把 `internal/tool/lsp.Manager` 接口从原 3 个方法扩展为 8 个:在 `Diagnostics`、`References`、`ReferencesBySymbol` 之外增加 `Hover`、`Completion`、`DocumentSymbols`、`Rename`、`CodeActions`。`tool/lsp.Register` 在 `manager != nil` 时 MUST 注册全部 7 个工具(diagnostics + references + 5 个新工具);`manager == nil` 时 MUST 不注册任何工具且 MUST 不返回错误(保持现状)。
 
 #### Scenario: nil manager 不注册
 

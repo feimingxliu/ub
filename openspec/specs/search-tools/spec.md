@@ -82,7 +82,7 @@ TBD - created by archiving change add-search-tools. Update Purpose after archive
 
 ### Requirement: 后端可注入
 
-系统 SHALL 在 `internal/pkg/tool/search` 包内提供可注入的后端选择函数，使得测试可以强制走内置 Go 实现或模拟 ripgrep 后端，且默认实现 MUST 是内置 Go 后端（不依赖系统是否安装 `rg`）。当后续 iteration 通过配置启用 ripgrep 后端时，行为差异 MUST 限定为性能与是否读取 `.gitignore`，不影响 `Result.Content` 排序与格式。
+系统 SHALL 在 `internal/tool/search` 包内提供可注入的后端选择函数，使得测试可以强制走内置 Go 实现或模拟 ripgrep 后端，且默认实现 MUST 是内置 Go 后端（不依赖系统是否安装 `rg`）。当后续 iteration 通过配置启用 ripgrep 后端时，行为差异 MUST 限定为性能与是否读取 `.gitignore`，不影响 `Result.Content` 排序与格式。
 
 #### Scenario: 默认使用内置后端
 

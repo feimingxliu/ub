@@ -23,7 +23,7 @@
 
 ## Decisions
 
-### 1. 使用独立的 `internal/pkg/llm/contextwindow` 包
+### 1. 使用独立的 `internal/context` 包
 
 该包提供 `Resolver`、`Resolution`、`Key`、`Observation` 与可替换 `Store`。它不依赖 CLI、Agent 或 workspace 包；文件存储接收调用方传入的根目录，因此窗口选择规则可以独立单测，CLI 只负责从 `paths.StateRoot()` 创建默认存储。
 

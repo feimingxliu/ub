@@ -5,7 +5,7 @@ TBD - created by archiving change add-tool-registry. Update Purpose after archiv
 ## Requirements
 ### Requirement: Tool 接口
 
-系统 SHALL 在 `internal/pkg/tool` 包定义 `Tool` 接口。`Tool` MUST 暴露 `Name() string`、`Description() string`、`Schema() *jsonschema.Schema`、`Risk() Risk` 和 `Execute(ctx context.Context, args json.RawMessage) (Result, error)`。`Schema()` 返回的 JSON Schema MUST 能直接 `json.Marshal` 不报错，用于后续 provider 请求中的 tool 定义。
+系统 SHALL 在 `internal/tool` 包定义 `Tool` 接口。`Tool` MUST 暴露 `Name() string`、`Description() string`、`Schema() *jsonschema.Schema`、`Risk() Risk` 和 `Execute(ctx context.Context, args json.RawMessage) (Result, error)`。`Schema()` 返回的 JSON Schema MUST 能直接 `json.Marshal` 不报错，用于后续 provider 请求中的 tool 定义。
 
 #### Scenario: 接口形状
 

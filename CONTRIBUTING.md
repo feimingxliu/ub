@@ -7,13 +7,29 @@ product spec, so code changes and spec changes should stay aligned.
 
 - `cmd/ub/`: CLI entrypoint.
 - `tools/gen-schema/`: regenerates `api/config.schema.json`.
-- `internal/app/ub/`: ub application packages.
-- `internal/pkg/core/`: config, message, execution, and reasoning foundations.
-- `internal/pkg/llm/`: provider adapters, model metadata, token context, and VCR.
-- `internal/pkg/runtime/`: permissions, approval, hooks, logging, and maintenance.
-- `internal/pkg/workspace/`: paths, session storage, rollout logs, memory, and file history.
-- `internal/pkg/integration/`: MCP and LSP protocol clients.
-- `internal/pkg/tool/`: tool registry plus built-in tool implementations.
+- `internal/agent/`: headless provider/tool agent loop.
+- `internal/command/`: cobra CLI command definitions.
+- `internal/tui/`: bubbletea TUI views.
+- `internal/config/`: config loading, merging, and redaction.
+- `internal/message/`: provider-neutral message model.
+- `internal/mode/`: execution mode (work/plan/auto/full-access) and gates.
+- `internal/reasoning/`: provider-neutral reasoning controls.
+- `internal/provider/`: provider interface, registry, and adapters (anthropic, openai, compat, fake).
+- `internal/tokenizer/`: token estimation.
+- `internal/context/`: context window resolver and store.
+- `internal/modelinfo/`: model metadata.
+- `internal/vcr/`: HTTP VCR for LLM integration tests.
+- `internal/permission/`: execution-mode-aware tool approval.
+- `internal/approval/`: secondary approval-agent interface.
+- `internal/hook/`: session event hooks.
+- `internal/logx/`: slog-based logging with rotation.
+- `internal/maintenance/`: startup cleanup and maintenance.
+- `internal/store/`: SQLite-backed session persistence and migrations.
+- `internal/rollout/`: rollout event log reader/writer over the shared store DB.
+- `internal/workspace/`: workspace paths, workspace memory, file history, and tool output spillover.
+- `internal/tool/`: tool registry plus built-in tools (fs, goal, job, lsp, mcp, memory, plan, procgroup, search, shell, task, todo, web).
+- `internal/lsp/`: LSP protocol client.
+- `internal/mcp/`: MCP protocol client.
 - `api/`: generated JSON Schema.
 - `docs/requirements.md`, `docs/design.md`, `docs/roadmap.md`, and
   `docs/roadmap-v2.md`: maintained product and implementation specs.

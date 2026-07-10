@@ -1,8 +1,8 @@
 // Package main is the entry point for the ub CLI.
 package main
 
-import "github.com/feimingxliu/ub/internal/app/ub/cli"
+import "github.com/feimingxliu/ub/internal/command"
 
 func main() {
-	cli.Execute()
+	command.Execute()
 }

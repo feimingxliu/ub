@@ -23,7 +23,7 @@ ub 已经分别构造 coding-agent 指令、运行环境、workspace instruction
 
 ## Impact
 
-- 主要影响 `internal/app/ub/agent` 的 prompt/runtime context 构造路径和 `internal/app/ub/cli` 的命令注册。
-- `internal/pkg/core/config` 的现有 prompt 配置继续复用；本 change 不新增配置字段，因此不需要更新配置 schema。
+- 主要影响 `internal/agent` 的 prompt/runtime context 构造路径和 `internal/command` 的命令注册。
+- `internal/config` 的现有 prompt 配置继续复用；本 change 不新增配置字段，因此不需要更新配置 schema。
 - provider-facing message 内容与顺序应保持兼容；任何差异都必须由 golden 与 fake provider 行为测试显式确认。
 - 新增的 inspect 命令只读取本地配置、workspace instructions、Git 状态和 memory，不访问网络、不写 session/rollout。

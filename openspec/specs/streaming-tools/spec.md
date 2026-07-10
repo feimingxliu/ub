@@ -5,7 +5,7 @@ TBD - created by archiving change add-streaming-tools. Update Purpose after arch
 ## Requirements
 ### Requirement: StreamingTool 接口
 
-`internal/pkg/tool` 包 SHALL 暴露一个新接口 `StreamingTool`,继承 `Tool`(必须先实现现有的 `Execute` 方法作为 fallback),多一个方法:
+`internal/tool` 包 SHALL 暴露一个新接口 `StreamingTool`,继承 `Tool`(必须先实现现有的 `Execute` 方法作为 fallback),多一个方法:
 
 ```go
 ExecuteStream(ctx context.Context, args json.RawMessage, events chan<- StreamEvent) (Result, error)

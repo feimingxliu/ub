@@ -8,7 +8,7 @@
 
 ### Requirement: Unified diff 富渲染
 
-系统 SHALL 提供 `internal/app/ub/tui/diffview` 组件，接收一个或多个 `tool.FileDiff` 并渲染 unified diff。渲染结果 MUST 包含当前文件路径、变更类型和 diff 内容；没有 diff 时 MUST 显示空状态。
+系统 SHALL 提供 `internal/tui/diffview` 组件，接收一个或多个 `tool.FileDiff` 并渲染 unified diff。渲染结果 MUST 包含当前文件路径、变更类型和 diff 内容；没有 diff 时 MUST 显示空状态。
 
 #### Scenario: 渲染单文件 diff
 

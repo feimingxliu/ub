@@ -44,7 +44,7 @@
   ```go
   // cmd/ub/main.go
   func main() { cli.Execute() }
-  // internal/app/ub/cli/root.go
+  // internal/command/root.go
   func Execute()
   ```
 - **验证**：
@@ -57,7 +57,7 @@
 - **目标**：YAML 配置可加载、可分层覆盖、可校验
 - **依赖**：I-01
 - **In Scope**：
-  - `internal/pkg/core/config/`：`Config` 结构体（按 design §8）
+  - `internal/config/`：`Config` 结构体（按 design §8）
   - YAML 加载（`goccy/go-yaml`）
   - 加载顺序：内置默认 → `~/.config/ub/config.yaml` → `./.ub/config.yaml` → 环境变量
   - `${ENV_VAR}` 替换
@@ -89,7 +89,7 @@
 - **目标**：建表 + 一个最小迁移机制 + sessions 表 CRUD
 - **依赖**：I-01
 - **In Scope**：
-  - `internal/pkg/workspace/store/`：用 `modernc.org/sqlite`
+  - `internal/store/`：用 `modernc.org/sqlite`
   - 启动时检测 `schema_version` 表，按顺序执行 `001_init.sql`、`002_*.sql`
   - 表：`sessions`、`events`（见 design §7）
   - `Store` 提供 `CreateSession`、`GetSession`、`ListSessions(workspace string, limit int)`、`UpdateSession`、`DeleteSession`
@@ -120,7 +120,7 @@
 - **目标**：全局 `slog`，CLI 出错可读
 - **依赖**：I-01
 - **In Scope**：
-  - `internal/pkg/runtime/log/`：基于 `slog`，支持 `UB_LOG_LEVEL`、`UB_LOG_FILE`
+  - `internal/logx/`：基于 `slog`，支持 `UB_LOG_LEVEL`、`UB_LOG_FILE`
   - 默认 stderr 写人类格式；`UB_LOG_FILE` 写 JSON
   - `cli` 顶层 panic recover，打印调用栈并退出
   - 子命令统一 error 渲染（不要 cobra 默认的丑陋格式）
@@ -138,7 +138,7 @@
 - **目标**：定义中性消息结构，独立于任何 SDK
 - **依赖**：I-01
 - **In Scope**：
-  - `internal/pkg/core/message/`：`Message`、`Role`、`Content`（文本 / 图片 / tool_use / tool_result）
+  - `internal/message/`：`Message`、`Role`、`Content`（文本 / 图片 / tool_use / tool_result）
   - JSON 序列化（用于 rollout 存储）
   - 工具函数：`(m Message).Text() string`、`Append(content)`、`Clone()`
 - **Out of Scope**：与具体 provider 的转换（在各 provider 包做）
@@ -166,7 +166,7 @@
 - **目标**：测试基础设施。录制时打真实 LLM，回放时按 cassette 应答
 - **依赖**：I-01
 - **In Scope**：
-  - `internal/pkg/llm/vcr/`：实现 `http.RoundTripper`
+  - `internal/vcr/`：实现 `http.RoundTripper`
   - 模式：`record` / `replay` / `disabled`，环境变量 `UB_VCR=record|replay`
   - Cassette 格式：JSONL，每行一对 `{request, response}`
   - 脱敏：自动剥离 `Authorization`、`x-api-key` 等 header
@@ -185,9 +185,9 @@
 - **目标**：Provider 抽象就位 + 一个纯内存的脚本化 provider + 最小可用的 `ub chat` 子命令，让后续 agent loop / tool / TUI 整条链路在**无 API key**下也可端到端开发与单测；同时给 I-08/I-09 的验证一个稳定的 CLI 入口
 - **依赖**：I-05
 - **In Scope**：
-  - `internal/pkg/llm/provider/`：`Provider`、`ProviderConfig`、`Caps`、`Request`、`Stream`、`Event` 等核心类型（参见 design §5）
+  - `internal/provider/`：`Provider`、`ProviderConfig`、`Caps`、`Request`、`Stream`、`Event` 等核心类型（参见 design §5）
   - 工厂：`provider.New(name, cfg)` 按 `type` 路由
-  - `internal/pkg/llm/provider/fake/`：
+  - `internal/provider/fake/`：
     - 脚本驱动：按预设事件序列依次返回（`text_delta` / `tool_call` / `usage` / `done`）
     - 支持配置加载（`type: fake` + `script: [...]`）与代码内构造（`fake.New(fake.Script{...})`）
     - 多 turn：可配置"看到某 tool_result 后继续发射哪些事件"，用于测多轮 agent loop
@@ -220,7 +220,7 @@
 - **目标**：第一个真实 provider，配置可覆盖 `base_url`
 - **依赖**：I-02 / I-06 / I-07
 - **In Scope**：
-  - `internal/pkg/llm/provider/anthropic/`：包 `anthropic-sdk-go`
+  - `internal/provider/anthropic/`：包 `anthropic-sdk-go`
   - 一次性非流式调用（`Stream` 返回单事件 + done）
   - Message ↔ Anthropic API 双向转换
   - 复用 ProviderConfig：`api_key`、`base_url`、`headers`、`timeout` 全部生效
@@ -234,7 +234,7 @@
 - **目标**：每次对话事件落 SQLite，可重读
 - **依赖**：I-03 / I-05 / I-08
 - **In Scope**：
-  - `internal/pkg/workspace/rollout/`：`Event`、`Type`、`Writer`、`Reader`
+  - `internal/rollout/`：`Event`、`Type`、`Writer`、`Reader`
   - 先实现事件类型：`UserMessage`、`AssistantMessage`、`Usage`、`Error`
   - SQLite 开启 `journal_mode=WAL` + `synchronous=NORMAL`；单条 INSERT 即 commit；不逐条 fsync
   - 读取：按 session_id 流式遍历
@@ -271,7 +271,7 @@
 - **目标**：第二个真实 provider 走通
 - **依赖**：I-08 / I-10
 - **In Scope**：
-  - `internal/pkg/llm/provider/openai/`，包 `openai-go`
+  - `internal/provider/openai/`，包 `openai-go`
   - 实现 Provider 接口，沿用 `ProviderConfig`（含 `base_url`）
   - Message ↔ OpenAI ChatCompletion 双向
 - **Out of Scope**：tool use（I-21）、Responses API、reasoning content
@@ -282,8 +282,8 @@
 - **目标**：剩两个 provider，复用最大化
 - **依赖**：I-11
 - **In Scope**：
-  - `internal/pkg/llm/provider/compat/`：实质就是 OpenAI provider 包一层，强制要求 `base_url`，用于 vLLM / Together / DeepSeek / LM Studio / Azure 等
-  - `internal/pkg/llm/provider/ollama/`：用 Ollama 的 REST `/api/chat`（可拿到 reasoning 等元数据）；时间紧也可以走 Ollama 的 `/v1` OpenAI 兼容路径
+  - `internal/provider/compat/`：实质就是 OpenAI provider 包一层，强制要求 `base_url`，用于 vLLM / Together / DeepSeek / LM Studio / Azure 等
+  - `internal/provider/ollama/`：用 Ollama 的 REST `/api/chat`（可拿到 reasoning 等元数据）；时间紧也可以走 Ollama 的 `/v1` OpenAI 兼容路径
   - 工厂注册
 - **Out of Scope**：本地模型的工具调用质量调优
 - **验证**：
@@ -339,7 +339,7 @@
 - **目标**：工具基础设施就位，没具体工具
 - **依赖**：I-05
 - **In Scope**：
-  - `internal/pkg/tool/`：`Tool` 接口、`Result`、`Risk`、`Registry`
+  - `internal/tool/`：`Tool` 接口、`Result`、`Risk`、`Registry`
   - **可选接口** `PreviewableTool`：写类工具实现它，dispatcher 在 Execute 前调用 Preview，把结果交给 permission UI（见 design §4）
   - `Preview` / `FileDiff` 类型定义
   - JSON Schema 生成（`invopop/jsonschema` 或手写）
@@ -355,7 +355,7 @@
 - **目标**：5 个 fs 工具落地；`write` / `edit` 实现 `PreviewableTool`
 - **依赖**：I-15
 - **In Scope**：
-  - `internal/pkg/tool/fs/`：
+  - `internal/tool/fs/`：
     - `read(path, offset?, limit?)` → 文本（带行号）
     - `ls(path)` → 文件 / 目录列表
     - `glob(pattern)` → 匹配的路径（用 `doublestar`）
@@ -383,7 +383,7 @@
 - **目标**：能执行 shell 命令
 - **依赖**：I-15
 - **In Scope**：
-  - `internal/pkg/tool/shell/bash`：用 `os/exec`，超时默认 120s
+  - `internal/tool/shell/bash`：用 `os/exec`，超时默认 120s
   - 输出截断（stdout/stderr 各 32KB 上限）
   - 退出码 + 时长返回给模型
 - **Out of Scope**：权限审批（I-20）；交互式输入；后台进程（I-19）
@@ -406,9 +406,9 @@
 - **目标**：审批回调机制 + 4 种 execution mode + approval agent 命令审批 + 6 种 Decision + project 规则的磁盘持久化
 - **依赖**：I-13 / I-15 / I-18
 - **In Scope**：
-  - `internal/pkg/core/execution/`：`Mode`（work / plan / auto / full-access）、mode 解析、mode policy、mode switch 事件 payload
-  - `internal/pkg/runtime/permission/`：`Manager`、`Decision`（Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysProjectCmd / AlwaysProjectPattern）、Claude-style `Rule`
-  - `internal/pkg/runtime/approval/`：approval agent 接口；输入为 command/cwd/risk/mode/context summary/rule match 信息，输出 allow/deny/unsure + reason
+  - `internal/mode/`：`Mode`（work / plan / auto / full-access）、mode 解析、mode policy、mode switch 事件 payload
+  - `internal/permission/`：`Manager`、`Decision`（Allow / Deny / AlwaysCmd / AlwaysTool / AlwaysProjectCmd / AlwaysProjectPattern）、Claude-style `Rule`
+  - `internal/approval/`：approval agent 接口；输入为 command/cwd/risk/mode/context summary/rule match 信息，输出 allow/deny/unsure + reason
   - 两层规则存储：
     - **session 级**（AlwaysCmd / AlwaysTool）：内存 map
     - **project 级**（AlwaysProjectCmd / AlwaysProjectPattern）：序列化到 `<workspace>/.ub/permissions.yaml` 的 `permissions.allow`，启动时加载
@@ -452,7 +452,7 @@
 - **目标**：端到端，能跑 "read main.go 并报告里面的函数"
 - **依赖**：I-07 ~ I-20
 - **In Scope**：
-  - `internal/app/ub/agent/`：`Agent.Run(ctx, sess, userMsg) error`
+  - `internal/agent/`：`Agent.Run(ctx, sess, userMsg) error`
   - 从 config/CLI/TUI runtime 注入 `execution.Mode`；每轮 tool dispatch 都带当前 mode
   - 单 session 内顺序处理 turns；`max_turns > 0` 时作为可选 hard guard，默认不按步数截断
   - 把工具 schema 传给 provider；解析模型 tool_use；调 Registry
@@ -478,7 +478,7 @@
 - **目标**：能跑起来一个空 chat UI
 - **依赖**：I-01
 - **In Scope**：
-  - `internal/app/ub/tui/`：根 model + 三个组件（输入框、消息列表、状态栏）
+  - `internal/tui/`：根 model + 三个组件（输入框、消息列表、状态栏）
   - 启动 `ub` 不带子命令时进入 TUI
   - 输入回车回显到消息列表（暂不调 agent）
   - Ctrl+C 退出
@@ -502,7 +502,7 @@
 - **目标**：危险操作真的能问到人；5 个 Decision 选项全部可触达
 - **依赖**：I-20 / I-23
 - **In Scope**：
-  - `internal/app/ub/tui/dialog/permission`：modal 显示工具名、参数预览、风险等级
+  - `internal/tui/permission`：modal 显示工具名、参数预览、风险等级
   - 若 `Request.Preview != nil`：在 modal 中嵌入 diff 摘要（一行 summary + 折叠 unified diff，按 `d` 展开）
   - Plan 模式不允许 exec 工具；模型误调时直接返回 mode gate 错误，不进入审批弹窗
   - auto 模式下若 approval agent 拒绝 / 不确定 / 出错，modal 展示 approval agent reason 后要求用户显式决策
@@ -526,7 +526,7 @@
 - **目标**：把 I-24 modal 里的 Preview 折叠区升级为带语法高亮的 diffview
 - **依赖**：I-16 / I-24
 - **In Scope**：
-  - `internal/app/ub/tui/diffview`：unified diff 渲染，按语言用 `chroma` 高亮
+  - `internal/tui/diffview`：unified diff 渲染，按语言用 `chroma` 高亮
   - 多文件 diff：FileDiff 列表 → 顶部 file tab，左右 / 上下切换
   - 嵌入 I-24 modal：按 `d` 展开后渲染富 diff
   - write/edit Execute 返回 `FileChange.UnifiedDiff`，TUI 工具活动默认只显示摘要；`Ctrl+O` 展开最近工具组后只显示文件变更摘要，再按一次 `Ctrl+O` 显示最近 write/edit 工具项的着色执行后文件变更详情；也可用 `Ctrl+N` / `Ctrl+P` 移动活动焦点并用 `Enter` / `Space` 操作任意活动块或工具项；TUI 默认不启用鼠标追踪，保留终端原生拖拽选择复制
@@ -553,7 +553,7 @@
 - **目标**：发请求前知道大概用多少 token
 - **依赖**：I-05
 - **In Scope**：
-  - `internal/pkg/llm/context/`：`Estimate(msgs []Message, model string) int`
+  - `internal/tokenizer/`：`Estimate(msgs []Message, model string) int`
   - request 级估算包含 tool schema，并提供 system/runtime、tool schema、user/assistant、tool result 的轻量 breakdown
   - 用 `tiktoken-go`（OpenAI 系准）+ 简单字符近似（Claude / Ollama）
   - 响应里若有 `usage` 就回灌缓存校正，并保存 input/output/reasoning/cache read/cache write 中 provider 支持的字段
@@ -583,7 +583,7 @@
 - **目标**：能起一个 MCP server 并列出工具
 - **依赖**：I-15
 - **In Scope**：
-  - `internal/pkg/integration/mcp/`：stdio transport + JSON-RPC 2.0 frame
+  - `internal/mcp/`：stdio transport + JSON-RPC 2.0 frame
   - 实现 `initialize` / `tools/list` / `tools/call`
   - 用 `npx @modelcontextprotocol/server-filesystem` 做 e2e
 - **Out of Scope**：http / sse 传输；resources / prompts
@@ -605,7 +605,7 @@
 - **目标**：能起 gopls，做 didOpen / didChange
 - **依赖**：I-16
 - **In Scope**：
-  - `internal/pkg/integration/lsp/`：JSON-RPC over stdio
+  - `internal/lsp/`：JSON-RPC over stdio
   - lifecycle：initialize / initialized / didOpen / didChange / shutdown
   - 文件监听：edit/write 工具执行后主动通知 LSP
 - **Out of Scope**：completion、hover

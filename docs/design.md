@@ -48,66 +48,64 @@ ub/
 ├── api/
 │   └── config.schema.json             # 配置 JSON Schema
 ├── internal/
-│   ├── app/ub/                        # ub 应用层: CLI / agent / TUI
-│   │   ├── cli/                       # cobra 子命令：run / rollout / config / sessions
-│   │   ├── agent/                     # Agent/Factory、stream、tool runner、context、activity、summary
-│   │   └── tui/                       # Bubble Tea models 与 view
-│   └── pkg/                           # ub 内部共享库,仍受 Go internal 可见性保护
-│       ├── core/                      # 配置、消息模型、执行模式等基础类型
-│       │   ├── config/                # YAML 加载、profile 覆盖、schema
-│       │   ├── execution/             # execution mode、mode gate、mode switch events
-│       │   ├── message/               # provider-neutral message model
-│       │   └── reasoning/             # reasoning effort 枚举与校验
-│       ├── llm/                       # provider、上下文估算与 LLM 测试支撑
-│       │   ├── provider/
-│       │   │   ├── provider.go        # Provider 接口、Caps、Request、Stream、Event
-│       │   │   ├── anthropic/         # 包 anthropic-sdk-go
-│       │   │   ├── openai/            # 包 openai-go
-│       │   │   ├── compat/            # OpenAI 兼容（DeepSeek / Together / vLLM / Ollama /v1 …）
-│       │   │   └── fake/              # 单测用：脚本驱动，无 IO
-│       │   ├── context/               # token 估算、压缩 / summary 策略
-│       │   ├── modelinfo/             # model capability 展示与合并
-│       │   └── vcr/                   # LLM 请求录制 / 回放
-│       ├── runtime/                   # 运行时策略、审批、日志与启动维护
-│       │   ├── permission/            # 风险判定、always-rules、UI 回调
-│       │   ├── approval/              # auto 模式下的命令审批 agent
-│       │   ├── hook/                  # hook runner
-│       │   ├── log/                   # slog 初始化与 rotation
-│       │   └── maintenance/           # 启动期清理任务
-│       ├── workspace/                 # 本地状态、路径、会话与持久化
-│       │   ├── paths/                 # XDG 与项目路径解析
-│       │   ├── store/                 # SQLite 封装
-│       │   ├── rollout/               # 事件类型、append writer、reader
-│       │   ├── memory/                # workspace memory
-│       │   ├── filehistory/           # 文件快照与 rewind 支撑
-│       │   └── tooloutput/            # 大工具输出落盘/摘要
-│       ├── integration/               # 外部协议客户端
-│       │   ├── mcp/                   # MCP client（stdio/http/sse）
-│       │   └── lsp/                   # LSP client
-│       └── tool/
-│       │   ├── tool.go                # Tool 接口、Risk、Registry
-│       │   ├── fs/                    # read / write / edit / multiedit / ls / glob / tool_result
-│       │   ├── plan/                  # plan_write / plan_update / plan_update_step
-│       │   ├── todo/                  # todo_write / todo_update
-│       │   ├── memory/                # remember / recall
-│       │   ├── search/                # grep / glob
-│       │   ├── shell/                 # bash
-│       │   ├── job/                   # job_run / job_output / job_kill
-│       │   ├── task/                  # task 子 agent adapter
-│       │   ├── goal/                  # create_goal / get_goal / update_goal
-│       │   ├── web/                   # web_search / web_fetch
-│       │   └── mcp/                   # MCP tool adapter
+│   ├── agent/                         # Agent/Factory、stream、tool runner、context、activity、summary
+│   ├── command/                       # cobra 子命令：run / rollout / config / sessions
+│   ├── tui/                           # Bubble Tea models 与 view
+│   │   ├── theme/                     # lipgloss 主题
+│   │   ├── diffview/                  # unified diff 渲染
+│   │   ├── slash/                     # / 命令处理
+│   │   └── permission/                # 权限审批弹窗
+│   ├── config/                        # YAML 加载、profile 覆盖、schema
+│   ├── message/                       # provider-neutral message model
+│   ├── mode/                          # execution mode、mode gate、mode switch events
+│   ├── reasoning/                     # reasoning effort 枚举与校验
+│   ├── provider/                      # Provider 接口、Caps、Request、Stream、Event
+│   │   ├── anthropic/                 # 包 anthropic-sdk-go
+│   │   ├── openai/                    # 包 openai-go
+│   │   ├── compat/                    # OpenAI 兼容（DeepSeek / Together / vLLM / Ollama /v1 …）
+│   │   └── fake/                      # 单测用：脚本驱动，无 IO
+│   ├── tokenizer/                     # token 估算
+│   ├── context/                       # context window 解析
+│   ├── modelinfo/                     # model capability 展示与合并
+│   ├── vcr/                           # LLM 请求录制 / 回放
+│   ├── permission/                    # 风险判定、always-rules、UI 回调
+│   ├── approval/                      # auto 模式下的命令审批 agent
+│   ├── hook/                          # hook runner
+│   ├── logx/                          # slog 初始化与 rotation
+│   ├── maintenance/                   # 启动期清理任务
+│   ├── store/                         # SQLite session 持久化
+│   ├── rollout/                       # rollout event 写入/读取
+│   ├── workspace/                     # 本地文件状态
+│   │   ├── paths/                     # XDG 与项目路径解析
+│   │   ├── memory/                    # workspace memory
+│   │   ├── filehistory/               # 文件快照与 rewind 支撑
+│   │   └── tooloutput/                # 大工具输出落盘/摘要
+│   ├── lsp/                           # LSP client
+│   ├── mcp/                           # MCP client（stdio/http/sse）
+│   └── tool/
+│       ├── tool.go                    # Tool 接口、Risk、Registry
+│       ├── fs/                        # read / write / edit / multiedit / ls / glob / tool_result
+│       ├── plan/                      # plan_write / plan_update / plan_update_step
+│       ├── todo/                      # todo_write / todo_update
+│       ├── memory/                    # remember / recall
+│       ├── search/                    # grep / glob
+│       ├── shell/                     # bash
+│       ├── job/                       # job_run / job_output / job_kill
+│       ├── task/                      # task 子 agent adapter
+│       ├── goal/                      # create_goal / get_goal / update_goal
+│       ├── web/                       # web_search / web_fetch
+│       └── mcp/                       # MCP tool adapter
 ├── docs/
 ├── .references/                       # 不入 git
 └── go.mod
 ```
 
-`internal/` 之外不暴露 API。未来若要拆 client/server，把 `internal/app/ub` 的协调层抽到独立 server package，TUI 通过 HTTP/Unix socket 接入。
+`internal/` 之外不暴露 API。未来若要拆 client/server，把 `internal/command` 的协调层抽到独立 server package，TUI 通过 HTTP/Unix socket 接入。
 
 ## 3. Agent Loop 设计
 
 ```go
-// internal/app/ub/agent/agent.go
+// internal/agent/agent.go
 type Agent struct {
     provider provider.Provider
     tools    *tool.Registry
@@ -210,7 +208,7 @@ func (a *Agent) Run(ctx context.Context, req Request) (Result, error) {
 ## 4. Tool 系统
 
 ```go
-// internal/pkg/tool/tool.go
+// internal/tool/tool.go
 type Tool interface {
     Name() string
     Description() string
@@ -318,7 +316,7 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 ## 5. Provider 抽象
 
 ```go
-// internal/pkg/llm/provider/provider.go
+// internal/provider/provider.go
 type Provider interface {
     Name() string
     Caps() Caps
@@ -351,7 +349,7 @@ type Stream interface {
 
 **双层抽象**（借鉴 codex-rs 的 `model-provider` + `model-provider-info`）：
 - `Provider` 是行为接口
-- `internal/pkg/llm/modelinfo.Info` 是模型元信息（reasoning 能力、effort、context window 等），由配置文件 + 内置默认表合并
+- `internal/modelinfo.Info` 是模型元信息（reasoning 能力、effort、context window 等），由配置文件 + 内置默认表合并
 - `Provider.Caps()` 描述 provider 默认能力；`CapsForModel(p, model)` 在 provider 支持时叠加模型级能力
 - reasoning 能力按 `用户配置覆盖 > 内置 modelinfo 表 > 保守未知模型` 解析；未知模型默认不发送 reasoning 参数
 
@@ -386,7 +384,7 @@ type ModelConfig struct {
 **上下文压缩与状态栏**：
 - Agent 每次发起 provider 请求前估算请求消息 token（含 tool schema），并通过 runtime event 向 TUI 上报 used/max/%；TUI 状态栏用 `ctx est` 展示请求前估算，用 `ctx last` 展示 provider usage 的最近实际 input token
 - Agent 每次 provider 请求都会临时注入当前运行环境（workspace cwd、shell、OS）和路径规则，避免模型猜测 `/home/user` 等默认路径；该 runtime context 不写入 rollout，也不进入恢复后的历史消息
-- max context 统一由 `internal/pkg/llm/contextwindow.Resolver` 解析并附带 source/confidence。显式 `providers.<name>.models.<model>.max_context_tokens` 始终优先；未配置时使用模型元信息/provider `CapsForModel`，并允许真实 usage 抬高被事实否定的静态值、带数值 overflow 修正兼容端点的错误默认值
+- max context 统一由 `internal/context.Resolver` 解析并附带 source/confidence。显式 `providers.<name>.models.<model>.max_context_tokens` 始终优先；未配置时使用模型元信息/provider `CapsForModel`，并允许真实 usage 抬高被事实否定的静态值、带数值 overflow 修正兼容端点的错误默认值
 - 主 provider usage 与可识别的 context overflow 会按 provider 名、清理敏感部分后的 base URL 和完整 model ID 写入 `$XDG_STATE_HOME/ub/context-windows/<key>.json`。每 key 文件以 `0600` 原子替换；缓存只含 token 观察，不含 prompt/消息/API key，损坏或不可写时退回静态候选而不阻断请求
 - 自动 summary 按 `estimated_input + context.reserve_output_tokens > max_context * context.trigger_ratio` 触发；summary 默认使用当前主对话模型，避免把决定后续上下文的高风险压缩交给小模型。如果 provider 仍返回可识别的上下文超限错误，Agent 会强制执行一次同一 summary 策略并重试同一轮请求，重试后仍失败则返回 provider 原始错误；TUI 的 `/compact` 可主动触发同一 summary 逻辑。最近原文保留使用 `context.keep_recent_turns` + 最近上下文 token budget，至少保留当前 user turn，且按完整 user turn 边界截断，避免孤立 tool_use/tool_result
 - summary prompt 自身也按 summary 模型的 context window 做预算控制：待摘要 conversation 超过预算时，Agent 只按完整 user turn 边界打包分块，再把块摘要递归合并，避免主模型已超限后 summary 模型继续收到同样超限的历史；单个 user turn 自身超预算时不做 message/字符级切碎，直接返回明确错误
@@ -394,12 +392,12 @@ type ModelConfig struct {
 - 读取 rollout 历史时保留完整可见 transcript，`Summary` 事件不作为用户/助手消息渲染；同时为 provider 请求单独构造 context history，遇到 `Summary` 事件即用事件中记录的 compacted messages（summary system message + 保留的最近原文窗口）替换请求上下文，避免恢复 session 后重新带上已压缩旧消息；旧 `Summary` 事件没有 compacted messages 时退回只使用 summary system message
 
 **重要的内部消息表示**：
-不要直接复用 anthropic / openai 的请求类型。在 `internal/pkg/core/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`；content block 包含 text / reasoning / image / tool_use / tool_result），各 provider 各自转换。理由：避免被某家 SDK 锁定。
+不要直接复用 anthropic / openai 的请求类型。在 `internal/message/` 自定义中性 `Message` 结构（`Role`、`Content[]`；content block 包含 text / reasoning / image / tool_use / tool_result），各 provider 各自转换。理由：避免被某家 SDK 锁定。
 
 ## 6. Rollout（事件日志）
 
 ```go
-// internal/pkg/workspace/rollout/event.go
+// internal/rollout/event.go
 type Event struct {
     ID        string
     SessionID string
@@ -680,7 +678,7 @@ UI 流程：
 - `context/`：token 估算 + 触发 summary 边界
 - `permission/`：always-rules 匹配、黑名单优先级
 
-**集成测试 + vcr**（`internal/pkg/llm/vcr/`）：
+**集成测试 + vcr**（`internal/vcr/`）：
 - 首次跑：真打 LLM，写入 `testdata/cassettes/*.jsonl`（脱敏 API key）
 - 回放：HTTP transport 拦截，按 cassette 顺序匹配请求返回响应
 - 类似 [Crush 的 charm.land/x/vcr](https://charm.land/x/vcr) 或 Ruby vcr
@@ -715,7 +713,7 @@ UI 流程：
 
 ### 12.1 fake provider（单元测试用）
 
-- 包：`internal/pkg/llm/provider/fake/`
+- 包：`internal/provider/fake/`
 - 配置：
   ```yaml
   providers:
@@ -814,7 +812,7 @@ Suggested dev profile (use --suggest to print full snippet):
 > 想加一个新 tool / 改一段 prompt 模板：
 
 1. 写 Go 代码
-2. 配 fake provider 跑单测：`go test ./internal/app/ub/agent/...`
+2. 配 fake provider 跑单测：`go test ./internal/agent/...`
 3. 跑 `ub run --dev -p "用新 tool 做某事"` 看真实模型怎么调
 4. 满意了 → `UB_VCR=record go test ./internal/integration/...` 录一个 cassette
 5. 平时 CI / 本地：`go test ./...`（默认走 cassette replay）

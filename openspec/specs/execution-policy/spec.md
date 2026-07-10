@@ -6,7 +6,7 @@ Define execution modes and mode-level gates before tool permission decisions.
 ## Requirements
 ### Requirement: 执行模式解析
 
-系统 SHALL 在 `internal/pkg/core/execution` 中定义 `Mode`，支持 `work`、`plan`、`auto` 三个值。系统 MUST 提供解析函数，把空字符串视作 `work`，未知值 MUST 返回可读错误。
+系统 SHALL 在 `internal/mode` 中定义 `Mode`，支持 `work`、`plan`、`auto` 三个值。系统 MUST 提供解析函数，把空字符串视作 `work`，未知值 MUST 返回可读错误。
 
 #### Scenario: 空字符串使用 work
 

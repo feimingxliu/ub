@@ -8,7 +8,7 @@ Define the OpenAI Chat Completions provider adapter and its text-only streaming 
 
 ### Requirement: OpenAI provider 创建
 
-系统 SHALL 提供 `internal/pkg/llm/provider/openai` provider，并通过 provider 工厂注册 `type: openai`。provider MUST 支持配置中的 `api_key`、`base_url`、`headers` 和 `timeout`。
+系统 SHALL 提供 `internal/provider/openai` provider，并通过 provider 工厂注册 `type: openai`。provider MUST 支持配置中的 `api_key`、`base_url`、`headers` 和 `timeout`。
 
 #### Scenario: 工厂创建 openai provider
 

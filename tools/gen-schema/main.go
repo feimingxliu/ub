@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/feimingxliu/ub/internal/pkg/core/config"
+	"github.com/feimingxliu/ub/internal/config"
 	"github.com/invopop/jsonschema"
 )
 

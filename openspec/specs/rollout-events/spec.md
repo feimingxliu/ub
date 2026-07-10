@@ -8,7 +8,7 @@ Define rollout event persistence for session conversations, including event shap
 
 ### Requirement: Rollout 事件模型
 
-系统 SHALL 在 `internal/pkg/workspace/rollout` 中定义 rollout 事件模型。事件 MUST 包含 `ID`、`SessionID`、`Turn`、`Time`、`Type` 和 JSON `Payload`；I-09 MUST 支持 `user_message`、`assistant_message`、`usage`、`error` 四种事件类型。
+系统 SHALL 在 `internal/rollout` 中定义 rollout 事件模型。事件 MUST 包含 `ID`、`SessionID`、`Turn`、`Time`、`Type` 和 JSON `Payload`；I-09 MUST 支持 `user_message`、`assistant_message`、`usage`、`error` 四种事件类型。
 
 #### Scenario: 创建用户消息事件
 

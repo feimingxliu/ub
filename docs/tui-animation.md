@@ -4,7 +4,7 @@
 
 ## 1. 问题与目标
 
-当前 TUI（`internal/app/ub/tui/`）在 agent 长任务期间的反馈是**静态文本**：
+当前 TUI（`internal/tui/`）在 agent 长任务期间的反馈是**静态文本**：
 
 - `status_bar.go` 显示 `state: thinking / streaming / tool / shell / finalizing`，但只在状态切换时更新；同一状态停留十几秒时屏幕没有任何视觉变化。
 - 消息列表里的 activity 行（`Thinking...` / `Reading file...` / `Compacting...` 等）也是静态的。
@@ -60,7 +60,7 @@
 
 ```
 ⠹ Thinking · 3s
-⠼ Tool · 12s · Reading file internal/app/ub/tui/model.go
+⠼ Tool · 12s · Reading file internal/tui/model.go
 ⠴ Streaming · 5s
 ⠧ Shell · 1s
 ⠦ Finalizing · 18s
@@ -83,7 +83,7 @@
 
 ## 3. 实现
 
-### 3.1 新增文件 `internal/app/ub/tui/spinner.go`
+### 3.1 新增文件 `internal/tui/spinner.go`
 
 承担：
 
