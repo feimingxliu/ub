@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [0.5.0] - 2026-07-13
+
+
+### Added
+
+- Add staged context maintenance ([79e8d83](https://github.com/feimingxliu/ub/commit/79e8d837f766516364d0723f75de08196f5a8ea4))
+- Implement minimal CachePlan (S4-07) ([053d307](https://github.com/feimingxliu/ub/commit/053d307ce33830ede23ee658bfccf9aadddf8745))
+
+
+### Fixed
+
+- Clear block highlight when clicking empty message area ([8480083](https://github.com/feimingxliu/ub/commit/848008358beb2935dedbaa72fe7a1ace47b9db44))
+- Exclude auto-injected prompts from history navigation ([d2fb6e9](https://github.com/feimingxliu/ub/commit/d2fb6e9dd4f9749f6265a49d02905a45298baeef))
+
 ## [0.4.4] - 2026-07-13
 
 
@@ -16,6 +30,11 @@ All notable changes to this project are documented here.
 
 - Align roadmap with v0.4 baseline ([a5677b3](https://github.com/feimingxliu/ub/commit/a5677b34083c73bf86e3e0565b527953859ce357))
 - Expand roadmap for context and session evolution ([2ce9896](https://github.com/feimingxliu/ub/commit/2ce989658da598b365d2ead9ba8b8b34b8713965))
+
+
+### Maintenance
+
+- V0.4.4 ([9bfd9d0](https://github.com/feimingxliu/ub/commit/9bfd9d09b09c440c54459a3ed8513ccfb33e02fc))
 
 
 ### Refactoring
