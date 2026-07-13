@@ -17,6 +17,7 @@ const (
 	promptSectionGitSnapshot           = "git_snapshot"
 	promptSectionExecutionMode         = "execution_mode"
 	promptSectionMemory                = "memory"
+	promptSectionCompactInstructions   = "compact_instructions"
 )
 
 const (
@@ -32,8 +33,9 @@ const (
 )
 
 const (
-	promptVariantMain   = "main"
-	promptVariantNoTool = "no-tool"
+	promptVariantMain    = "main"
+	promptVariantNoTool  = "no-tool"
+	promptVariantCompact = "compact"
 )
 
 // PromptSectionManifest describes one known prompt section without exposing
@@ -56,6 +58,7 @@ type PromptSectionManifest struct {
 type PromptManifest struct {
 	Variant         string                  `json:"variant"`
 	Model           string                  `json:"model,omitempty"`
+	ToolsEnabled    bool                    `json:"tools_enabled"`
 	TotalChars      int                     `json:"total_chars"`
 	EstimatedTokens int                     `json:"estimated_tokens"`
 	Sections        []PromptSectionManifest `json:"sections"`
@@ -70,6 +73,7 @@ type PromptInspectOptions struct {
 	Mode           execmode.Mode
 	MemoryMaxChars int
 	Model          string
+	Variant        string
 	ShowContent    bool
 }
 
@@ -219,6 +223,16 @@ func (r *promptRegistry) noToolSections() []promptSection {
 	return sections
 }
 
+func compactPromptSections(cfg config.PromptConfig) []promptSection {
+	template := summaryPromptTemplate
+	if strings.TrimSpace(cfg.CompactStyle) == config.CompactStyleShort {
+		template = summaryShortPromptTemplate
+	}
+	return []promptSection{
+		includedPromptSection(promptSectionCompactInstructions, promptStabilityStable, "builtin", message.Text(message.RoleUser, template), false),
+	}
+}
+
 func clonePromptSections(in []promptSection) []promptSection {
 	if in == nil {
 		return nil
@@ -244,9 +258,10 @@ func promptMessages(sections []promptSection) []message.Message {
 func promptManifest(variant, model string, sections []promptSection, showContent bool) PromptManifest {
 	model = strings.TrimSpace(model)
 	manifest := PromptManifest{
-		Variant:  variant,
-		Model:    model,
-		Sections: make([]PromptSectionManifest, 0, len(sections)),
+		Variant:      variant,
+		Model:        model,
+		ToolsEnabled: variant != promptVariantCompact && variant != promptVariantNoTool,
+		Sections:     make([]PromptSectionManifest, 0, len(sections)),
 	}
 	for i, section := range sections {
 		item := PromptSectionManifest{
@@ -273,9 +288,13 @@ func promptManifest(variant, model string, sections []promptSection, showContent
 	return manifest
 }
 
-// InspectPrompt builds a local main prompt manifest without invoking a
-// provider or creating any session state.
+// InspectPrompt builds a local prompt manifest without invoking a provider or
+// creating any session state. Variant supports main and compact; unknown
+// variants fall back to main for backwards-compatible direct API callers.
 func InspectPrompt(opts PromptInspectOptions) PromptManifest {
+	if strings.EqualFold(strings.TrimSpace(opts.Variant), promptVariantCompact) {
+		return promptManifest(promptVariantCompact, opts.Model, compactPromptSections(opts.Prompt), opts.ShowContent)
+	}
 	registry := newPromptRegistry(opts.Runtime, opts.WorkspaceRoot, opts.Prompt, opts.MemoryMaxChars)
 	return promptManifest(promptVariantMain, opts.Model, registry.mainSections(opts.Mode), opts.ShowContent)
 }

@@ -23,21 +23,23 @@ func newPromptInspectCmd() *cobra.Command {
 	var jsonOutput bool
 	var showContent bool
 	var model string
+	var variant string
 	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Inspect the local provider prompt prefix",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPromptInspect(cmd, jsonOutput, showContent, model)
+			return runPromptInspect(cmd, jsonOutput, showContent, model, variant)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "print machine-readable JSON output")
 	cmd.Flags().BoolVar(&showContent, "show-content", false, "include prompt section content")
 	cmd.Flags().StringVar(&model, "model", "", "model id used only for token estimation")
+	cmd.Flags().StringVar(&variant, "variant", "main", "prompt variant to inspect (main or compact)")
 	return cmd
 }
 
-func runPromptInspect(cmd *cobra.Command, jsonOutput, showContent bool, model string) error {
+func runPromptInspect(cmd *cobra.Command, jsonOutput, showContent bool, model, variant string) error {
 	cfg, _, err := loadConfigForCommand(cmd)
 	if err != nil {
 		return err
@@ -53,6 +55,13 @@ func runPromptInspect(cmd *cobra.Command, jsonOutput, showContent bool, model st
 	if strings.TrimSpace(model) == "" {
 		model = cfg.DefaultModel
 	}
+	variant = strings.ToLower(strings.TrimSpace(variant))
+	if variant == "" {
+		variant = "main"
+	}
+	if variant != "main" && variant != "compact" {
+		return fmt.Errorf("unsupported prompt variant %q (want main or compact)", variant)
+	}
 	manifest := agent.InspectPrompt(agent.PromptInspectOptions{
 		Runtime:        agentRuntimeContext(workspace),
 		WorkspaceRoot:  workspace,
@@ -60,6 +69,7 @@ func runPromptInspect(cmd *cobra.Command, jsonOutput, showContent bool, model st
 		Mode:           mode,
 		MemoryMaxChars: cfg.Memory.MaxChars,
 		Model:          model,
+		Variant:        variant,
 		ShowContent:    showContent,
 	})
 	if jsonOutput {
@@ -80,6 +90,7 @@ func renderPromptManifestText(manifest agent.PromptManifest, showContent bool) s
 		model = "(unspecified)"
 	}
 	fmt.Fprintf(&out, "  model\t%s\n", model)
+	fmt.Fprintf(&out, "  tools_enabled\t%t\n", manifest.ToolsEnabled)
 	fmt.Fprintf(&out, "  total\t%d chars\t%d estimated_tokens\n", manifest.TotalChars, manifest.EstimatedTokens)
 	fmt.Fprintf(&out, "sections:\n")
 	for _, section := range manifest.Sections {

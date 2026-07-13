@@ -103,3 +103,37 @@ func TestPromptInspectTextAndExplicitContent(t *testing.T) {
 		}
 	}
 }
+
+func TestPromptInspectCompactVariantRedactsTemplate(t *testing.T) {
+	temp := t.TempDir()
+	workspace := filepath.Join(temp, "repo")
+	configHome := filepath.Join(temp, "config")
+	if err := os.MkdirAll(filepath.Join(configHome, "ub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configHome, "ub", "config.yaml"), []byte("default_model: fake/summary\nprompt:\n  compact_style: short\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Chdir(workspace)
+
+	tc := newTestRootCommand("prompt", "inspect", "--variant", "compact", "--json")
+	if err := tc.cmd.Execute(); err != nil {
+		t.Fatalf("prompt inspect compact: %v", err)
+	}
+	if strings.Contains(tc.out.String(), "## Goal") || strings.Contains(tc.out.String(), "\"content\"") {
+		t.Fatalf("compact inspect leaked template by default:\n%s", tc.out.String())
+	}
+	var manifest agent.PromptManifest
+	if err := json.Unmarshal(tc.out.Bytes(), &manifest); err != nil {
+		t.Fatalf("decode compact manifest: %v", err)
+	}
+	if manifest.Variant != "compact" || manifest.ToolsEnabled || len(manifest.Sections) != 1 || manifest.Sections[0].ID != "compact_instructions" || manifest.Sections[0].EstimatedTokens <= 0 {
+		t.Fatalf("compact manifest = %#v", manifest)
+	}
+}

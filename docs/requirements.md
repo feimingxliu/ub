@@ -39,7 +39,7 @@
 | 执行模式 | `work` / `plan` / `auto` / `full-access` 四种模式，控制文件写入与命令审批路径 |
 | 会话 | SQLite 持久化、可列出 / 切换 / 恢复 |
 | Rollout | 每一轮 user / assistant（含 tool_use content block）/ tool_result / usage / activity 等 append-only 写入；可重放调试 |
-| 上下文 | 可学习的 context window 解析、自动 summary / 压缩；接近有效窗口极限时触发 |
+| 上下文 | 可学习的 context window 解析、可解释的分阶段裁剪/summary；接近有效窗口极限时先安全减负再压缩 |
 | MCP | 接入外部 MCP server（http / stdio / sse），扩展工具集 |
 | LSP | 接入 LSP，向模型提供 diagnostics / references / hover / completion / document_symbols / rename / code_action |
 | TUI | Bubble Tea 实现的 chat UI、diff view、权限弹窗、状态栏 |
@@ -130,14 +130,14 @@
 ### 4.7 上下文管理
 
 - F-CTX-1：每次发请求前估算 token 数（按 provider 计费方式），估算 MUST 包含 provider 请求里的工具 schema
-- F-CTX-2：当前 turn + history + 预留输出 token 超过 ContextWindowResolver 返回的 `context_window * threshold`（默认 0.8）时，自动触发 summary；如果 provider 请求仍返回可识别的上下文超限错误，Agent MUST 先回灌窗口观察，再强制执行一次同一 summary 策略并重试同一轮请求，重试后仍失败则返回 provider 原始错误
+- F-CTX-2：Agent MUST 在请求前构造可观察的 `ContextSnapshot -> ContextDecision`。当前 turn + history + 预留输出 token 超过 ContextWindowResolver 返回的 `context_window * threshold`（默认 0.8）时，系统 MUST 先裁剪可证明被后续同输入 `read` / `grep`（源码搜索）覆盖或明确为空的旧成功结果；若仍超预算，才自动触发 structured summary。裁剪后的实际 request estimate 仍超预算且存在完整 turn 前缀时，MUST 回退到 summary。裁剪不得破坏 tool_use/tool_result 配对，错误、文件变更、当前 turn 与保留窗口内结果 MUST 保持原样。若 provider 请求仍返回可识别的上下文超限错误，Agent MUST 先回灌窗口观察，再执行一次 `compact-and-retry` 决策；重试后仍失败则返回 provider 原始错误
 - F-CTX-3：Summary 默认由当前主对话模型生成，避免把决定后续上下文的压缩交给 `small_model`；summary 输入 MUST 按完整 user turn 边界和 summary 模型 context 预算分块/合并，不得按单条 message 或字符切碎语义单元；单个 user turn 超出 summary 模型预算时 MUST 返回明确错误；摘要替换早期消息，最近原文按 `keep_recent_turns` 与 token budget 共同保留，且不得留下孤立 tool_use/tool_result
-- F-CTX-4：Summary 事件本身写入 rollout；恢复 session 时可见 transcript MUST 保持完整且不渲染 summary 为普通消息，下一次 provider 请求的 context history MUST 从最新 summary 的 compacted messages 起步
+- F-CTX-4：summary 或 prune-only context maintenance MUST 写入 rollout，包含最终 provider context 和不含 prompt/完整工具输出的审计元数据（action/reason、token before/after、cut boundary、裁剪/保护的 tool use ID、summary model、耗时、retry）。恢复 session 时可见 transcript MUST 保持完整且不渲染该事件为普通消息，下一次 provider 请求的 context history MUST 从最新维护事件保存的 context 起步；prune-only checkpoint MUST NOT 作为 `ub sessions search` 的会话正文，旧 summary event MUST 保持可恢复
 - F-CTX-5：TUI 可通过 `/compact` 主动触发一次 summary/压缩；手动触发复用同一 summary 策略，但不依赖自动阈值
 - F-CTX-6：Agent 发请求前向 TUI 上报估算 token 使用量，provider 返回 usage 后上报最近实际 input token；窗口已知时 runtime event MUST 同时携带 max/source/confidence，TUI MUST 区分 `ctx est` 与 `ctx last`，且普通 usage 校准不得伪装成压缩导致的下降
 - F-CTX-7：Agent 发起 provider 请求时 MUST 携带当前 runtime context（workspace cwd、shell、OS 与路径规则），但该上下文 MUST NOT 写入 rollout 历史，避免恢复 session 后累积过期路径
 - F-CTX-8：模型可见 tool result MUST 按 `context.tool_results` 做统一限幅；超限时完整输出写入 ub state 的 tool-output 文件，rollout 只保存模型可见 preview 与 truncation metadata，恢复 session 不得重新灌入完整大输出
-- F-CTX-9：provider 请求前缀 MUST 通过固定顺序的 prompt section registry 构造，至少为 coding-agent、runtime、workspace instructions、Git snapshot、execution mode 与 memory 提供稳定 ID、状态、来源、稳定性、字符/token 估算和截断元数据；只有 `included` section 进入 provider messages，main、只读和 no-tool 请求 MUST 复用同一 registry 模型且保持各自现有语义
+- F-CTX-9：provider 请求前缀 MUST 通过固定顺序的 prompt section registry 构造，至少为 coding-agent、runtime、workspace instructions、Git snapshot、execution mode 与 memory 提供稳定 ID、状态、来源、稳定性、字符/token 估算和截断元数据；只有 `included` section 进入 provider messages，main、只读和 no-tool 请求 MUST 复用同一 registry 模型且保持各自现有语义。structured compact prompt MUST 以 `compact_instructions` 作为无工具、stable、builtin section 提供，`ub prompt inspect --variant compact` MUST 支持默认脱敏的本地检查
 - F-CTX-10：ContextWindowResolver MUST 保持显式 `providers.<name>.models.<model>.max_context_tokens` 最高优先级；没有显式值时综合模型元信息/provider caps 与同 provider endpoint/model 的历史 usage/overflow。观察缓存 MUST 写入 `$XDG_STATE_HOME/ub/context-windows/` 的可丢弃派生状态，清理 endpoint userinfo/query/fragment，不保存 prompt、消息或密钥；缓存损坏或不可写 MUST 安全回退且不得阻断 Agent 请求
 
 ### 4.8 配置

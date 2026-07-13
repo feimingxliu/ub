@@ -328,6 +328,40 @@ func TestSummaryWithMessagesRestoresCompactedContext(t *testing.T) {
 	}
 }
 
+func TestSummaryWithMaintenancePreservesAuditAndContext(t *testing.T) {
+	contextMessages := []message.Message{
+		message.Text(message.RoleSystem, "summary"),
+		message.Text(message.RoleUser, "current request"),
+	}
+	maintenance := &ContextMaintenance{
+		Decision:            "prune",
+		Reason:              "threshold",
+		TokensBefore:        100,
+		TokensAfter:         40,
+		CutoffMessages:      2,
+		PrunedToolUseIDs:    []string{"old-read"},
+		ProtectedToolUseIDs: []string{"recent-bash"},
+		SummaryModel:        "provider/model",
+		DurationMillis:      12,
+	}
+	event, err := SummaryWithMessagesAndMaintenance("sess_maintenance", 3, "Context maintenance pruned 1 result.", contextMessages, 0, len(contextMessages), 100, maintenance)
+	if err != nil {
+		t.Fatalf("SummaryWithMessagesAndMaintenance: %v", err)
+	}
+	maintenance.PrunedToolUseIDs[0] = "mutated"
+	var payload SummaryPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if payload.Maintenance == nil || payload.Maintenance.Decision != "prune" || payload.Maintenance.Reason != "threshold" || payload.Maintenance.PrunedToolUseIDs[0] != "old-read" {
+		t.Fatalf("maintenance payload = %#v", payload.Maintenance)
+	}
+	restored, ok, err := SummaryMessagesFromEvent(event)
+	if err != nil || !ok || !reflect.DeepEqual(restored, contextMessages) {
+		t.Fatalf("restored context = %#v, ok=%v, err=%v", restored, ok, err)
+	}
+}
+
 func TestMemoryWriteEvent(t *testing.T) {
 	event, err := MemoryWrite("sess_memory", 5, MemoryWritePayload{
 		Scope:    "auto",

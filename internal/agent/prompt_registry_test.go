@@ -195,3 +195,33 @@ func TestPromptRegistryOptionalSectionsUnavailable(t *testing.T) {
 		t.Fatalf("provider messages = %d, want coding + runtime", len(got))
 	}
 }
+
+func TestCompactPromptManifestUsesSummaryTemplateWithoutContentByDefault(t *testing.T) {
+	manifest := InspectPrompt(PromptInspectOptions{
+		Prompt:  config.PromptConfig{CompactStyle: config.CompactStyleShort},
+		Model:   "fake/summary",
+		Variant: promptVariantCompact,
+	})
+	if manifest.Variant != promptVariantCompact || manifest.Model != "fake/summary" || manifest.ToolsEnabled {
+		t.Fatalf("manifest header = %#v", manifest)
+	}
+	if len(manifest.Sections) != 1 {
+		t.Fatalf("sections = %#v, want one compact section", manifest.Sections)
+	}
+	section := manifest.Sections[0]
+	if section.ID != promptSectionCompactInstructions || section.Status != promptStatusIncluded || section.Stability != promptStabilityStable || section.Source != "builtin" {
+		t.Fatalf("compact section = %#v", section)
+	}
+	if section.Content != "" || section.EstimatedTokens <= 0 {
+		t.Fatalf("default compact manifest leaked or lacked estimate: %#v", section)
+	}
+	withContent := InspectPrompt(PromptInspectOptions{
+		Prompt:      config.PromptConfig{CompactStyle: config.CompactStyleShort},
+		Model:       "fake/summary",
+		Variant:     promptVariantCompact,
+		ShowContent: true,
+	})
+	if got := withContent.Sections[0].Content; got != summaryShortPromptTemplate {
+		t.Fatalf("compact manifest template differs from summary request template:\n%s", got)
+	}
+}

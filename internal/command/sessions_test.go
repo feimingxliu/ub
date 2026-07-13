@@ -419,11 +419,24 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("UserMessage current: %v", err)
 	}
+	pruneCheckpoint, err := rollout.SummaryWithMessagesAndMaintenance(
+		"current",
+		1,
+		"Context maintenance pruned 1 superseded tool result.",
+		[]message.Message{message.Text(message.RoleUser, "please find the needle here")},
+		0,
+		1,
+		20,
+		&rollout.ContextMaintenance{Decision: "prune"},
+	)
+	if err != nil {
+		t.Fatalf("SummaryWithMessagesAndMaintenance: %v", err)
+	}
 	otherEvent, err := rollout.AssistantMessage("elsewhere", 2, message.Text(message.RoleAssistant, "the other Needle is here too"))
 	if err != nil {
 		t.Fatalf("AssistantMessage elsewhere: %v", err)
 	}
-	for _, event := range []rollout.Event{currentEvent, otherEvent} {
+	for _, event := range []rollout.Event{currentEvent, pruneCheckpoint, otherEvent} {
 		if err := ro.Append(context.Background(), event); err != nil {
 			t.Fatalf("Append(%s): %v", event.SessionID, err)
 		}
@@ -451,6 +464,9 @@ func TestSessionsSearchFindsRolloutTextAcrossWorkspaces(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("sessions search output missing %q:\n%s", want, got)
 		}
+	}
+	if count := strings.Count(got, "please find the needle here"); count != 1 {
+		t.Fatalf("prune checkpoint duplicated session search match %d times:\n%s", count, got)
 	}
 }
 

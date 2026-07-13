@@ -294,6 +294,18 @@ func printSessionSearchMatches(out io.Writer, matches []sessionSearchMatch) erro
 }
 
 func rolloutEventSearchText(event rollout.Event) (string, error) {
+	if event.Type == rollout.TypeSummary {
+		var payload rollout.SummaryPayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode rollout summary event %s: %w", event.ID, err)
+		}
+		// A prune checkpoint saves provider context for resume; it is not a
+		// conversation message. Searching payload.Messages would duplicate the
+		// retained transcript and can exhaust the result limit with stale hits.
+		if payload.Maintenance != nil && payload.Maintenance.Decision == "prune" {
+			return "", nil
+		}
+	}
 	if msg, ok, err := rollout.MessageFromEvent(event); err != nil {
 		return "", err
 	} else if ok {

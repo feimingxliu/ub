@@ -89,13 +89,32 @@ type ActivityPayload struct {
 	IsError         bool   `json:"is_error,omitempty"`
 }
 
-// SummaryPayload stores an automatic context summary.
+// ContextMaintenance stores metadata about a context decision without storing
+// prompt text or original tool-result output. It accompanies both summaries
+// and prune-only context maintenance events.
+type ContextMaintenance struct {
+	Decision            string   `json:"decision,omitempty"`
+	Reason              string   `json:"reason,omitempty"`
+	TokensBefore        int      `json:"tokens_before,omitempty"`
+	TokensAfter         int      `json:"tokens_after,omitempty"`
+	CutoffMessages      int      `json:"cutoff_messages,omitempty"`
+	PrunedToolUseIDs    []string `json:"pruned_tool_use_ids,omitempty"`
+	ProtectedToolUseIDs []string `json:"protected_tool_use_ids,omitempty"`
+	SummaryModel        string   `json:"summary_model,omitempty"`
+	DurationMillis      int64    `json:"duration_millis,omitempty"`
+	Retry               bool     `json:"retry,omitempty"`
+}
+
+// SummaryPayload stores an automatic context summary or a prune-only context
+// maintenance checkpoint. Messages is the provider-facing context to restore
+// when the session resumes.
 type SummaryPayload struct {
-	Text               string            `json:"text"`
-	CompressedMessages int               `json:"compressed_messages,omitempty"`
-	KeptMessages       int               `json:"kept_messages,omitempty"`
-	EstimatedTokens    int               `json:"estimated_tokens,omitempty"`
-	Messages           []message.Message `json:"messages,omitempty"`
+	Text               string              `json:"text"`
+	CompressedMessages int                 `json:"compressed_messages,omitempty"`
+	KeptMessages       int                 `json:"kept_messages,omitempty"`
+	EstimatedTokens    int                 `json:"estimated_tokens,omitempty"`
+	Messages           []message.Message   `json:"messages,omitempty"`
+	Maintenance        *ContextMaintenance `json:"context_maintenance,omitempty"`
 }
 
 // MemoryWritePayload stores one durable memory write for audit/debugging.
@@ -195,6 +214,12 @@ func Summary(sessionID string, turn int, text string, compressedMessages, keptMe
 // provider context used after summarization. The messages normally contain the
 // summary system message followed by the kept recent turn suffix.
 func SummaryWithMessages(sessionID string, turn int, text string, messages []message.Message, compressedMessages, keptMessages, estimatedTokens int) (Event, error) {
+	return SummaryWithMessagesAndMaintenance(sessionID, turn, text, messages, compressedMessages, keptMessages, estimatedTokens, nil)
+}
+
+// SummaryWithMessagesAndMaintenance creates a summary event with the complete
+// provider context and optional safe-to-persist maintenance audit metadata.
+func SummaryWithMessagesAndMaintenance(sessionID string, turn int, text string, messages []message.Message, compressedMessages, keptMessages, estimatedTokens int, maintenance *ContextMaintenance) (Event, error) {
 	cloned := make([]message.Message, 0, len(messages))
 	for _, msg := range messages {
 		if len(msg.Content) == 0 {
@@ -202,13 +227,20 @@ func SummaryWithMessages(sessionID string, turn int, text string, messages []mes
 		}
 		cloned = append(cloned, msg.Clone())
 	}
-	return NewEvent(sessionID, turn, TypeSummary, SummaryPayload{
+	payload := SummaryPayload{
 		Text:               text,
 		CompressedMessages: compressedMessages,
 		KeptMessages:       keptMessages,
 		EstimatedTokens:    estimatedTokens,
 		Messages:           cloned,
-	})
+	}
+	if maintenance != nil {
+		copy := *maintenance
+		copy.PrunedToolUseIDs = append([]string(nil), maintenance.PrunedToolUseIDs...)
+		copy.ProtectedToolUseIDs = append([]string(nil), maintenance.ProtectedToolUseIDs...)
+		payload.Maintenance = &copy
+	}
+	return NewEvent(sessionID, turn, TypeSummary, payload)
 }
 
 // MemoryWrite creates a durable memory audit event.

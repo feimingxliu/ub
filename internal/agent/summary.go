@@ -71,52 +71,20 @@ type CompactResult struct {
 func (a *Agent) prepareMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, tools []provider.ToolDefinition) (preparedMessages, error) {
 	providerMessages := a.withRuntimeContext(messages)
 	estimated := contextmgr.EstimateRequest(providerMessages, tools, a.model)
-	if !a.shouldSummarize(estimated) {
-		a.emitContextUsage(estimated, false)
-		return preparedMessages{messages: messages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
-	}
-	a.emit(Event{
-		Type:         EventActivity,
-		ActivityKind: ActivityNotice,
-		Notice:       NoticeCompacting,
-		Status:       "running",
-		Summary:      "compacting context",
-	})
-	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, messages, estimated, tools)
+	maintained, err := a.maintainContext(ctx, sessionID, turn, messages, estimated, tools, contextwindow.ReasonThreshold)
 	if err != nil {
-		slog.Warn("context compaction failed", "session", sessionID, "turn", turn, "err", err)
-		a.emit(Event{
-			Type:         EventActivity,
-			ActivityKind: ActivityNotice,
-			Notice:       NoticeCompacting,
-			Status:       "failed",
-			Summary:      fmt.Sprintf("compacting context failed: %v", err),
-		})
+		slog.Warn("context maintenance failed", "session", sessionID, "turn", turn, "err", err)
 		return preparedMessages{}, err
 	}
-	if !ok {
-		a.emit(Event{
-			Type:         EventActivity,
-			ActivityKind: ActivityNotice,
-			Notice:       NoticeCompacting,
-			Status:       "done",
-			Summary:      "nothing to compact yet",
-		})
+	if !maintained.changed {
 		a.emitContextUsage(estimated, false)
 		return preparedMessages{messages: messages, requestMessages: providerMessages, estimatedTokens: estimated}, nil
 	}
-	a.emit(Event{
-		Type:         EventActivity,
-		ActivityKind: ActivityNotice,
-		Notice:       NoticeCompacting,
-		Status:       "done",
-		Summary:      fmt.Sprintf("compacted %d earlier messages", compacted.compactedMessages),
-	})
-	a.emitContextUsage(compacted.estimatedTokens, true)
+	a.emitContextUsage(maintained.estimatedTokens, true)
 	return preparedMessages{
-		messages:        compacted.messages,
-		requestMessages: a.withRuntimeContext(compacted.messages),
-		estimatedTokens: compacted.estimatedTokens,
+		messages:        maintained.messages,
+		requestMessages: a.withRuntimeContext(maintained.messages),
+		estimatedTokens: maintained.estimatedTokens,
 	}, nil
 }
 
@@ -128,25 +96,11 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 	}
 	messages := cloneMessages(req.History)
 	estimated := contextmgr.EstimateRequest(a.withRuntimeContext(messages), nil, a.model)
-	a.emit(Event{
-		Type:         EventActivity,
-		ActivityKind: ActivityNotice,
-		Notice:       NoticeCompacting,
-		Status:       "running",
-		Summary:      "compacting context",
-	})
-	compacted, ok, err := a.compactMessages(ctx, req.SessionID, req.Turn, messages, estimated, nil)
+	maintained, err := a.maintainContext(ctx, req.SessionID, req.Turn, messages, estimated, nil, contextwindow.ReasonManual)
 	if err != nil {
-		a.emit(Event{
-			Type:         EventActivity,
-			ActivityKind: ActivityNotice,
-			Notice:       NoticeCompacting,
-			Status:       "failed",
-			Summary:      fmt.Sprintf("compacting context failed: %v", err),
-		})
 		return CompactResult{}, a.recordError(ctx, req.SessionID, req.Turn, err)
 	}
-	if !ok {
+	if !maintained.changed {
 		a.emitContextUsage(estimated, false)
 		reason := "nothing to compact yet"
 		a.emit(Event{
@@ -164,21 +118,14 @@ func (a *Agent) Compact(ctx context.Context, req CompactRequest) (CompactResult,
 			Reason:          reason,
 		}, nil
 	}
-	a.emit(Event{
-		Type:         EventActivity,
-		ActivityKind: ActivityNotice,
-		Notice:       NoticeCompacting,
-		Status:       "done",
-		Summary:      fmt.Sprintf("compacted %d earlier messages", compacted.compactedMessages),
-	})
-	a.emitContextUsage(compacted.estimatedTokens, true)
-	a.emit(Event{Type: EventDone, Text: compacted.summary})
+	a.emitContextUsage(maintained.estimatedTokens, true)
+	a.emit(Event{Type: EventDone, Text: maintained.summary})
 	return CompactResult{
-		Messages:          compacted.messages,
-		Summary:           compacted.summary,
-		CompactedMessages: compacted.compactedMessages,
-		KeptMessages:      compacted.keptMessages,
-		EstimatedTokens:   compacted.estimatedTokens,
+		Messages:          maintained.messages,
+		Summary:           maintained.summary,
+		CompactedMessages: maintained.compactedMessages,
+		KeptMessages:      maintained.keptMessages,
+		EstimatedTokens:   maintained.estimatedTokens,
 	}, nil
 }
 
@@ -203,18 +150,11 @@ func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, tu
 	if alreadyRecovered {
 		return contextOverflowRecovery{}, nil
 	}
-	a.emit(Event{
-		Type:         EventActivity,
-		ActivityKind: ActivityNotice,
-		Notice:       NoticeCompacting,
-		Status:       "running",
-		Summary:      "provider context limit exceeded; compacting and retrying",
-	})
-	compacted, ok, err := a.compactMessages(ctx, sessionID, turn, messages, estimated, tools)
+	maintained, err := a.maintainContext(ctx, sessionID, turn, messages, estimated, tools, contextwindow.ReasonOverflow)
 	if err != nil {
 		return contextOverflowRecovery{}, fmt.Errorf("context overflow compact failed after provider error: %w", err)
 	}
-	if !ok {
+	if !maintained.changed || !maintained.decision.Retry {
 		a.emit(Event{
 			Type:         EventActivity,
 			ActivityKind: ActivityNotice,
@@ -224,18 +164,11 @@ func (a *Agent) recoverContextOverflow(ctx context.Context, sessionID string, tu
 		})
 		return contextOverflowRecovery{}, nil
 	}
-	a.emit(Event{
-		Type:         EventActivity,
-		ActivityKind: ActivityNotice,
-		Notice:       NoticeCompacting,
-		Status:       "done",
-		Summary:      fmt.Sprintf("provider context limit exceeded; compacted %d earlier messages and retrying", compacted.compactedMessages),
-	})
-	a.emitContextUsage(compacted.estimatedTokens, true)
-	return contextOverflowRecovery{messages: compacted.messages, recovered: true}, nil
+	a.emitContextUsage(maintained.estimatedTokens, true)
+	return contextOverflowRecovery{messages: maintained.messages, recovered: true}, nil
 }
 
-func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int, tools []provider.ToolDefinition) (compactedMessages, bool, error) {
+func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int, messages []message.Message, estimated int, tools []provider.ToolDefinition, audit contextMaintenanceAudit) (compactedMessages, bool, error) {
 	prefix, suffix, ok := splitSummaryWindow(messages, summaryWindowOptions{
 		KeepRecentTurns: effectiveKeepRecentTurns(a.contextCfg),
 		MaxContext:      a.effectiveMaxContextTokens(),
@@ -249,8 +182,9 @@ func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int,
 		return compactedMessages{}, false, err
 	}
 	compacted := append([]message.Message{rollout.SummaryMessage(summary)}, suffix...)
+	estimatedAfter := contextmgr.EstimateRequest(a.withRuntimeContext(compacted), tools, a.model)
 	if err := a.append(ctx, sessionID, func() (rollout.Event, error) {
-		return rollout.SummaryWithMessages(sessionID, turn, summary, compacted, len(prefix), len(suffix), estimated)
+		return rollout.SummaryWithMessagesAndMaintenance(sessionID, turn, summary, compacted, len(prefix), len(suffix), estimated, a.rolloutContextMaintenance(audit.decision, audit.before, estimatedAfter, len(prefix), audit.started))
 	}); err != nil {
 		return compactedMessages{}, false, err
 	}
@@ -259,7 +193,7 @@ func (a *Agent) compactMessages(ctx context.Context, sessionID string, turn int,
 		summary:           summary,
 		compactedMessages: len(prefix),
 		keptMessages:      len(suffix),
-		estimatedTokens:   contextmgr.EstimateRequest(a.withRuntimeContext(compacted), tools, a.model),
+		estimatedTokens:   estimatedAfter,
 	}, true, nil
 }
 
