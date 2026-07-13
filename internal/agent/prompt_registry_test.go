@@ -80,6 +80,20 @@ func TestPromptRegistryMainManifestOrderAndMetadata(t *testing.T) {
 		t.Fatalf("workspace section not marked truncated: %#v", manifest.Sections[2])
 	}
 
+	// Cacheable flag: stable sections should be cacheable, dynamic sections
+	// (git_snapshot, execution_mode, memory) should not.
+	stableIDs := map[string]bool{
+		promptSectionCodingAgent:           true,
+		promptSectionRuntime:               true,
+		promptSectionWorkspaceInstructions: true,
+	}
+	for _, section := range manifest.Sections {
+		wantCacheable := stableIDs[section.ID]
+		if section.Cacheable != wantCacheable {
+			t.Fatalf("section %s cacheable = %v, want %v", section.ID, section.Cacheable, wantCacheable)
+		}
+	}
+
 	withContent := promptManifest(promptVariantMain, "fake/model", sections, true)
 	if !strings.Contains(withContent.Sections[2].Content, "[workspace instructions truncated]") {
 		t.Fatalf("workspace content missing truncation marker: %q", withContent.Sections[2].Content)
@@ -225,3 +239,62 @@ func TestCompactPromptManifestUsesSummaryTemplateWithoutContentByDefault(t *test
 		t.Fatalf("compact manifest template differs from summary request template:\n%s", got)
 	}
 }
+
+// TestStableSectionsProduceStableCachePrefix verifies that stable prompt
+// sections produce identical content across multiple registry constructions,
+// which is the prerequisite for provider prefix cache hits. Dynamic sections
+// (git_snapshot, execution_mode, memory) are expected to vary.
+func TestStableSectionsProduceStableCachePrefix(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(temp, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
+	workspace := filepath.Join(temp, "repo")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "AGENTS.md"), []byte("# Project\nStable instructions."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := fakeGitRunner(map[string]gitResponse{
+		"rev-parse --is-inside-work-tree":                       {out: "true\n"},
+		"branch --show-current":                                 {out: "main\n"},
+		"symbolic-ref --quiet --short refs/remotes/origin/HEAD": {out: "origin/main\n"},
+		"status --short":                                        {out: ""},
+		"log --oneline -5":                                      {out: "abc123 test\n"},
+	})
+	cfg := config.PromptConfig{WorkspaceInstructions: config.PromptSectionConfig{Enabled: ptrBool(true)}}
+	runtime := RuntimeContext{Workspace: workspace, Shell: "/bin/sh", OS: "linux"}
+
+	// Build the prompt twice — simulating two consecutive turns.
+	registry1 := newPromptRegistryWithGit(runtime, workspace, cfg, 4000, run)
+	sections1 := registry1.mainSections(execmode.ModeWork)
+	manifest1 := promptManifest(promptVariantMain, "fake/model", sections1, true)
+
+	registry2 := newPromptRegistryWithGit(runtime, workspace, cfg, 4000, run)
+	sections2 := registry2.mainSections(execmode.ModeWork)
+	manifest2 := promptManifest(promptVariantMain, "fake/model", sections2, true)
+
+	stableIDs := map[string]bool{
+		promptSectionCodingAgent:           true,
+		promptSectionRuntime:               true,
+		promptSectionWorkspaceInstructions: true,
+	}
+	for i := range manifest1.Sections {
+		s1 := manifest1.Sections[i]
+		s2 := manifest2.Sections[i]
+		if s1.ID != s2.ID {
+			t.Fatalf("section order changed: %s vs %s", s1.ID, s2.ID)
+		}
+		if !stableIDs[s1.ID] {
+			continue
+		}
+		if s1.Content != s2.Content {
+			t.Fatalf("stable section %s content differs across turns:\n--- turn 1 ---\n%s\n--- turn 2 ---\n%s", s1.ID, s1.Content, s2.Content)
+		}
+		if !s1.Cacheable || !s2.Cacheable {
+			t.Fatalf("stable section %s should be cacheable in both turns", s1.ID)
+		}
+	}
+}
+
+func ptrBool(v bool) *bool { return &v }

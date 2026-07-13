@@ -15,6 +15,7 @@ import (
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
 	"github.com/feimingxliu/ub/internal/reasoning"
+	sdk "github.com/openai/openai-go/v3"
 )
 
 func TestNewFromConfigRequiresAPIKey(t *testing.T) {
@@ -476,11 +477,17 @@ func TestCapsForModel(t *testing.T) {
 	if defaultCaps.MaxContextTokens != 128_000 {
 		t.Fatalf("default MaxContextTokens = %d, want 128000", defaultCaps.MaxContextTokens)
 	}
+	if !defaultCaps.SupportsPromptCache {
+		t.Fatal("default Caps should support prompt cache")
+	}
 	concrete := p.(*Provider)
 	// o-series reasoning models should get 200K.
 	o1Caps := concrete.CapsForModel("o1-preview")
 	if o1Caps.MaxContextTokens != 200_000 {
 		t.Fatalf("o1 MaxContextTokens = %d, want 200000", o1Caps.MaxContextTokens)
+	}
+	if !o1Caps.SupportsPromptCache {
+		t.Fatal("o1 CapsForModel should support prompt cache")
 	}
 	// GPT-4o should get 128K.
 	gpt4oCaps := concrete.CapsForModel("gpt-4o")
@@ -523,5 +530,75 @@ func writeOpenAISSE(t *testing.T, w io.Writer, data string) {
 	t.Helper()
 	if _, err := io.WriteString(w, "data: "+data+"\n\n"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEventUsageOpenAIStandard(t *testing.T) {
+	// Standard OpenAI format: cached_tokens inside prompt_tokens_details.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"prompt_tokens_details": {"cached_tokens": 30},
+		"completion_tokens_details": {"reasoning_tokens": 10}
+	}`
+	var u sdk.CompletionUsage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := eventUsage(u)
+	if got.InputTokens != 100 {
+		t.Fatalf("InputTokens = %d, want 100", got.InputTokens)
+	}
+	if got.OutputTokens != 50 {
+		t.Fatalf("OutputTokens = %d, want 50", got.OutputTokens)
+	}
+	if got.ReasoningTokens != 10 {
+		t.Fatalf("ReasoningTokens = %d, want 10", got.ReasoningTokens)
+	}
+	if got.CacheReadTokens != 30 {
+		t.Fatalf("CacheReadTokens = %d, want 30", got.CacheReadTokens)
+	}
+}
+
+func TestEventUsageDeepSeekFormat(t *testing.T) {
+	// DeepSeek format: prompt_cache_hit_tokens at the top level of usage
+	// instead of inside prompt_tokens_details.cached_tokens.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"prompt_cache_hit_tokens": 25,
+		"completion_tokens_details": {"reasoning_tokens": 10}
+	}`
+	var u sdk.CompletionUsage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := eventUsage(u)
+	if got.InputTokens != 100 {
+		t.Fatalf("InputTokens = %d, want 100", got.InputTokens)
+	}
+	if got.CacheReadTokens != 25 {
+		t.Fatalf("CacheReadTokens = %d, want 25", got.CacheReadTokens)
+	}
+}
+
+func TestEventUsageNoCacheFields(t *testing.T) {
+	// When neither OpenAI nor DeepSeek cache fields are present,
+	// CacheReadTokens should remain 0.
+	raw := `{
+		"prompt_tokens": 100,
+		"completion_tokens": 50,
+		"completion_tokens_details": {"reasoning_tokens": 5}
+	}`
+	var u sdk.CompletionUsage
+	if err := json.Unmarshal([]byte(raw), &u); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got := eventUsage(u)
+	if got.CacheReadTokens != 0 {
+		t.Fatalf("CacheReadTokens = %d, want 0 when no cache fields present", got.CacheReadTokens)
+	}
+	if got.ReasoningTokens != 5 {
+		t.Fatalf("ReasoningTokens = %d, want 5", got.ReasoningTokens)
 	}
 }

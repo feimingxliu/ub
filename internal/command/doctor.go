@@ -69,6 +69,11 @@ func renderDoctorTextWithLive(ctx context.Context, cfg *config.Config, plain, su
 		if _, err := fmt.Fprintf(&out, "  %s\t%s\t%s\n", result.Name, result.Type, style.status(result.Status)); err != nil {
 			return "", err
 		}
+		if result.PromptCache != "" {
+			if _, err := fmt.Fprintf(&out, "    prompt_cache\t%s\n", result.PromptCache); err != nil {
+				return "", err
+			}
+		}
 		for _, model := range result.Models {
 			if _, err := fmt.Fprintf(&out, "    model\t%s\t%s\n", model, toolSupport(model)); err != nil {
 				return "", err
@@ -221,11 +226,12 @@ func (s doctorStyle) status(text string) string {
 }
 
 type providerCheck struct {
-	Name    string   `json:"name"`
-	Type    string   `json:"type"`
-	Status  string   `json:"status"`
-	Models  []string `json:"models,omitempty"`
-	Message string   `json:"message,omitempty"`
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Status      string   `json:"status"`
+	Models      []string `json:"models,omitempty"`
+	Message     string   `json:"message,omitempty"`
+	PromptCache string   `json:"prompt_cache,omitempty"`
 }
 
 func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) providerCheck {
@@ -238,18 +244,21 @@ func checkProvider(ctx context.Context, name string, cfg config.ProviderConfig) 
 			result.Status = "NO_API_KEY"
 			return result
 		}
+		result.PromptCache = "cached_tokens"
 		fillOpenAIModels(ctx, &result, cfg)
 	case "openai-compat":
 		if strings.TrimSpace(cfg.BaseURL) == "" {
 			result.Status = "NO_BASE_URL"
 			return result
 		}
+		result.PromptCache = "cached_tokens"
 		fillOpenAIModels(ctx, &result, cfg)
 	case "anthropic":
 		if strings.TrimSpace(cfg.APIKey) == "" {
 			result.Status = "NO_API_KEY"
 			return result
 		}
+		result.PromptCache = "cache_control"
 		fillAnthropicModels(ctx, &result, cfg)
 	default:
 		result.Status = "unknown_provider_type"

@@ -100,10 +100,11 @@ func (p *Provider) Name() string {
 // Caps returns OpenAI capabilities for the default model.
 func (p *Provider) Caps() provider.Caps {
 	return provider.Caps{
-		SupportsTools:     true,
-		SupportsStreaming: true,
-		MaxContextTokens:  128_000,
-		SupportsVision:    false,
+		SupportsTools:       true,
+		SupportsStreaming:   true,
+		SupportsPromptCache: true,
+		MaxContextTokens:    128_000,
+		SupportsVision:      false,
 	}
 }
 
@@ -561,10 +562,43 @@ func (s *sdkStream) Close() error {
 }
 
 func eventUsage(usage sdk.CompletionUsage) *provider.Usage {
-	return &provider.Usage{
+	u := &provider.Usage{
 		InputTokens:     int(usage.PromptTokens),
 		OutputTokens:    int(usage.CompletionTokens),
 		ReasoningTokens: int(usage.CompletionTokensDetails.ReasoningTokens),
 		CacheReadTokens: int(usage.PromptTokensDetails.CachedTokens),
 	}
+	// DeepSeek-compatible APIs expose cache stats as top-level usage fields
+	// (prompt_cache_hit_tokens / prompt_cache_miss_tokens) instead of the
+	// OpenAI-standard prompt_tokens_details.cached_tokens. Parse them from the
+	// raw JSON when the standard cached_tokens is absent or zero so cache
+	// hit/miss is captured for both providers.
+	if u.CacheReadTokens == 0 {
+		if hit, ok := deepSeekCacheTokens(usage, "prompt_cache_hit_tokens"); ok && hit > 0 {
+			u.CacheReadTokens = hit
+		}
+	}
+	return u
+}
+
+// deepSeekCacheTokens extracts a DeepSeek-specific cache token field from the
+// raw usage JSON. Returns the value and true when the field is present.
+func deepSeekCacheTokens(usage sdk.CompletionUsage, field string) (int, bool) {
+	raw := strings.TrimSpace(usage.RawJSON())
+	if raw == "" {
+		return 0, false
+	}
+	var body map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		return 0, false
+	}
+	val, ok := body[field]
+	if !ok {
+		return 0, false
+	}
+	var n int
+	if err := json.Unmarshal(val, &n); err != nil {
+		return 0, false
+	}
+	return n, true
 }

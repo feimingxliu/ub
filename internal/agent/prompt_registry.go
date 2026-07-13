@@ -50,6 +50,7 @@ type PromptSectionManifest struct {
 	Chars           int    `json:"chars"`
 	EstimatedTokens int    `json:"estimated_tokens"`
 	Truncated       bool   `json:"truncated"`
+	Cacheable       bool   `json:"cacheable"`
 	Content         string `json:"content,omitempty"`
 }
 
@@ -277,6 +278,7 @@ func promptManifest(variant, model string, sections []promptSection, showContent
 			content := section.message.Text()
 			item.Chars = utf8.RuneCountInString(content)
 			item.EstimatedTokens = contextmgr.Estimate([]message.Message{section.message}, model)
+			item.Cacheable = section.stability == promptStabilityStable
 			manifest.TotalChars += item.Chars
 			if showContent {
 				item.Content = content

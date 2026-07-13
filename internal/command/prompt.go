@@ -96,11 +96,12 @@ func renderPromptManifestText(manifest agent.PromptManifest, showContent bool) s
 	for _, section := range manifest.Sections {
 		fmt.Fprintf(
 			&out,
-			"  %d\t%s\t%s\t%s\tsource=%s\tchars=%d\ttokens=%d\ttruncated=%t\n",
+			"  %d\t%s\t%s\t%s\tcacheable=%t\tsource=%s\tchars=%d\ttokens=%d\ttruncated=%t\n",
 			section.Position,
 			section.ID,
 			section.Status,
 			section.Stability,
+			section.Cacheable,
 			section.Source,
 			section.Chars,
 			section.EstimatedTokens,
