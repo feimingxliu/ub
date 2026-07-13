@@ -1221,6 +1221,32 @@ func TestMessagesForTUIFromRolloutTagsTurnNumber(t *testing.T) {
 	}
 }
 
+func TestMessagesForTUIFromRolloutMarksAutoTriggered(t *testing.T) {
+	userEvt, err := rollout.UserMessage("sess_1", 1, message.Text(message.RoleUser, "real prompt"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	autoEvt, err := rollout.AutoMessage("sess_1", 2, message.Text(message.RoleUser, "auto-injected prompt"))
+	if err != nil {
+		t.Fatalf("AutoMessage: %v", err)
+	}
+	events := []rollout.Event{userEvt, autoEvt}
+
+	got, err := messagesForTUIFromRollout(context.Background(), staticRolloutReader{events: events}, "sess_1")
+	if err != nil {
+		t.Fatalf("messagesForTUIFromRollout: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d messages, want 2", len(got))
+	}
+	if got[0].AutoTriggered {
+		t.Fatalf("message 0 should not be auto-triggered: %#v", got[0])
+	}
+	if !got[1].AutoTriggered {
+		t.Fatalf("message 1 should be auto-triggered: %#v", got[1])
+	}
+}
+
 func TestTUIRunnerRunShellExecutesBashToolLocally(t *testing.T) {
 	temp := t.TempDir()
 	t.Chdir(temp)

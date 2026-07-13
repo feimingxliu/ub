@@ -71,6 +71,9 @@ func (a *Agent) Run(ctx context.Context, req Request) (result Result, err error)
 		}
 	}
 	if err := a.append(ctx, req.SessionID, func() (rollout.Event, error) {
+		if req.AutoTriggered {
+			return rollout.AutoMessage(req.SessionID, req.Turn, userMsg)
+		}
 		return rollout.UserMessage(req.SessionID, req.Turn, userMsg)
 	}); err != nil {
 		return Result{}, err

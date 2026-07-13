@@ -65,7 +65,8 @@ func messagesForTUIFromRollout(ctx context.Context, reader rollout.Reader, sessi
 			return err
 		}
 		if ok {
-			out = appendMessagesForTUI(out, toolUses, msg, event.Turn)
+			source := rollout.MessageSourceFromEvent(event)
+			out = appendMessagesForTUI(out, toolUses, msg, event.Turn, source == "auto")
 		}
 		return nil
 	}); err != nil {
@@ -90,13 +91,14 @@ func messagesForTUI(history []message.Message) []tui.InitialMessage {
 	return out
 }
 
-func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.ContentBlock, msg message.Message, turn int) []tui.InitialMessage {
+func appendMessagesForTUI(out []tui.InitialMessage, toolUses map[string]message.ContentBlock, msg message.Message, turn int, autoTriggered ...bool) []tui.InitialMessage {
 	text := strings.TrimSpace(msg.Text())
 	if text != "" {
 		out = append(out, tui.InitialMessage{
-			Role: string(msg.Role),
-			Turn: turn,
-			Text: text,
+			Role:          string(msg.Role),
+			Turn:          turn,
+			Text:          text,
+			AutoTriggered: len(autoTriggered) > 0 && autoTriggered[0],
 		})
 	}
 	for _, block := range msg.Content {

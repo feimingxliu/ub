@@ -153,6 +153,7 @@ func runGoal(cmd *cobra.Command, prompt, providerFlag, modelFlag string, tokenBu
 
 	// Goal auto-continuation loop.
 	currentPrompt := initialPrompt
+	isAuto := false
 	for {
 		result, err := a.Run(cmd.Context(), agent.Request{
 			SessionID:      state.sessionID,
@@ -160,6 +161,7 @@ func runGoal(cmd *cobra.Command, prompt, providerFlag, modelFlag string, tokenBu
 			History:        state.history,
 			ContextHistory: state.contextHistory,
 			Prompt:         currentPrompt,
+			AutoTriggered:  isAuto,
 		})
 		if err != nil {
 			_ = finishChatSession(cmd, state, prompt, providerName, model)
@@ -180,6 +182,7 @@ func runGoal(cmd *cobra.Command, prompt, providerFlag, modelFlag string, tokenBu
 			break
 		}
 		// Build continuation prompt for next turn.
+		isAuto = true
 		currentPrompt = agent.GoalContinuationPrompt(g)
 		fmt.Fprintf(cmd.ErrOrStderr(), "\n[goal] continuing: %s (turns=%d, tokens=%d)\n", truncateGoalObjectiveCLI(g.Objective, 60), g.TurnsUsed, g.TokensUsed)
 	}

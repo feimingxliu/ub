@@ -31,6 +31,11 @@ func (m Model) startInternalPrompt(prompt, notice string) (tea.Model, tea.Cmd) {
 	if strings.TrimSpace(notice) != "" {
 		m.messages.append(systemRole, strings.TrimSpace(notice))
 	}
+	// Mark the next run as auto-triggered so the persisted user_message is
+	// excluded from prompt-history navigation (↑/↓) on session resume.
+	if atr, ok := m.runner.(AutoTriggerRunner); ok {
+		atr.SetAutoTriggered(true)
+	}
 	return m.startRunnerPrompt(prompt)
 }
 

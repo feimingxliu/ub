@@ -268,6 +268,33 @@ func TestToolResultEventAndMessageFromEvent(t *testing.T) {
 	}
 }
 
+func TestAutoMessageSourceDistinguishesInjected(t *testing.T) {
+	userEvent, err := UserMessage("sess", 1, message.Text(message.RoleUser, "hello"))
+	if err != nil {
+		t.Fatalf("UserMessage: %v", err)
+	}
+	if source := MessageSourceFromEvent(userEvent); source != "" {
+		t.Fatalf("UserMessage source = %q, want empty", source)
+	}
+
+	autoEvent, err := AutoMessage("sess", 1, message.Text(message.RoleUser, "auto prompt"))
+	if err != nil {
+		t.Fatalf("AutoMessage: %v", err)
+	}
+	if source := MessageSourceFromEvent(autoEvent); source != "auto" {
+		t.Fatalf("AutoMessage source = %q, want \"auto\"", source)
+	}
+
+	// Both should still decode to the same message via MessageFromEvent.
+	msg, ok, err := MessageFromEvent(autoEvent)
+	if err != nil || !ok {
+		t.Fatalf("MessageFromEvent(auto) err=%v ok=%v", err, ok)
+	}
+	if msg.Text() != "auto prompt" {
+		t.Fatalf("auto message text = %q", msg.Text())
+	}
+}
+
 func TestSummaryEventAndMessageFromEvent(t *testing.T) {
 	event, err := Summary("sess_summary", 4, "Earlier work summary.", 8, 6, 1200)
 	if err != nil {

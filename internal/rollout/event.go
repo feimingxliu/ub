@@ -40,9 +40,12 @@ type Event struct {
 }
 
 // MessagePayload stores a provider-neutral message and its extracted text.
+// Source indicates the origin of the message: empty means the user typed it,
+// "auto" means the system injected it automatically (e.g. goal continuation).
 type MessagePayload struct {
 	Message message.Message `json:"message"`
 	Text    string          `json:"text,omitempty"`
+	Source  string          `json:"source,omitempty"`
 }
 
 // UsagePayload stores provider token usage.
@@ -158,11 +161,22 @@ func NewEvent(sessionID string, turn int, typ Type, payload any) (Event, error) 
 	}, nil
 }
 
-// UserMessage creates a user_message event.
+// UserMessage creates a user_message event from a user-typed prompt.
 func UserMessage(sessionID string, turn int, msg message.Message) (Event, error) {
 	return NewEvent(sessionID, turn, TypeUserMessage, MessagePayload{
 		Message: msg.Clone(),
 		Text:    msg.Text(),
+	})
+}
+
+// AutoMessage creates a user_message event for a system-injected prompt
+// (e.g. goal continuation). The Source field distinguishes it from real user
+// input so the TUI can exclude it from prompt-history navigation.
+func AutoMessage(sessionID string, turn int, msg message.Message) (Event, error) {
+	return NewEvent(sessionID, turn, TypeUserMessage, MessagePayload{
+		Message: msg.Clone(),
+		Text:    msg.Text(),
+		Source:  "auto",
 	})
 }
 
@@ -256,6 +270,20 @@ func FileHistorySnapshot(sessionID string, turn int, payload any) (Event, error)
 // SummaryMessage converts summary text into the system message sent to providers.
 func SummaryMessage(text string) message.Message {
 	return message.Text(message.RoleSystem, "Conversation summary:\n"+text)
+}
+
+// MessageSourceFromEvent returns the Source field from a user_message event's
+// payload. It is empty for real user input and "auto" for system-injected
+// prompts. Returns empty string for non-user-message events.
+func MessageSourceFromEvent(event Event) string {
+	if event.Type != TypeUserMessage {
+		return ""
+	}
+	var payload MessagePayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return ""
+	}
+	return payload.Source
 }
 
 // MessageFromEvent converts persisted message-like rollout events to internal messages.

@@ -4711,6 +4711,18 @@ func TestArrowNavigatesPromptHistory(t *testing.T) {
 	}
 }
 
+func TestPromptHistorySkipsAutoTriggeredMessages(t *testing.T) {
+	model := NewModel(Options{Messages: []InitialMessage{
+		{Role: userRole, Text: "auto-injected goal continuation", AutoTriggered: true},
+		{Role: userRole, Text: "real user prompt"},
+	}})
+	updated, _ := model.Update(keyPress(tea.KeyUp))
+	model = assertModel(t, updated)
+	if got := model.InputValue(); got != "real user prompt" {
+		t.Fatalf("input = %q, want 'real user prompt' (skipped auto-triggered message)", got)
+	}
+}
+
 func TestPromptHistoryIncludesRestoredUserMessages(t *testing.T) {
 	model := NewModel(Options{Messages: []InitialMessage{
 		{Role: userRole, Text: "past prompt"},

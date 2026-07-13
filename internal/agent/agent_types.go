@@ -108,13 +108,16 @@ type Agent struct {
 // Request is one Agent run input. History and ContextHistory carry the
 // conversation so far; Prompt is the new user message for this turn.
 // ContextHistory may differ from History when context compaction has shrunk
-// the message list sent to the provider.
+// the message list sent to the provider. AutoTriggered marks prompts that
+// the system injected automatically (e.g. goal continuation) so the TUI can
+// exclude them from prompt-history navigation.
 type Request struct {
 	SessionID      string
 	Turn           int
 	History        []message.Message
 	ContextHistory []message.Message
 	Prompt         string
+	AutoTriggered  bool
 }
 
 // Result is the final Agent run output. Text is the last assistant reply,

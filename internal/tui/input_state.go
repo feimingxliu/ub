@@ -14,6 +14,9 @@ func promptHistoryFromMessages(messages []InitialMessage) []string {
 		if normalizeRole(msg.Role) != userRole {
 			continue
 		}
+		if msg.AutoTriggered {
+			continue
+		}
 		text := strings.TrimSpace(msg.Text)
 		if text == "" {
 			continue

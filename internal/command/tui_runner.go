@@ -23,7 +23,7 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 	// runOnce performs a single agent turn. It returns (done, error) where
 	// done=true means the loop should stop (no active goal, or terminal goal).
 	// On error, finishChatSession is NOT called here — the caller handles it.
-	runOnce := func(prompt string) (done bool, err error) {
+	runOnce := func(prompt string, auto bool) (done bool, err error) {
 		a, err := r.newAgent(ctx, events)
 		if err != nil {
 			return true, err
@@ -34,6 +34,7 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 			History:        r.state.history,
 			ContextHistory: r.state.contextHistory,
 			Prompt:         prompt,
+			AutoTriggered:  auto,
 		})
 		if err != nil {
 			return true, err
@@ -44,7 +45,9 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		return false, nil
 	}
 	// First turn: run the user's prompt.
-	done, err := runOnce(prompt)
+	firstAuto := r.autoTriggered
+	r.autoTriggered = false
+	done, err := runOnce(prompt, firstAuto)
 	if err != nil {
 		_ = finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
 		return err
@@ -98,7 +101,7 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		}
 		sendTUIEvent(ctx, events, evt)
 		contPrompt := agent.GoalContinuationPrompt(g)
-		done, err = runOnce(contPrompt)
+		done, err = runOnce(contPrompt, true)
 		if err != nil {
 			break
 		}
@@ -107,6 +110,12 @@ func (r *tuiAgentRunner) Run(ctx context.Context, prompt string, events chan<- t
 		}
 	}
 	return finishChatSession(r.cmd, r.state, prompt, r.providerName, r.model)
+}
+
+// SetAutoTriggered marks the next Run call as system-injected so the
+// persisted user_message is excluded from prompt-history navigation.
+func (r *tuiAgentRunner) SetAutoTriggered(v bool) {
+	r.autoTriggered = v
 }
 
 func (r *tuiAgentRunner) Compact(ctx context.Context, events chan<- tui.Event) error {

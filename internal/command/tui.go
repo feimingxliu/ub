@@ -181,6 +181,12 @@ type tuiAgentRunner struct {
 	// per session-load instead of on every sessionState() call.
 	cachedMessages        []tui.InitialMessage
 	cachedMessagesSession string
+
+	// autoTriggered marks the next Run as system-injected (e.g. /goal or
+	// /init) so the persisted user_message carries Source="auto" and is
+	// excluded from prompt-history navigation on resume. Consumed and reset
+	// by each Run call.
+	autoTriggered bool
 }
 
 func newTUIAgentRunner(cmd *cobra.Command, cfg *config.Config, asker permission.Asker, providerFlag, modelFlag string, backgroundEvents chan<- tui.Event) (*tuiAgentRunner, error) {

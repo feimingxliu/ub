@@ -85,6 +85,13 @@ type PlanModeControlRunner interface {
 	ExitPlanMode() (from, to string, err error)
 }
 
+// AutoTriggerRunner optionally lets the TUI mark the next Run call as
+// system-injected (e.g. /goal or /init) so the persisted user_message is
+// excluded from prompt-history navigation on session resume.
+type AutoTriggerRunner interface {
+	SetAutoTriggered(v bool)
+}
+
 // ModelRefreshRunner optionally lets the TUI load the current provider's
 // complete model list on demand.
 type ModelRefreshRunner interface {
@@ -164,6 +171,9 @@ type InitialMessage struct {
 	Reason          string
 	Allowed         bool
 	IsError         bool
+	// AutoTriggered marks system-injected prompts (e.g. goal continuation)
+	// that should be excluded from prompt-history navigation (↑/↓ arrows).
+	AutoTriggered bool
 }
 
 // SessionInfo is one selectable persisted session.
