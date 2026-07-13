@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.4] - 2026-07-13
+
+
+### Added
+
+- Add prompt section registry and inspection ([b5f0fdb](https://github.com/feimingxliu/ub/commit/b5f0fdb4f697194603b809a2b23a67043e366f3c))
+- Add context window resolver ([c3ce7fa](https://github.com/feimingxliu/ub/commit/c3ce7fa0d77015ea7b37264d8f00ea6dab34c943))
+- Add atomic apply patch tool ([ebb3cec](https://github.com/feimingxliu/ub/commit/ebb3cecdf2e460a9fcd1d1f03466af86a50d6c1f))
+
+
+### Documentation
+
+- Align roadmap with v0.4 baseline ([a5677b3](https://github.com/feimingxliu/ub/commit/a5677b34083c73bf86e3e0565b527953859ce357))
+- Expand roadmap for context and session evolution ([2ce9896](https://github.com/feimingxliu/ub/commit/2ce989658da598b365d2ead9ba8b8b34b8713965))
+
+
+### Refactoring
+
+- Flatten package structure to max depth 3 per project root ([2bc8871](https://github.com/feimingxliu/ub/commit/2bc8871feecfd222853f4dfef350ce82f7e10dd9))
+
 ## [0.4.3] - 2026-07-06
 
 
@@ -15,6 +35,11 @@ All notable changes to this project are documented here.
 - Add WORKSPACE column to sessions ls output ([f6e8991](https://github.com/feimingxliu/ub/commit/f6e899164095d9cf5997b6fbd6b4a2f6fd270111))
 - Prevent status bar goal indicator from disappearing mid-cycle ([667ab05](https://github.com/feimingxliu/ub/commit/667ab056ec9a6d6574a87b521b4b40e03dbd4628))
 - Two goal-mode bugs — /goal no-active-session and truncated tool call recovery ([ad67641](https://github.com/feimingxliu/ub/commit/ad676416783ef22d02a8713f5925549afe4cbf6f))
+
+
+### Maintenance
+
+- V0.4.3 ([cd1a8ea](https://github.com/feimingxliu/ub/commit/cd1a8eaf27284e8226a08c77b98be7856a5855fe))
 
 ## [0.4.2] - 2026-07-03
 
