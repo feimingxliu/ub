@@ -26,7 +26,8 @@ type Options struct {
 	ChangeNotifier ChangeNotifier
 }
 
-// Register adds the six base fs tools (read, ls, glob, write, edit, multiedit)
+// Register adds the seven base fs tools (read, ls, glob, write, edit,
+// multiedit, apply_patch)
 // to reg. All tools share the same cleaned workspace root. When
 // RegisterWithOptions receives a non-empty OutputRoot (or StateRoot fallback),
 // a seventh tool, tool_result, is also registered so agents can replay
@@ -62,6 +63,7 @@ func RegisterWithOptions(reg *tool.Registry, root string, opts Options) error {
 		newWriteToolWithNotifier(root, opts.ChangeNotifier),
 		newEditToolWithNotifier(root, opts.ChangeNotifier),
 		newMultiEditToolWithNotifier(root, opts.ChangeNotifier),
+		newApplyPatchToolWithNotifier(root, opts.ChangeNotifier),
 	}
 	if outputRoot != "" {
 		tools = append(tools, newToolResultTool(outputRoot, opts.ReadMaxLines))

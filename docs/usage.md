@@ -190,7 +190,7 @@ permissions:
 工具实现声明 `Risk()`，决定权限询问粒度：
 
 - `safe`：默认不问（read / ls / glob / grep / ask / plan 工具 / LSP 工具）
-- `write`：默认问（write / edit / multiedit）
+- `write`：默认问（write / edit / multiedit / apply_patch）
 - `exec`：默认问（bash / job_run / job_kill）
 - `network`：默认问（web_search / web_fetch,以及声明为联网风险的 MCP 工具）
 
@@ -284,9 +284,24 @@ prompt:
 
 agent 会：
 1. `read internal/foo/bar.go` 看现状
-2. `edit` 改文件（优先精确替换；遇到 tab / 空格难以复原时可按行号替换完整行；弹窗预览 diff，按 1 / Enter 允许）
+2. `apply_patch` 改文件（多行、结构性或跨文件改动优先使用 `*** Begin Patch` 信封，在 `@@` hunk 中保留足够的未改动上下文；位置不唯一时工具会拒绝而不猜测；弹窗预览 diff，按 1 / Enter 允许）。小型精确替换仍可用 `edit` / `multiedit`。
 3. `bash go test ./internal/foo/...` 跑测试（弹窗审批）
 4. 失败时自己分析输出再改一轮
+
+复杂编辑的 `apply_patch` 输入使用一个完整补丁信封；每个 Update hunk 应保留足够的未改动行作为定位上下文：
+
+```text
+*** Begin Patch
+*** Update File: internal/foo/bar.go
+@@ func ProcessBatch() {
+ func ProcessBatch() {
+-    return oldResult
++    return newResult
+ }
+*** End Patch
+```
+
+`apply_patch` 只接受唯一的逐行精确上下文匹配。审批界面展示的就是实际执行计划；若审批期间目标发生外部变化，执行会拒绝而不会按过期 diff 写入。出现 `multiple matches`、`did not match` 或 `changed on disk since preview` 时，先用 `read` 重读更窄范围，并在 hunk 中增加上下文；不要改用 shell 做猜测性写入。
 
 ### 7.2 plan 模式探索仓库
 
@@ -324,7 +339,7 @@ Resume 时会恢复 session 上次使用的 provider/model。mode 不随 session
 
 `/rewind` 会列出当前 session 中历史 user message。选中某条后，ub 会删除该 turn 及之后的 rollout events，重建 TUI 显示和下一次请求上下文，并把选中的原始消息放回输入框，方便改写后重发。
 
-ub 会在每个 user turn 开始前记录文件 checkpoint，并在 `write` / `edit` / `multiedit` 或可安全识别的 `bash` 删除（字面路径的 `rm` / `git rm`）真正执行前备份目标文件旧状态。若当前 workspace 与目标 checkpoint 不一致，TUI 会先让你选择：只回退对话并保留当前 workspace 文件，或同时把 checkpoint 中可恢复的文件回到目标消息之前的状态。变量、通配符、命令内 `cd` 等无法可靠解析的 shell 删除不会进入文件历史；缺少可靠 checkpoint 的文件会保持不变并显示在提示里。
+ub 会在每个 user turn 开始前记录文件 checkpoint，并在 `write` / `edit` / `multiedit` / `apply_patch` 或可安全识别的 `bash` 删除（字面路径的 `rm` / `git rm`）真正执行前备份目标文件旧状态。`apply_patch` 会用已验证的补丁解析结果追踪新增、更新、删除和重命名涉及的路径。若当前 workspace 与目标 checkpoint 不一致，TUI 会先让你选择：只回退对话并保留当前 workspace 文件，或同时把 checkpoint 中可恢复的文件回到目标消息之前的状态。变量、通配符、命令内 `cd` 等无法可靠解析的 shell 删除不会进入文件历史；缺少可靠 checkpoint 的文件会保持不变并显示在提示里。
 
 ### 7.6 调试某次会话
 
@@ -407,7 +422,7 @@ agent 可以用：
 - `rename(file, line, col, new_name)`：返回 rename 建议编辑，不直接写盘
 - `code_action(file, line, col, end_line?, end_col?)`：列出 code action，不执行 action
 
-ub 在 write / edit / multiedit 工具执行后会主动给 LSP 发 `didChange`，保证 diagnostics 反映最新内容。`rename` 和 `code_action` 只提供建议，真正修改仍由 agent 通过 edit / multiedit 走 diff 与权限流程。
+ub 在 write / edit / multiedit / apply_patch 工具执行后会主动给仍存在的最终文件发 `didChange`，保证 diagnostics 反映最新内容。`rename` 和 `code_action` 只提供建议，真正修改仍由 agent 通过 apply_patch / edit / multiedit 走 diff 与权限流程。
 
 ## 10. Plan-then-execute
 
@@ -659,7 +674,7 @@ hooks:
       env: ["HOME", "PATH"]              # env 白名单;默认仅 PATH
   post_tool_call:
     - command: ["gofmt", "-w", "."]
-      tools: ["edit", "write", "multiedit"]
+      tools: ["apply_patch", "edit", "write", "multiedit"]
   pre_user_turn:
     - command: ["./scripts/snapshot-wip.sh"]
   post_user_turn:

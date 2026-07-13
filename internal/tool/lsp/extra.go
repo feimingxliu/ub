@@ -214,7 +214,7 @@ func newRenameTool(m Manager) *renameTool {
 
 func (t *renameTool) Name() string { return "rename" }
 func (t *renameTool) Description() string {
-	return "Ask the language server which edits a rename would produce. Returns the suggested edits as a list; this tool does NOT write to disk — apply the edits via the multiedit tool."
+	return "Ask the language server which edits a rename would produce. Returns the suggested edits as a list; this tool does NOT write to disk — apply the edits via apply_patch or multiedit."
 }
 func (t *renameTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *renameTool) Risk() tool.Risk            { return tool.RiskSafe }
@@ -237,7 +237,7 @@ func (t *renameTool) Execute(ctx context.Context, raw json.RawMessage) (tool.Res
 		return tool.Result{Content: "no rename edits"}, nil
 	}
 	var b strings.Builder
-	b.WriteString("Rename suggested by LSP. Apply via multiedit:\n")
+	b.WriteString("Rename suggested by LSP. Apply via apply_patch or multiedit:\n")
 	for _, e := range edit.Edits {
 		fmt.Fprintf(
 			&b, "- %s:%d:%d → '%s'\n",

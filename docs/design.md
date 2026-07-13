@@ -84,7 +84,7 @@ ub/
 │   ├── mcp/                           # MCP client（stdio/http/sse）
 │   └── tool/
 │       ├── tool.go                    # Tool 接口、Risk、Registry
-│       ├── fs/                        # read / write / edit / multiedit / ls / glob / tool_result
+│       ├── fs/                        # read / write / edit / multiedit / apply_patch / ls / glob / tool_result
 │       ├── plan/                      # plan_write / plan_update / plan_update_step
 │       ├── todo/                      # todo_write / todo_update
 │       ├── memory/                    # remember / recall
@@ -258,13 +258,13 @@ type Result struct {
 type FileChange struct {
     Path        string
     Kind        string                       // "create" / "modify" / "delete"
-    UnifiedDiff string                       // 可选；write/edit Execute 会带上实际写盘 diff，供 TUI 展开详情
+    UnifiedDiff string                       // 可选；写类工具 Execute 会带上实际写盘 diff，供 TUI 展开详情
 }
 ```
 
 **风险等级**：
 - `safe`：read / ls / grep / glob / ask / enter_plan_mode / exit_plan_mode / diagnostics / references / hover / completion / document_symbols / rename / code_action / tool_result / plan_write / plan_update / plan_update_step / todo_write / todo_update / create_goal / get_goal / update_goal / remember / recall / task
-- `write`：write / edit / multiedit
+- `write`：write / edit / multiedit / apply_patch
 - `exec`：bash / job_run / job_kill
 - `network`：web_search / web_fetch
 
@@ -278,7 +278,7 @@ type FileChange struct {
 
 `create_goal` / `get_goal` / `update_goal`:维护当前 session 的长任务目标状态。goal state 存在 `$XDG_STATE_HOME/ub/goals/<session-id>.json`,包括 objective、status、token/turn budget、已用 token/turn、阻塞原因和时间戳。`create_goal` 创建 active goal,已有非终止 goal 时拒绝覆盖;`get_goal` 返回当前状态;`update_goal` 允许模型在完成、连续阻塞或暂停时更新状态。TUI `/goal [objective|clear]` 可创建/查看/清除当前 session goal;headless `ub goal -p ...` 会预创建 goal 并自动续跑 agent turn,直到 goal complete、blocked、paused 或预算耗尽。goal 不替代 plan/todo:goal 是跨 turn objective 和停止条件,plan 是持久方案 artifact,todo 是当前执行清单。
 
-LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `hover`、`completion`、`document_symbols`、`rename`、`code_action`。其中 `rename` 与 `code_action` **只返回 LSP 的建议**,不直接落盘 —— rename 输出"按文件路径排序的边界列表",model 拿到后用 `multiedit` 自行应用,从而走 ub 的 preview/permission 协议;`code_action` 只列可用 action 的 `title (kind)[ — has_edit]`,不执行任何 action
+LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `hover`、`completion`、`document_symbols`、`rename`、`code_action`。其中 `rename` 与 `code_action` **只返回 LSP 的建议**,不直接落盘 —— rename 输出"按文件路径排序的边界列表",model 拿到后用 `apply_patch` 或 `multiedit` 自行应用,从而走 ub 的 preview/permission 协议;`code_action` 只列可用 action 的 `title (kind)[ — has_edit]`,不执行任何 action
 
 `tool_result(tool_use_id, offset?, limit?)`：从 `<state-root>/tool_outputs/<sessionID>/<toolUseID>.txt` 读回曾被 `tooloutput.LimitResult` 截断/落盘的完整工具输出。sessionID 由 agent 调用前通过 `tool.WithSessionID(ctx)` 注入到 context；工具自身不接受任意路径,只能读 spillover 目录,跨 session 不可见
 
@@ -308,6 +308,7 @@ LSP 工具家族(全部 `RiskSafe`):`diagnostics` / `references` 之外,新增 `
 
 **关键 tool 实现要点**：
 - `edit` / `write`：实现 `PreviewableTool`。Preview 读现盘 + 在内存里应用 patch + 用 `go-udiff` 算 unified diff；Execute 实际写盘，并在 `FileChange.UnifiedDiff` 中返回实际变更。`edit` 默认用 `old` / `new` 精确子串替换，`old` 必须逐字节匹配；当模型难以从带行号的 `read` 输出复原 tab、空格或换行时，可用 `start_line` / `end_line` 替换完整行，仍通过同一 preview / permission / TOCTOU 路径。TUI 默认只展示摘要，按 `Ctrl+O` 展开最近的 tool 区域后先展示工具摘要，再按一次展开最近工具项的着色文件级详情；也可用 `Ctrl+N` / `Ctrl+P` 移动活动焦点并用 `Enter` / `Space` 操作任意活动块或工具项；TUI 默认不启用鼠标追踪，保留终端原生拖拽选择复制。`multiedit`（一次调用跨文件多处编辑）共用 `applyEdit` 与 `udiff`，在内存中按数组顺序对同 path 串行累加，先对所有目标做 TOCTOU 二次读校验再批量写盘，任一步失败即不写盘（写过的文件回滚到 before 快照），从而对调用方提供 all-or-nothing 语义
+- `apply_patch`：实现 `PreviewableTool`。输入是 `*** Begin Patch` 信封，支持 Add / Update / Delete 与 Update 后的 Move；Update hunk 的上下文和删除行必须在当前内存文件中唯一、逐行精确匹配，歧义或失配时拒绝而不猜测。Preview 的已验证计划按 `tool_use_id` 绑定到 Execute，Execute 会用该 before 快照拒绝审批期间的外部改动。全部补丁 I/O 通过受 workspace root 约束的文件句柄，拒绝经 symlink 访问 workspace 外文件；提交采用同目录临时文件、`Sync`、显式 mode 和 `Rename`，避免截断原文件并保留 Move 的 mode。中途失败会按 before 快照恢复已变更文件。成功后对仍存在的最终文件发 LSP `didChange`，并把同一已验证解析结果交给 file-history checkpoint。
 - `bash`：用 `os/exec` 拉子进程，stdout/stderr 流式回传；超时默认 120s；不实现 Preview（命令是黑盒）
 - `job_run`：返回 `job_id`，进程交给后台 goroutine 管理；`job_output(job_id, tail?)` 返回当前 stdout/stderr 快照；`job_output(job_id, follow=true, timeout_ms?)` 通过 `StreamingTool` 推送当前快照和新增输出,最终仍返回同一快照格式；`job_kill` SIGTERM/SIGKILL
 - tool 参数解析对模型常见 JSON 标量抖动做窄容错：整数参数接受整数或整数字符串，布尔参数接受布尔值或 `"true"` / `"false"`，但 JSON Schema 仍对外声明真实 integer/boolean 类型

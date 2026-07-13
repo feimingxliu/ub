@@ -31,7 +31,7 @@ TBD - created by archiving change add-tool-registry. Update Purpose after archiv
 
 ### Requirement: PreviewableTool 可选接口
 
-系统 SHALL 定义可选接口 `PreviewableTool`，嵌入 `Tool` 并新增 `Preview(ctx context.Context, args json.RawMessage) (Preview, error)`。写类工具（write / edit / multiedit）MUST 在后续 iteration 中实现该接口；非写类工具 MAY 不实现。dispatcher MUST 通过 `tool.(PreviewableTool)` type assertion 检测该接口而不是依赖 `Risk()` 值。
+系统 SHALL 定义可选接口 `PreviewableTool`，嵌入 `Tool` 并新增 `Preview(ctx context.Context, args json.RawMessage) (Preview, error)`。写类工具（write / edit / multiedit / apply_patch）MUST 实现该接口；非写类工具 MAY 不实现。dispatcher MUST 通过 `tool.(PreviewableTool)` type assertion 检测该接口而不是依赖 `Risk()` 值。
 
 #### Scenario: 实现了 Preview 的工具被识别
 
@@ -102,4 +102,3 @@ TBD - created by archiving change add-tool-registry. Update Purpose after archiv
 - **GIVEN** Registry 注册了若干工具
 - **WHEN** 调用 `Schemas()`
 - **THEN** 返回 map 的键集合 MUST 与 `All()` 中工具名集合相等，且每个值序列化为 JSON 后 MUST 与对应工具 `Schema()` 序列化结果一致
-

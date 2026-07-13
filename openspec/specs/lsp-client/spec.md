@@ -29,5 +29,5 @@
 
 #### Scenario: 文件工具写入后同步
 
-- **WHEN** `write` 或 `edit` 工具成功修改了 workspace 文件
+- **WHEN** `write`、`edit`、`multiedit` 或 `apply_patch` 工具成功修改了仍存在的 workspace 文件
 - **THEN** 系统通过 LSP notifier 主动同步该文件的最新内容

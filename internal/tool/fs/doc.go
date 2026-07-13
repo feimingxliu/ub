@@ -1,9 +1,9 @@
 // Package fs implements the workspace file-system tool group (read, ls,
-// glob, write, edit). All tools share a single resolve() helper that
+// glob, write, edit, multiedit, apply_patch). All tools share a single resolve() helper that
 // enforces a strict sandbox: every input path is cleaned and rejected if
 // it escapes the workspace root passed to Register.
 //
-// The write and edit tools implement tool.PreviewableTool. Preview MUST
+// The write, edit, multiedit, and apply_patch tools implement tool.PreviewableTool. Preview MUST
 // NOT mutate disk; the dispatcher calls Preview to render a diff for the
 // user and only calls Execute after approval.
 //

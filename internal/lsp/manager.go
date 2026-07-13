@@ -532,7 +532,7 @@ func (m *Manager) DocumentSymbols(ctx context.Context, path string) ([]DocumentS
 // Rename queries textDocument/rename and returns the proposed edits
 // normalized as []TextEdit (one entry per concrete edit). It does NOT apply
 // the edits; callers (typically the rename tool) format them for the agent
-// to apply via multiedit.
+// to apply via apply_patch or multiedit.
 func (m *Manager) Rename(ctx context.Context, path string, line, col int, newName string) (WorkspaceEdit, error) {
 	if strings.TrimSpace(newName) == "" {
 		return WorkspaceEdit{}, fmt.Errorf("lsp: new_name is required")

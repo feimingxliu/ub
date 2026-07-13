@@ -24,7 +24,7 @@ type Risk string
 const (
 	// RiskSafe tools are read-only over local state (read, ls, grep, glob).
 	RiskSafe Risk = "safe"
-	// RiskWrite tools mutate workspace files (write, edit).
+	// RiskWrite tools mutate workspace files (write, edit, multiedit, apply_patch).
 	RiskWrite Risk = "write"
 	// RiskExec tools spawn external processes (bash, job_run).
 	RiskExec Risk = "exec"

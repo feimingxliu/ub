@@ -140,7 +140,7 @@ func allDigits(text string) bool {
 
 func toolDetailUsesDiffStyle(toolName string) bool {
 	switch strings.TrimSpace(toolName) {
-	case "write", "edit", "multiedit":
+	case "write", "edit", "multiedit", "apply_patch":
 		return true
 	default:
 		return false

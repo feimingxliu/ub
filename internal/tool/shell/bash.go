@@ -40,7 +40,7 @@ func newBashTool(root string) *bashTool {
 
 func (t *bashTool) Name() string { return "bash" }
 func (t *bashTool) Description() string {
-	return "Run a shell command via the system shell (/bin/sh -c on Unix, cmd /C on Windows) from the workspace (or explicit cwd). Use for builds, tests, git/status inspection, and repo commands that need a real process. For file search/read/list/edit, prefer the dedicated grep/read/ls/glob/edit/multiedit tools over shell grep/cat/ls/find/sed/python/perl; if edit reports old string not found, re-read a narrow range and retry edit/multiedit with exact whitespace. Prefer cwd over `cd ... && ...`; set a timeout for long commands. Treat non-zero exit_code, timeout, aborted, stdout, and stderr as evidence, and never report a check as passed unless this tool actually ran and exit_code=0."
+	return "Run a shell command via the system shell (/bin/sh -c on Unix, cmd /C on Windows) from the workspace (or explicit cwd). Use for builds, tests, git/status inspection, and repo commands that need a real process. For file search/read/list/edit, prefer the dedicated grep/read/ls/glob/apply_patch/edit/multiedit tools over shell grep/cat/ls/find/sed/python/perl; for multi-line or multi-file edits, prefer apply_patch with exact context. If an edit reports old string not found, re-read a narrow range and retry with apply_patch context or edit/multiedit exact whitespace. Prefer cwd over `cd ... && ...`; set a timeout for long commands. Treat non-zero exit_code, timeout, aborted, stdout, and stderr as evidence, and never report a check as passed unless this tool actually ran and exit_code=0."
 }
 func (t *bashTool) Schema() *jsonschema.Schema { return t.schema }
 func (t *bashTool) Risk() tool.Risk            { return tool.RiskExec }

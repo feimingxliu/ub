@@ -236,7 +236,7 @@ func hasLineEnding(s string) bool {
 func editOldNotFoundError(content, old string) error {
 	hints := []string{
 		"old must match the file exactly, including tabs, spaces, and line endings",
-		"re-read a narrow range around the target and retry edit/multiedit with exact text",
+		"re-read a narrow range around the target and retry apply_patch with context or edit/multiedit with exact text",
 		"do not use bash/sed/python to mutate files unless the dedicated edit tools cannot express the change",
 	}
 	if hasWhitespaceNormalizedMatch(content, old) {

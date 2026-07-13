@@ -524,6 +524,8 @@ func toolAction(name string) string {
 		return "Preparing edit..."
 	case "multiedit":
 		return "Preparing multi-edit..."
+	case "apply_patch":
+		return "Preparing patch..."
 	case "bash":
 		return "Writing command..."
 	case "task":
@@ -595,6 +597,8 @@ func toolTitle(name, summary string) string {
 		verb = "Edited"
 	case "multiedit":
 		verb = "Edited multiple files"
+	case "apply_patch":
+		verb = "Applied patch"
 	case "bash":
 		verb = "Ran"
 	case "task":

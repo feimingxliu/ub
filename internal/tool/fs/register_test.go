@@ -8,12 +8,12 @@ import (
 	"github.com/feimingxliu/ub/internal/tool/fs"
 )
 
-func TestRegister_SixTools(t *testing.T) {
+func TestRegister_SevenTools(t *testing.T) {
 	reg := tool.New()
 	if err := fs.Register(reg, t.TempDir()); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	want := []string{"edit", "glob", "ls", "multiedit", "read", "write"}
+	want := []string{"apply_patch", "edit", "glob", "ls", "multiedit", "read", "write"}
 	all := reg.All()
 	got := make([]string, len(all))
 	for i, tl := range all {
@@ -29,12 +29,12 @@ func TestRegister_SixTools(t *testing.T) {
 	}
 }
 
-func TestRegister_SevenToolsWithOutputRoot(t *testing.T) {
+func TestRegister_EightToolsWithOutputRoot(t *testing.T) {
 	reg := tool.New()
 	if err := fs.RegisterWithOptions(reg, t.TempDir(), fs.Options{OutputRoot: t.TempDir()}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	want := []string{"edit", "glob", "ls", "multiedit", "read", "tool_result", "write"}
+	want := []string{"apply_patch", "edit", "glob", "ls", "multiedit", "read", "tool_result", "write"}
 	all := reg.All()
 	got := make([]string, len(all))
 	for i, tl := range all {

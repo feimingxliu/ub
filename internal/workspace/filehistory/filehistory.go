@@ -19,6 +19,7 @@ import (
 
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
+	toolfs "github.com/feimingxliu/ub/internal/tool/fs"
 	"github.com/feimingxliu/ub/internal/workspace/paths"
 )
 
@@ -264,7 +265,7 @@ func (m *Manager) backupForSnapshot(rel string, previous *Snapshot) (Backup, err
 }
 
 // TrackTool inspects a tool call's arguments and registers any file paths
-// that the tool may modify (write/edit/multiedit/bash rm) for file-history
+// that the tool may modify (write/edit/multiedit/apply_patch/bash rm) for file-history
 // tracking. This must be called BEFORE the tool executes so the pre-edit
 // content is captured in the current turn's snapshot.
 func (m *Manager) TrackTool(ctx context.Context, name string, input json.RawMessage) error {
@@ -685,6 +686,22 @@ func toolTargets(name string, input json.RawMessage) []pathTarget {
 		return []pathTarget{{Path: args.Path}}
 	case "multiedit":
 		return multiEditTargets(input)
+	case "apply_patch":
+		var args struct {
+			Patch string `json:"patch"`
+		}
+		if err := json.Unmarshal(input, &args); err != nil || strings.TrimSpace(args.Patch) == "" {
+			return nil
+		}
+		paths, err := toolfs.PatchPaths(args.Patch)
+		if err != nil {
+			return nil
+		}
+		out := make([]pathTarget, 0, len(paths))
+		for _, path := range paths {
+			out = append(out, pathTarget{Path: path})
+		}
+		return out
 	case "bash":
 		var args struct {
 			Command string `json:"command"`

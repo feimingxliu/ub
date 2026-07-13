@@ -124,6 +124,7 @@ v0.4.x 额外吸收了一批真实使用反馈:启动速度、SQLite busy、comp
 
 - **S2-11 `/rewind`**:面向"刚才这轮跑偏了"的恢复入口。MVP 先基于 session/rollout event 回退对话上下文、TUI 显示和 context 估算到目标 user turn 之前;如果目标 checkpoint 与当前 workspace 相比存在已跟踪文件改动,先展示受影响文件并要求确认,再决定是否回退文件。不能静默丢弃当前 workspace 未提交改动;无法从 checkpoint 可靠恢复时只 rewind 对话并明确提示用户。
   - 已实现: `/rewind` 打开历史 user turn 选择器,默认按最近 turn 在前展示,支持筛选;选中某条 user message 后删除该 turn 及之后的 rollout events,重建 runner conversation history、TUI transcript 和 context 状态,并把选中的 user message 放回输入框供用户修改重发。文件回退参考 Claude 的 file history:每个 user turn 开始前记录 `file_history_snapshot`,把已跟踪文件旧内容备份到 state root;`write` / `edit` / `multiedit` 和字面路径 `rm` / `git rm` 形式的 `bash` 删除在执行前补齐当前 turn 的旧状态。若当前 workspace 与目标 checkpoint 不一致,会进入二次选择:默认只回退对话并保留 workspace 文件,也可显式选择同时把 checkpoint 中可恢复的文件回到目标消息之前的状态。不可靠或 workspace 外路径会跳过并在 TUI 提示,但对话 rewind 仍会完成。
+  - 已扩展: `apply_patch` 使用同一 checkpoint 路径；在执行前通过补丁解析器追踪 Add / Update / Delete / Move 涉及的全部 workspace 文件，保证 rewind 能恢复复杂多文件编辑。
 - **S2-12 `/btw`**:对齐 Claude Code 的 side question 语义,面向"我想临时问一句,但不想打断主任务或污染上下文"。输入 `/btw <question>` 后启动一次独立的旁路模型请求,复用当前会话上下文和 prompt cache,但不允许工具访问、文件读取、命令执行或搜索;回答在独立 BTW TUI 视图内展示,问题和答案不写入主 conversation/history/context。运行中可用,不取消当前 Agent turn;旁路回答只在 BTW 视图内临时保留,继续追问时复用视图内 Q/A 作为临时 side history,不污染主 session。
   - 已实现: `/btw [question]` 打开独立的内存 BTW 视图;带 question 时通过独立 no-tool provider 请求回答,运行中立即执行且不进入主队列;请求只携带 text-only 主上下文,过滤 tool_use/tool_result,并把 provider tool call 或伪工具标记按错误处理;视图内支持多条 Q/A、继续追问、Markdown 渲染回答、独立滚动长输出、复制最新答案和清空记录;`Esc` 返回主对话并清空 BTW 临时历史;问题/答案不写入主 transcript、session history 或 rollout。
 

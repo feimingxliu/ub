@@ -34,7 +34,8 @@ func TestCodingAgentToolDescriptionsCarryGuidance(t *testing.T) {
 	}
 
 	checks := map[string][]string{
-		"bash":             {"Prefer cwd", "exit_code=0", "prefer the dedicated", "retry edit/multiedit"},
+		"bash":             {"Prefer cwd", "exit_code=0", "prefer the dedicated", "apply_patch context"},
+		"apply_patch":      {"atomic", "*** Begin Patch", "Include enough unchanged context", "instead of guessed"},
 		"read":             {"Never use read for directories", "before editing"},
 		"grep":             {"locate symbols", "then read"},
 		"task":             {"self-contained", "independent from the main context"},

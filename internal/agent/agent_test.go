@@ -1859,6 +1859,18 @@ func TestToolActivitySummaryMultiEdit(t *testing.T) {
 	}
 }
 
+func TestToolActivitySummaryApplyPatch(t *testing.T) {
+	input := json.RawMessage(`{"patch":"*** Begin Patch\n*** Update File: a.go\n@@\n-old\n+new\n*** End Patch"}`)
+	summary := SummarizeToolInput("apply_patch", input)
+	if !strings.Contains(summary, "patch=") || !strings.Contains(summary, "bytes") {
+		t.Fatalf("apply_patch summary = %q", summary)
+	}
+	detail := ToolInputDetail("apply_patch", input)
+	if !strings.Contains(detail, "patch:\n*** Begin Patch") || !strings.Contains(detail, "+new") {
+		t.Fatalf("apply_patch detail = %q", detail)
+	}
+}
+
 func TestToolActivitySummaryTodoUpdateOmitsZeroItemIndex(t *testing.T) {
 	summary := SummarizeToolInput("todo_update", json.RawMessage(`{"id":"patch","item_index":0,"status":"in_progress"}`))
 	if strings.Contains(summary, "item=0") {

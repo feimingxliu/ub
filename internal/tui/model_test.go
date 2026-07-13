@@ -2118,6 +2118,7 @@ func TestBuiltInToolActivitiesUseExplicitLabels(t *testing.T) {
 		{"write", "Preparing write...", "Wrote"},
 		{"edit", "Preparing edit...", "Edited"},
 		{"multiedit", "Preparing multi-edit...", "Edited multiple files"},
+		{"apply_patch", "Preparing patch...", "Applied patch"},
 		{"bash", "Writing command...", "Ran"},
 		{"task", "Running Task...", "Ran Task"},
 		{"remember", "Writing memory...", "Remembered"},
@@ -2169,7 +2170,7 @@ func TestTaskToolDetailDoesNotUseDiffFormatting(t *testing.T) {
 	if !strings.Contains(plain, "- bullet") || !strings.Contains(plain, "changed file: no") || !strings.Contains(plain, "+ plus") {
 		t.Fatalf("task detail did not preserve plain lines:\n%s", plain)
 	}
-	if !toolDetailUsesDiffStyle("write") || toolDetailUsesDiffStyle("task") {
+	if !toolDetailUsesDiffStyle("write") || !toolDetailUsesDiffStyle("apply_patch") || toolDetailUsesDiffStyle("task") {
 		t.Fatalf("diff style classification broken")
 	}
 }

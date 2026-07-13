@@ -270,7 +270,7 @@ func TestEdit_OldNotFoundHintsExactWhitespace(t *testing.T) {
 		"whitespace-normalized match exists",
 		"tabs vs spaces",
 		"re-read a narrow range",
-		"retry edit/multiedit",
+		"retry apply_patch with context or edit/multiedit",
 		"do not use bash/sed/python",
 	} {
 		if !strings.Contains(err.Error(), want) {

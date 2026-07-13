@@ -118,6 +118,10 @@ func SummarizeToolInput(name string, raw json.RawMessage) string {
 	case "multiedit":
 		addCount("edits", "edits")
 		addUniqueObjectStringCount("files", "edits", "path")
+	case "apply_patch":
+		if value, ok := preservedStringField(body, "patch"); ok {
+			parts = append(parts, fmt.Sprintf("patch=%d bytes", len(value)))
+		}
 	case "tool_result":
 		add("tool_use_id", "tool_use_id")
 		add("offset", "offset")
@@ -260,6 +264,8 @@ func ToolInputDetail(name string, raw json.RawMessage) string {
 	case "web_fetch":
 		addBlock("url", "url")
 		addLine("max_chars", "max_chars")
+	case "apply_patch":
+		addBlock("patch", "patch")
 	default:
 		if _, hasCommand := body["command"]; hasCommand {
 			addBlock("command", "command")

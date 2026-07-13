@@ -34,7 +34,7 @@
 |---|---|
 | 对话 | 多轮、流式输出、可中断 |
 | Provider | Anthropic Claude（官方 SDK）、OpenAI（官方 SDK）、OpenAI 兼容协议（含 Ollama `/v1`） |
-| Tools | read / write / edit / multiedit（含 diff 预览）、bash（权限审批与流式输出）、grep / glob / ls、job_run / job_output / job_kill、tool_result、ask、task、remember / recall、web_search / web_fetch、plan_write / plan_update / plan_update_step、todo_write / todo_update、create_goal / get_goal / update_goal、LSP 工具、MCP 工具 |
+| Tools | read / write / edit / multiedit / apply_patch（含 diff 预览）、bash（权限审批与流式输出）、grep / glob / ls、job_run / job_output / job_kill、tool_result、ask、task、remember / recall、web_search / web_fetch、plan_write / plan_update / plan_update_step、todo_write / todo_update、create_goal / get_goal / update_goal、LSP 工具、MCP 工具 |
 | 权限 | 交互式 allow / deny；支持 always-allow 规则 |
 | 执行模式 | `work` / `plan` / `auto` / `full-access` 四种模式，控制文件写入与命令审批路径 |
 | 会话 | SQLite 持久化、可列出 / 切换 / 恢复 |
@@ -108,7 +108,7 @@
 
 ### 4.5 权限审批
 
-- F-PERM-1：每个工具声明 `RiskLevel`：`safe`（read/ls/grep/glob/ask/plan/todo/memory/LSP/task/goal/tool_result 等）/ `write`（write/edit/multiedit）/ `exec`（bash/job_run/job_kill）/ `network`（web_search/web_fetch）
+- F-PERM-1：每个工具声明 `RiskLevel`：`safe`（read/ls/grep/glob/ask/plan/todo/memory/LSP/task/goal/tool_result 等）/ `write`（write/edit/multiedit/apply_patch）/ `exec`（bash/job_run/job_kill）/ `network`（web_search/web_fetch）
 - F-PERM-2：`safe` 默认自动允许；`write` 与 `exec` 的处理由当前执行模式决定
 - F-PERM-3：审批 UI 选项：`allow once` / `deny` / `always allow this exact command (session)` / `always allow this tool (session)` / `always allow this exact command (project, persist to disk)` / `always allow similar command (project, persist to disk)`
 - F-PERM-4：project 级规则持久化到 `<workspace>/.ub/permissions.yaml`，格式为 `permissions.allow` / `permissions.ask` / `permissions.deny` 字符串数组，规则语法为 Claude-style `Tool(pattern)`；`Bash(cmd)` 精确匹配，`Bash(cmd:*)` 匹配命令前缀；session 级 always-rule 仅内存生效
@@ -124,7 +124,7 @@
 - F-SESS-4：Rollout 事件类型：`user_message`、`assistant_message`（可包含 `tool_use` content block）、`tool_result`、`summary`、`usage`、`activity`、`memory_write`、`file_history_snapshot`、`error`
 - F-SESS-5：Rollout 以 JSONL 写入 SQLite 的 BLOB 列；SQLite 开启 WAL + `synchronous=NORMAL`。**耐久性保证**：进程崩溃（panic / OOM / SIGKILL）不丢已 commit 事件；操作系统断电可能丢最后若干条未刷盘事件——这是可接受的，不为此牺牲性能去逐条 fsync
 - F-SESS-6：CLI 子命令 `ub rollout show <id>` 可用 pretty 或 `--json` 打印事件流，支持 `--turns` 选择轮次和 `--limit` 限制事件数量，并展开 `assistant_message` 中的结构化 content block（包括 `tool_use` 的调用 id、工具名与 input JSON）
-- F-SESS-7：TUI `/rewind` MUST 允许用户选择历史 user message 并回到该消息之前：删除当前 session 中目标 turn 及之后的 rollout events，重建对话上下文、TUI transcript 和 context 状态，并把目标 user message 放回输入框。Agent MUST 在每个 user turn 开始前创建文件 checkpoint，并在 `write` / `edit` / `multiedit` 与可安全解析为字面路径的 `bash` 删除（`rm` / `git rm`）真正执行前记录目标文件的旧状态；TUI MUST 根据当前 workspace 与目标 checkpoint 判断受影响文件，让用户选择只回退对话或同时回退 checkpoint 中可恢复的文件。变量、通配符、命令内 `cd` 等无法可靠解析的 shell 路径 MUST 不进入文件历史；checkpoint 缺失可靠旧状态的文件 MUST 跳过并提示，不得静默覆盖无法验证的当前 workspace 改动。
+- F-SESS-7：TUI `/rewind` MUST 允许用户选择历史 user message 并回到该消息之前：删除当前 session 中目标 turn 及之后的 rollout events，重建对话上下文、TUI transcript 和 context 状态，并把目标 user message 放回输入框。Agent MUST 在每个 user turn 开始前创建文件 checkpoint，并在 `write` / `edit` / `multiedit` / `apply_patch` 与可安全解析为字面路径的 `bash` 删除（`rm` / `git rm`）真正执行前记录目标文件的旧状态；`apply_patch` MUST 在真正执行前从已验证的补丁信封中记录新增、更新、删除和重命名涉及的路径。TUI MUST 根据当前 workspace 与目标 checkpoint 判断受影响文件，让用户选择只回退对话或同时回退 checkpoint 中可恢复的文件。变量、通配符、命令内 `cd` 等无法可靠解析的 shell 路径 MUST 不进入文件历史；checkpoint 缺失可靠旧状态的文件 MUST 跳过并提示，不得静默覆盖无法验证的当前 workspace 改动。
 - F-SESS-8：启动时 MAY 执行 best-effort 自动清理：默认删除 30 天未更新且不属于对应 workspace 最近 20 个的 session；events MUST 只随 session 删除级联清理，不做单 session 内局部裁剪，用户显式 `/rewind` 的目标 turn 后截断除外
 
 ### 4.7 上下文管理
@@ -162,8 +162,8 @@
 - F-LSP-2：模型可通过 `diagnostics` 工具拿到当前文件或 workspace 已知文件的错误 / 警告
 - F-LSP-3：模型可通过 `references` 工具按符号名（优先）或文件位置拿到符号引用位置
 - F-LSP-4：模型可通过 `hover`、`completion`、`document_symbols` 获取当前位置说明、补全候选与文档符号树
-- F-LSP-5：模型可通过 `rename`、`code_action` 获取语言服务器建议；这两个工具 MUST NOT 直接落盘，模型需再用 `multiedit` / `edit` 走 ub 的 diff 与审批协议
-- F-LSP-6：文件被 write / edit / multiedit 工具修改后，主动 `didChange` 通知 LSP，等下一次 diagnostics 刷新
+- F-LSP-5：模型可通过 `rename`、`code_action` 获取语言服务器建议；这两个工具 MUST NOT 直接落盘，模型需再用 `apply_patch` / `multiedit` / `edit` 走 ub 的 diff 与审批协议
+- F-LSP-6：文件被 write / edit / multiedit / apply_patch 工具修改后，主动对仍存在的最终文件发 `didChange` 通知 LSP，等下一次 diagnostics 刷新
 
 ### 4.11 TUI
 

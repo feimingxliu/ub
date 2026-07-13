@@ -312,8 +312,8 @@ func TestRenameTool_FormatsEdits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(res.Content, "Apply via multiedit") {
-		t.Fatalf("missing multiedit hint:\n%s", res.Content)
+	if !strings.Contains(res.Content, "Apply via apply_patch or multiedit") {
+		t.Fatalf("missing edit application hint:\n%s", res.Content)
 	}
 	if !strings.Contains(res.Content, "/tmp/a.go:1:5 → 'Baz'") || !strings.Contains(res.Content, "/tmp/b.go:10:1 → 'Baz'") {
 		t.Fatalf("edits malformed:\n%s", res.Content)
