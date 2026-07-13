@@ -424,6 +424,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scrollFocusedMessageIntoView()
 				return m, nil
 			}
+			// Click in message area but not on a collapsible block → clear focus.
+			msgWidth := contentWidth(m.width)
+			msgFooter := m.footerView(msgWidth)
+			if mouse.Y < m.messageViewHeight(msgFooter) && m.messages.clearFocus() {
+				return m, nil
+			}
 		}
 	case tea.MouseWheelMsg:
 		switch msg.Mouse().Button {
