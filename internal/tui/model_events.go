@@ -111,6 +111,11 @@ func (m Model) handleBackgroundEvent(msg backgroundEventMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	next := waitForBackgroundEvent(m.backgroundEvents)
+	if msg.event.SessionID != "" {
+		if sessions, ok := m.runner.(SessionRunner); ok && sessions.CurrentSessionID() != msg.event.SessionID {
+			return m, next
+		}
+	}
 	if notice, ok := backgroundTranscriptMessageFromEvent(msg.event); ok {
 		if m.running {
 			m.backgroundQueue = append(m.backgroundQueue, notice)

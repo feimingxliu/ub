@@ -176,6 +176,25 @@ func TestRecall_NoMatch(t *testing.T) {
 	}
 }
 
+func TestForget_RemovesExactAutoMemoryAndReturnsAuditMetadata(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if _, err := execTool(t, newRememberTool(ws), rememberArgs{Text: "build is make", Category: "project"}); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	res, err := execTool(t, newForgetTool(ws), forgetArgs{Text: "build is make", Category: "project"})
+	if err != nil {
+		t.Fatalf("forget: %v", err)
+	}
+	if !strings.Contains(res.Content, "forgot (auto, project)") || res.Metadata["memory_action"] != "deleted" {
+		t.Fatalf("forget result = %#v", res)
+	}
+	if got := memory.Read(ws, 0); strings.Contains(got, "build is make") {
+		t.Fatalf("forgotten entry still present:\n%s", got)
+	}
+}
+
 func TestRegister_AddsTools(t *testing.T) {
 	reg := tool.New()
 	if err := Register(reg, t.TempDir()); err != nil {
@@ -183,6 +202,9 @@ func TestRegister_AddsTools(t *testing.T) {
 	}
 	if _, ok := reg.Get("remember"); !ok {
 		t.Fatalf("remember not registered")
+	}
+	if _, ok := reg.Get("forget"); !ok {
+		t.Fatalf("forget not registered")
 	}
 	if _, ok := reg.Get("recall"); !ok {
 		t.Fatalf("recall not registered")

@@ -1,4 +1,4 @@
-// Package memory implements the `remember` and `recall` tools that let an
+// Package memory implements the `remember`, `forget`, and `recall` tools that let an
 // agent write and search durable facts. Reading happens at request time via
 // the agent's withMemoryContext injection, not via a tool call — anything
 // in the memory file is already on the prompt path.

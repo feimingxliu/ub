@@ -233,7 +233,7 @@ type MemoryAutoConfig struct {
 	Enabled                  *bool         `yaml:"enabled,omitempty"                     json:"enabled,omitempty"`
 	Trigger                  string        `yaml:"trigger,omitempty"                     json:"trigger,omitempty" jsonschema:"enum=background,enum=immediate"`
 	MaxCandidates            int           `yaml:"max_candidates,omitempty"              json:"max_candidates,omitempty"`
-	MaxPromptChars           int           `yaml:"max_prompt_chars,omitempty"            json:"max_prompt_chars,omitempty"`
+	MaxPromptChars           int           `yaml:"max_prompt_chars,omitempty"            json:"max_prompt_chars,omitempty" jsonschema:"description=Positive values must be at least 1024; zero uses the default."`
 	MinTurnsSinceExtraction  int           `yaml:"min_turns_since_extraction,omitempty" json:"min_turns_since_extraction,omitempty"`
 	MinNewMessages           int           `yaml:"min_new_messages,omitempty"            json:"min_new_messages,omitempty"`
 	MinInterval              time.Duration `yaml:"min_interval,omitempty"                json:"min_interval,omitempty"`

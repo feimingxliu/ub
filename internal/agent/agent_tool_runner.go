@@ -154,8 +154,8 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	}
 	summary, content := ToolActivityResultWithInput(call.Name, call.Input, result)
 	a.emitToolActivity(call, status, summary, content, result.IsError)
-	if call.Name == "remember" && !result.IsError {
-		a.recordRememberToolMemoryWrite(ctx, sessionID, turn, result)
+	if (call.Name == "remember" || call.Name == "forget") && !result.IsError {
+		a.recordMemoryToolWrite(ctx, sessionID, turn, result)
 	}
 	return result
 }

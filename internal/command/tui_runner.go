@@ -207,7 +207,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 		Memory:              r.cfg.Memory,
 		MemoryAutoScheduler: r.memoryAutoScheduler,
 		FileHistory:         fileHistory,
-		BackgroundEvents:    r.backgroundEventSink(ctx),
+		BackgroundEvents:    r.backgroundEventSink(ctx, r.state.sessionID),
 		Inject:              r.injectCh,
 	})
 	subRunner := &cliSubagentRunner{
@@ -248,7 +248,7 @@ func (r *tuiAgentRunner) newAgent(ctx context.Context, events chan<- tui.Event) 
 	return a, nil
 }
 
-func (r *tuiAgentRunner) backgroundEventSink(ctx context.Context) agent.EventSink {
+func (r *tuiAgentRunner) backgroundEventSink(ctx context.Context, sessionID string) agent.EventSink {
 	if r == nil || r.backgroundEvents == nil {
 		return nil
 	}
@@ -259,8 +259,30 @@ func (r *tuiAgentRunner) backgroundEventSink(ctx context.Context) agent.EventSin
 		ctx = r.cmd.Context()
 	}
 	return func(event agent.Event) {
-		sendTUIEvent(ctx, r.backgroundEvents, convertAgentEvent(event))
+		tuiEvent := convertAgentEvent(event)
+		tuiEvent.SessionID = sessionID
+		sendTUIEvent(ctx, r.backgroundEvents, tuiEvent)
 	}
+}
+
+// retireSessionState closes a session immediately unless it still owns a
+// running auto-memory job. In that case the scheduler runs the close callback
+// only after the job has appended its session-local rollout audit event.
+func (r *tuiAgentRunner) retireSessionState(state *chatSessionState) error {
+	if state == nil {
+		return nil
+	}
+	if r.memoryAutoScheduler == nil {
+		return state.Close()
+	}
+	var closeErr error
+	deferred := r.memoryAutoScheduler.DiscardSession(state.sessionID, func() {
+		closeErr = state.Close()
+	})
+	if deferred {
+		return nil
+	}
+	return closeErr
 }
 
 func (r *tuiAgentRunner) Close() error {
@@ -278,9 +300,10 @@ func (r *tuiAgentRunner) Close() error {
 		return err
 	}
 	r.closedStore = true
-	if closeErr := r.state.Close(); closeErr != nil && err == nil {
+	if closeErr := r.retireSessionState(r.state); closeErr != nil && err == nil {
 		err = closeErr
 	}
+	r.state = nil
 	return err
 }
 

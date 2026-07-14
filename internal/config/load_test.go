@@ -118,6 +118,21 @@ func TestLoadFromDirsParsesMemoryConfig(t *testing.T) {
 	}
 }
 
+func TestLoadFromDirsRejectsTooSmallAutoMemoryPrompt(t *testing.T) {
+	temp := t.TempDir()
+	xdg := filepath.Join(temp, "xdg")
+	mustWriteConfig(t, filepath.Join(xdg, "ub", "config.yaml"), `memory:
+  auto:
+    max_prompt_chars: 1
+`)
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	_, _, err := loadFromDirs(temp)
+	if err == nil || !strings.Contains(err.Error(), "memory.auto.max_prompt_chars") {
+		t.Fatalf("small auto-memory prompt error = %v", err)
+	}
+}
+
 func TestLoadFromDirsParsesPromptConfig(t *testing.T) {
 	temp := t.TempDir()
 	xdg := filepath.Join(temp, "xdg")

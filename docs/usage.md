@@ -600,21 +600,38 @@ memory:
     enabled: true
     trigger: background
     max_candidates: 3
-    max_prompt_chars: 12000
-    min_turns_since_extraction: 3
-    min_new_messages: 6
-    min_interval: 10m
+    max_prompt_chars: 12000 # 至少 1024；包含 taxonomy、已有记忆摘要与本轮内容的总字符上限
+    min_turns_since_extraction: 5
+    min_new_messages: 10
+    min_interval: 15m
     drain_timeout: 3s
     disable_on_external_context: true
 ```
 
 ### 自动归纳
 
-默认启用 `memory.auto.enabled`。成功完成的 work / auto / full-access turn 结束后,ub 只在主流程里做低成本观察:plan 模式、空 workspace、显式 `remember` 已处理的 turn、以及默认配置下使用外部上下文(MCP / web / tool_search 类工具)的 turn 都不会触发自动写入。其余 turn 会进入后台调度器;调度器按显式记忆信号、`memory.auto.min_turns_since_extraction`、`memory.auto.min_new_messages` 和 `memory.auto.min_interval` 批量决定何时调用当前 provider 可用的 `small_model`(未配置或该 provider 明确不可用时复用当前模型)抽取长期事实。
+默认启用 `memory.auto.enabled`。auto memory 分两条独立分支:
+
+**分支 1 — 显式记忆**:当你明确告诉 ub"记住 X"/"以后都用 Y"时,主模型会直接调用 `remember` 工具把事实写入 memory；当你要求"忘记 Z"时,它会先用 `recall` 确认项目 auto-memory 的精确文本与分类，再调用 `forget` 删除该条目。`forget` 不会改写 append-only 的全局手写指令。这条路径最确定、最即时——不走后台调度，也不经过 small model。
+
+**分支 2 — 自动抽取**:其余成功完成的 work / auto / full-access turn 都会进入后台调度器。调度器在前台只做硬门控:plan 模式、空 workspace、本轮已调用过 `remember` 或 `forget` 的 turn、默认配置下使用外部上下文(MCP / web / tool_search 类工具)的 turn 直接跳过;**不做关键字预过滤**——什么值得记完全交给 small model + 抽取 prompt 判断。批处理和退避状态按 session 隔离，切换 session 时不会把旧会话内容合并到新会话；未开始的旧任务会丢弃，已经运行的旧任务会先完成原会话的 `memory_write` 审计，且不会把提示显示到新会话。其余 turn 按 `memory.auto.min_turns_since_extraction`、`memory.auto.min_new_messages` 和 `memory.auto.min_interval` 批量决定何时调用当前 provider 可用的 `small_model`(未配置或该 provider 明确不可用时复用当前模型)。`max_prompt_chars` 是 taxonomy、已有 memory 摘要和 turn 内容合计的硬上限，显式正值至少为 1024；空间不足时会改用紧凑 taxonomy。抽取 prompt 会注入已有 auto memory 摘要,让 small model 自行判断 update vs create vs skip。连续多次**成功但为空**的抽取结果才会进入退避模式(有效阈值翻倍)，provider 或写入失败不会触发退避。
 
 `memory.auto.trigger=background` 是默认模式,会把抽取放到后台,避免每个 turn 结束都同步等待 small model。`trigger=immediate` 可用于调试或希望每个 eligible turn 都尽快后台抽取的场景。headless `ub run` 在主答案输出后最多等待 `memory.auto.drain_timeout`,TUI 则先展示完成状态,后台抽取结果随后通过 `memory_write` 事件审计。
 
-自动归纳只接受受控 JSON 候选,随后仍会经过 category 校验、隐私过滤、冲突合并和衰减策略;被拒绝的候选不会写入 memory。
+自动归纳只接受受控 JSON 候选,随后仍会经过 category 校验、隐私过滤、冲突合并和衰减策略;被拒绝的候选不会写入 memory。`memory_write` 审计事件的 `action` 还会记录显式 `forget` 的 `deleted` 操作。
+
+#### 抽取 prompt 的 taxonomy
+
+small model 在抽取时不靠自由发挥,而是按 prompt 里给出的四类语义角色判断什么是值得长期保存的:
+
+| 语义角色 | when to save | 映射到 ub category |
+|---|---|---|
+| `user` | 学到用户的角色、偏好、责任、知识 | `preference` |
+| `feedback` | 用户纠正做法("no not that"、"don't")或确认某做法奏效("yes exactly")。**both corrections and quiet confirmations** | `preference`(带 Why / How to apply 结构) |
+| `project` | 进行中的工作、目标、事故,且不可从代码/git 推导 | `project` |
+| `reference` | 外部系统指针(Linear / Slack / Grafana 等) | `general` |
+
+同时 prompt 里显式列出排除项:代码模式/架构/文件路径、git history、调试 recipe、CLAUDE.md 已记录的内容、临时任务状态。**H2 explicit-save gate** 规定这些排除项即使用户显式要求保存也仍然适用——如果用户要求保存 PR list 或活动总结,small model 应该只挑出 surprising / non-obvious 的那部分保存,而不是把活动日志当 memory。
 
 ## 15. 长输出落盘(spillover)
 

@@ -155,17 +155,17 @@ v0.4.x 额外吸收了一批真实使用反馈:启动速度、SQLite busy、comp
 
 灵感来自通用 `AGENTS.md` 工作区指令 + auto-memory。
 
-- **状态**:已实现。当前交付覆盖本地 durable memory 的工具写入、自动归纳、项目/全局隔离、请求前注入、检索、`memory_write` 审计事件和基础生命周期策略。
+- **状态**:已实现。当前交付覆盖本地 durable memory 的工具写入/删除、自动归纳、项目/全局隔离、请求前注入、检索、`memory_write` 审计事件和基础生命周期策略。auto memory 拆成两条分支:显式记忆(主模型直接调 `remember`/`forget` 工具)和自动抽取(后台 small model + four-type taxonomy prompt,不做关键字预过滤);自动抽取经过触发频率优化:提高默认批量阈值、仅成功空结果退避、按 session 隔离批次、抽取 prompt 注入已有 memory 摘要并受总字符预算限制。
 - **场景**:agent 在多次会话中累积"build 命令是 X / 测试方式是 Y / 仓库代码风格 Z"等
 - **当前存储**:
   - 自动记忆:`$XDG_STATE_HOME/ub/memory/<project-key>/memory.md`(项目隔离、不进 git)
   - 全局指令:`$XDG_CONFIG_HOME/ub/instructions.md`(通常是 `~/.config/ub/instructions.md`,append-only,保护手写内容)
   - 工作区指令:`<workspace>/AGENTS.md` 由 S3-10 prompt harness 单独发现和注入,不走 `memory.max_chars`
 - **当前写入与检索**:
-  - 显式写入:`remember(text, category?, scope?)` 工具;`scope=auto` 写项目自动记忆,`scope=global` 追加全局指令,兼容旧的 `scope=workspace` 别名
-  - 自动归纳:agent 成功完成 work/auto/full-access turn 后,前台只做低成本观察;后台调度器按显式记忆信号、累计 turn 数、累计可见消息数和最小间隔批量调用 `small_model`(未配置时复用当前模型),每次最多提取 `memory.auto.max_candidates` 条长期事实;plan 模式、显式 `remember` 已处理的 turn、以及默认配置下使用外部上下文的 turn 不自动写 memory
+  - 显式写入/删除:`remember(text, category?, scope?)` 写入；`forget(text, category)` 删除一条精确匹配的项目 auto-memory。`forget` 不会改写 append-only 的全局指令；`remember(scope=auto)` 写项目自动记忆,`scope=global` 追加全局指令,兼容旧的 `scope=workspace` 别名
+  - 自动归纳:auto memory 分两条分支。分支 1 显式记忆:用户明确要求记住时调用 `remember`，要求忘记时先 `recall` 再 `forget`，不走后台调度。分支 2 自动抽取:其余成功 turn 进入后台 `MemoryAutoScheduler`;前台只做硬门控(plan 模式、空 workspace、本轮已调 memory 工具、默认配置下使用外部上下文的 turn),不做关键字预过滤;调度器按 session 隔离累计 turn 数、累计可见消息数和最小间隔，切换会话时丢弃未开始的旧任务、让已运行任务完成原会话审计且不向新会话投递事件，批量调用 `small_model`(未配置时复用当前模型),每次最多提取 `memory.auto.max_candidates` 条长期事实;抽取 prompt 注入已有 auto memory 摘要让 small model 自行判断 update vs create vs skip，且模板/摘要/turn 共同受 `memory.auto.max_prompt_chars` 限制（显式正值至少为 1024）;只有成功的空结果会触发退避模式(有效阈值翻倍)
   - 检索:`recall(query?, category?)` 工具按关键词和分类搜索项目自动记忆
-  - rollout/TUI 可见性:每次成功写入都会落 `memory_write` rollout 事件;`remember` 仍保留普通 tool activity + `tool_result`
+  - rollout/TUI 可见性:每次成功写入或删除都会落 `memory_write` rollout 事件;`remember`/`forget` 仍保留普通 tool activity + `tool_result`
 - **当前读取**:每次发请求前把全局指令 + 项目自动记忆包进 `<memory>...</memory>` system message;`memory.max_chars` 控制注入预算,自动记忆按 category 优先级和时间截断
 - **当前合并/衰减/隐私策略**:项目自动记忆按 category 做相似内容和同主题冲突合并并刷新时间戳;`debug`/`general` 低优先级条目会按时间衰减;超过容量时按优先级和新旧裁剪;写入前拒绝明显 credential/token/private-key 和临时 debug/stack trace 内容;全局指令保持 append-only
 - **后续切片**:更细的用户可见 memory 管理 UI、手动删除/编辑入口、以及可配置的高级衰减策略

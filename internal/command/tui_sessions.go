@@ -103,7 +103,7 @@ func (r *tuiAgentRunner) NewSession(ctx context.Context) (tui.SessionState, erro
 		return tui.SessionState{}, err
 	}
 	if r.state != nil {
-		_ = r.state.Close()
+		_ = r.retireSessionState(r.state)
 	}
 	r.state = state
 	r.closedStore = false
@@ -130,7 +130,7 @@ func (r *tuiAgentRunner) SwitchSession(ctx context.Context, id string) (tui.Sess
 		return tui.SessionState{}, fmt.Errorf("session %q belongs to workspace %q", id, state.session.Workspace)
 	}
 	if r.state != nil {
-		_ = r.state.Close()
+		_ = r.retireSessionState(r.state)
 	}
 	r.state = state
 	r.closedStore = false

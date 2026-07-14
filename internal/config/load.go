@@ -128,7 +128,10 @@ func applyRuntimeOptions(cfg *Config, opts LoadOptions) error {
 	if err := ValidateExecutionMode(cfg.ExecutionMode); err != nil {
 		return err
 	}
-	return ValidatePromptConfig(cfg.Prompt)
+	if err := ValidatePromptConfig(cfg.Prompt); err != nil {
+		return err
+	}
+	return ValidateMemoryConfig(cfg.Memory)
 }
 
 func selectedProfile(opts LoadOptions) (string, error) {
@@ -164,9 +167,15 @@ func (c *Config) ApplyProfile(name string) error {
 	if err := ValidatePromptConfig(profile.Prompt); err != nil {
 		return fmt.Errorf("profile %q: %w", name, err)
 	}
+	if err := ValidateMemoryConfig(profile.Memory); err != nil {
+		return fmt.Errorf("profile %q: %w", name, err)
+	}
 	overlay := profile.toConfig()
 	merged := Merge(c, overlay)
 	if err := ValidatePromptConfig(merged.Prompt); err != nil {
+		return fmt.Errorf("profile %q: %w", name, err)
+	}
+	if err := ValidateMemoryConfig(merged.Memory); err != nil {
 		return fmt.Errorf("profile %q: %w", name, err)
 	}
 	*c = *merged
@@ -213,4 +222,15 @@ func ValidatePromptConfig(prompt PromptConfig) error {
 	default:
 		return fmt.Errorf("unknown prompt.compact_style %q", prompt.CompactStyle)
 	}
+}
+
+// ValidateMemoryConfig checks that an explicit auto-memory prompt budget can
+// hold the compact extraction prompt and a useful slice of the turn. Zero and
+// negative values retain the existing default-value behavior.
+func ValidateMemoryConfig(memory MemoryConfig) error {
+	maxPromptChars := memory.Auto.MaxPromptChars
+	if maxPromptChars > 0 && maxPromptChars < MinMemoryAutoMaxPromptChars {
+		return fmt.Errorf("memory.auto.max_prompt_chars must be 0 or at least %d, got %d", MinMemoryAutoMaxPromptChars, maxPromptChars)
+	}
+	return nil
 }

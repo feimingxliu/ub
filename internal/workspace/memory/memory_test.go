@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -234,6 +235,79 @@ func TestAppend_EmptyTextRejected(t *testing.T) {
 func TestAppend_InvalidCategoryRejected(t *testing.T) {
 	if _, _, err := Append(t.TempDir(), ScopeAuto, Category("nope"), "text"); err == nil {
 		t.Fatalf("expected invalid-category error")
+	}
+}
+
+func TestForgetWithOutcome_RemovesExactAutoMemory(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	ws := t.TempDir()
+	if _, _, err := Append(ws, ScopeAuto, CatProject, "build is make"); err != nil {
+		t.Fatalf("seed project memory: %v", err)
+	}
+	if _, _, err := Append(ws, ScopeAuto, CatPreference, "prefer pnpm"); err != nil {
+		t.Fatalf("seed preference memory: %v", err)
+	}
+
+	out, err := ForgetWithOutcome(ws, CatProject, "BUILD IS MAKE")
+	if err != nil {
+		t.Fatalf("ForgetWithOutcome: %v", err)
+	}
+	if out.Action != AppendActionDeleted || out.Scope != ScopeAuto || out.Category != CatProject {
+		t.Fatalf("outcome = %#v", out)
+	}
+	got := Read(ws, 0)
+	if strings.Contains(got, "build is make") || !strings.Contains(got, "prefer pnpm") {
+		t.Fatalf("memory after forget =\n%s", got)
+	}
+}
+
+func TestForgetWithOutcome_RequiresExactAutoMemoryEntry(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	ws := t.TempDir()
+	if _, _, err := Append(ws, ScopeAuto, CatProject, "build is make"); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	if _, err := ForgetWithOutcome(ws, CatProject, "build"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("ForgetWithOutcome error = %v, want exact-match failure", err)
+	}
+}
+
+func TestAutoMemoryMutationsSerializeAppendAndForget(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	ws := t.TempDir()
+	if _, _, err := Append(ws, ScopeAuto, CatProject, "obsolete build command"); err != nil {
+		t.Fatalf("seed auto memory: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	// Hold the shared mutation lock while both operations are launched. Once it
+	// is released, each operation must re-read the other operation's completed
+	// write before producing its own replacement file.
+	autoMemoryMutationMu.Lock()
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err := AppendWithOutcome(ws, ScopeAuto, CatProject, "current build command")
+		errs <- err
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := ForgetWithOutcome(ws, CatProject, "obsolete build command")
+		errs <- err
+	}()
+	autoMemoryMutationMu.Unlock()
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent auto-memory mutation: %v", err)
+		}
+	}
+
+	got := Read(ws, 0)
+	if strings.Contains(got, "obsolete build command") || !strings.Contains(got, "current build command") {
+		t.Fatalf("serialized mutations produced memory:\n%s", got)
 	}
 }
 

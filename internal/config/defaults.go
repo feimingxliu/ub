@@ -8,11 +8,14 @@ const (
 	DefaultMemoryMaxChars                      = 4000
 	DefaultMemoryAutoMaxCandidates             = 3
 	DefaultMemoryAutoMaxPromptChars            = 12000
-	DefaultMemoryAutoTrigger                   = "background"
-	DefaultMemoryAutoMinTurnsSinceExtraction   = 3
-	DefaultMemoryAutoMinNewMessages            = 6
-	DefaultMemoryAutoMinInterval               = 10 * time.Minute
-	DefaultMemoryAutoDrainTimeout              = 3 * time.Second
+	// MinMemoryAutoMaxPromptChars leaves enough room for the compact
+	// extraction taxonomy plus useful turn content.
+	MinMemoryAutoMaxPromptChars              = 1024
+	DefaultMemoryAutoTrigger                 = "background"
+	DefaultMemoryAutoMinTurnsSinceExtraction = 5
+	DefaultMemoryAutoMinNewMessages          = 10
+	DefaultMemoryAutoMinInterval             = 15 * time.Minute
+	DefaultMemoryAutoDrainTimeout            = 3 * time.Second
 )
 
 // Defaults returns the built-in configuration used as the lowest-priority

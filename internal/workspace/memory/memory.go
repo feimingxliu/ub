@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -103,12 +104,13 @@ type Entry struct {
 	Text      string
 }
 
-// AppendAction describes how an auto-memory write changed the memory file.
+// AppendAction describes how a memory mutation changed the auto-memory file.
 type AppendAction string
 
 const (
 	AppendActionCreated AppendAction = "created"
 	AppendActionMerged  AppendAction = "merged"
+	AppendActionDeleted AppendAction = "deleted"
 )
 
 const (
@@ -117,7 +119,16 @@ const (
 	maxAutoEntries     = 200
 )
 
-// AppendOutcome reports the durable effect of one memory write.
+// autoMemoryMutationMu serializes the read-modify-write cycle for project
+// auto memory. An extraction job may still be writing after the user starts
+// the next turn and invokes remember or forget; without this lock, either
+// writer could overwrite the other's change with a stale file snapshot.
+//
+// The file is per-workspace, but these mutations are low-frequency and a
+// process-wide lock keeps the protection straightforward for every caller.
+var autoMemoryMutationMu sync.Mutex
+
+// AppendOutcome reports the durable effect of one memory mutation.
 type AppendOutcome struct {
 	Path            string
 	Heading         string
@@ -127,6 +138,55 @@ type AppendOutcome struct {
 	Action          AppendAction
 	DroppedExpired  int
 	DroppedOverflow int
+}
+
+// ForgetWithOutcome removes one exact auto-memory entry. Global instructions
+// are deliberately append-only and must be edited by the user rather than an
+// agent, so only ScopeAuto is supported here.
+func ForgetWithOutcome(workspaceRoot string, category Category, text string) (AppendOutcome, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return AppendOutcome{}, errors.New("memory: text is required")
+	}
+	if !ValidCategory(string(category)) {
+		return AppendOutcome{}, fmt.Errorf("memory: invalid category %q", category)
+	}
+	path, err := Path(workspaceRoot, ScopeAuto)
+	if err != nil {
+		return AppendOutcome{}, err
+	}
+	autoMemoryMutationMu.Lock()
+	defer autoMemoryMutationMu.Unlock()
+	entries, err := parseFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return AppendOutcome{}, errors.New("memory: matching auto-memory entry not found")
+		}
+		return AppendOutcome{}, fmt.Errorf("memory: read: %w", err)
+	}
+
+	kept := entries[:0]
+	removed := false
+	for _, entry := range entries {
+		if !removed && entry.Category == category && strings.EqualFold(strings.TrimSpace(entry.Text), text) {
+			removed = true
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if !removed {
+		return AppendOutcome{}, errors.New("memory: matching auto-memory entry not found")
+	}
+	if err := writeFile(path, kept); err != nil {
+		return AppendOutcome{}, fmt.Errorf("memory: write: %w", err)
+	}
+	return AppendOutcome{
+		Path:     path,
+		Scope:    ScopeAuto,
+		Category: category,
+		Text:     text,
+		Action:   AppendActionDeleted,
+	}, nil
 }
 
 // Path returns the absolute path of the memory file for one scope.
@@ -218,6 +278,9 @@ func AppendWithOutcome(workspaceRoot string, scope Scope, category Category, tex
 		}
 		return out, nil
 	}
+
+	autoMemoryMutationMu.Lock()
+	defer autoMemoryMutationMu.Unlock()
 
 	// Load existing auto-memory entries for dedup check.
 	entries, err := parseFile(path)

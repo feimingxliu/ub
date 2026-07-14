@@ -667,7 +667,12 @@ UI 流程：
 
 **small 模型切换规划**：`/small-model [model]` 只影响当前进程内 auto memory 使用的模型，不改变主对话模型、compact summary 模型，也不写回配置文件。候选来自当前 provider 的完整模型字符串列表；显式指定时必须通过候选列表校验；切换成功后后续 auto memory 使用该模型。
 
-**auto memory 调度**：agent 成功 turn 结束时先发送 `EventDone`,再把本轮消息交给 `MemoryAutoScheduler`。调度器在前台只做低成本门控:plan 模式、空 workspace、显式 `remember` 已经写入的 turn、以及默认配置下包含 MCP / web / tool_search 等外部上下文工具的 turn 不进入自动抽取。其余消息按 `memory.auto.trigger`、累计 turn 数、累计可见消息数和最小间隔批量调度后台 small-model 抽取;正在抽取时只保留一个合并后的 pending job。TUI 复用 session 级 scheduler,不等待抽取完成;headless `ub run` 在主答案输出后按 `memory.auto.drain_timeout` 做 best-effort drain。实际写入仍走 `memory.AppendWithOutcome` 和 `memory_write` rollout 事件。
+**auto memory 调度(两条分支)**：auto memory 分显式和自动两条独立分支,不共享判定逻辑。
+
+- **分支 1 — 显式记忆**:用户在主对话里明确要求"记住 X"时,主模型直接调用 `remember` 工具写入 memory；要求"忘记 X"时，先用 `recall` 确认项目 auto-memory 的精确文本/分类，再调用 `forget` 删除。`forget` 仅操作 machine-managed auto-memory，不修改 append-only 的全局手写指令。两种工具调用都走正常 tool runner，并以 `memory_write`（`action=created|merged|deleted`）审计；本轮调用任一种工具后，调度器都会跳过自动抽取，避免重复写入。
+- **分支 2 — 自动抽取**:其余成功 turn 全部进入后台 `MemoryAutoScheduler`。调度器在前台只做硬门控:plan 模式、空 workspace、显式 memory 工具已处理的 turn、默认配置下包含 MCP / web / tool_search 等外部上下文工具的 turn 直接跳过;**不做任何关键字预过滤**,把"什么值得记"的判定完全下放给 small model + prompt。批处理、pending job、最小间隔和退避状态都按 session 隔离；同一 runner 切换 session 时会丢弃未处理的旧批次，绝不合并到新会话；已经运行的旧任务保留其原会话 rollout 到审计完成，后台事件携带 session 标识并由 TUI 过滤，绝不显示到新会话。其余 turn 按 `memory.auto.trigger`、累计 turn 数、累计可见消息数和最小间隔批量调度后台 small-model 抽取;正在抽取时只保留一个合并后的 pending job。`memory.auto.max_prompt_chars` 是 taxonomy 模板、已有 auto-memory 摘要和 turn 内容合计的硬字符上限；显式正值至少为 1024，不足以容纳完整 taxonomy 时使用紧凑等价模板。抽取 prompt 注入已有 auto memory 摘要(按优先级截断到最多 1000 字符),让 small model 自行判断 update vs create vs skip。只有成功完成且没有写入的抽取才会累计空结果；provider 或写入失败不触发退避。连续 3 次空结果时,调度器进入退避模式(有效阈值翻倍),直到下一次成功写入后重置。TUI 不等待抽取完成;headless `ub run` 在主答案输出后按 `memory.auto.drain_timeout` 做 best-effort drain。实际写入仍走 `memory.AppendWithOutcome` 和 `memory_write` rollout 事件。
+
+**auto memory 抽取 prompt 设计**：借鉴 Claude Code 的 four-type taxonomy 思路,把"什么值得记"显式落到 prompt 里,而非靠 small model 自由发挥。prompt 用 `<types>` XML 块声明四类语义角色(user/feedback/project/reference),每类给出 `<when_to_save>` 和 `<examples>`,让 small model 在抽取时按语义匹配而非按关键词猜。ub 的 6 个 storage category(preference/project/pattern/decision/debug/general)是存储层概念,与语义角色不一一对应;prompt 显式给出角色→category 映射:user role → preference,feedback → preference(带 Why/How to apply),project → project/reference,reference → general。同时加入 Claude Code 的 H2 explicit-save gate 规则:排除清单即使用户显式要求保存也仍然适用——如果用户要求保存 PR list 或活动总结,引导 small model 反问"什么是 surprising 或 non-obvious 的部分",只保存那部分,而不是把活动日志当 memory。最后,把"代码模式/架构/文件路径/git history/调试 recipe/CLAUDE.md 已记录的内容/临时任务状态"列为显式排除项,因为这些都是可从代码或 git 推导的。
 
 **黑名单**：硬编码的强制再确认正则（`rm\s+-rf\s+/`、`mkfs\.`、`dd\s+.*of=/dev/`）。即使任意 always-rule match 也再弹一次。
 

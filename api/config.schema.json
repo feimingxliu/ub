@@ -246,7 +246,8 @@
           "type": "integer"
         },
         "max_prompt_chars": {
-          "type": "integer"
+          "type": "integer",
+          "description": "Positive values must be at least 1024; zero uses the default."
         },
         "min_turns_since_extraction": {
           "type": "integer"

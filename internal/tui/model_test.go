@@ -496,6 +496,27 @@ func TestModelShowsBackgroundActivityNotice(t *testing.T) {
 	}
 }
 
+func TestModelIgnoresBackgroundEventFromRetiredSession(t *testing.T) {
+	events := make(chan Event, 1)
+	runner := &scriptedRunner{currentSessionID: "current-session"}
+	model := NewModel(Options{Runner: runner, BackgroundEvents: events})
+	updated, cmd := model.handleBackgroundEvent(backgroundEventMsg{
+		event: Event{
+			Type:      EventActivity,
+			SessionID: "retired-session",
+			Summary:   "memory created for retired session",
+		},
+		ok: true,
+	})
+	model = assertModel(t, updated)
+	if got := model.MessageTexts(); len(got) != 0 {
+		t.Fatalf("retired-session event leaked into transcript: %#v", got)
+	}
+	if cmd == nil {
+		t.Fatal("background handler did not continue waiting for events")
+	}
+}
+
 func TestModelDefersBackgroundActivityNoticeWhileStreaming(t *testing.T) {
 	events := make(chan Event, 1)
 	model := NewModel(Options{

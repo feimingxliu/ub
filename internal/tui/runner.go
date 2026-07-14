@@ -269,7 +269,10 @@ const (
 
 // Event is one Agent-to-TUI progress message.
 type Event struct {
-	Type            EventType
+	Type EventType
+	// SessionID is set for background work so a late event from a retired
+	// conversation cannot be rendered in the currently selected transcript.
+	SessionID       string
 	Text            string
 	ToolUseID       string
 	ToolName        string

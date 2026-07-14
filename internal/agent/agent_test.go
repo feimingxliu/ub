@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/invopop/jsonschema"
 
@@ -1246,7 +1248,7 @@ func TestAgentHidesAndRejectsPlanWriteOutsidePlanMode(t *testing.T) {
 	if !toolNamesContain(tools, "exit_plan_mode") {
 		t.Fatalf("plan mode should advertise exit_plan_mode: %#v", tools)
 	}
-	for _, hidden := range []string{"enter_plan_mode", "plan_update_step", "todo_write", "todo_update", "edit", "bash", "web_search", "web_fetch", "remember"} {
+	for _, hidden := range []string{"enter_plan_mode", "plan_update_step", "todo_write", "todo_update", "edit", "bash", "web_search", "web_fetch", "remember", "forget"} {
 		if toolNamesContain(tools, hidden) {
 			t.Fatalf("plan mode should not advertise %s: %#v", hidden, tools)
 		}
@@ -3650,8 +3652,11 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 		AutoMemoryModel:    "small",
 		WorkspaceRoot:      ws,
 		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
-			Enabled:       &enabled,
-			MaxCandidates: 3,
+			Enabled:                 &enabled,
+			MaxCandidates:           3,
+			MinTurnsSinceExtraction: 1,
+			MinNewMessages:          1,
+			MinInterval:             1,
 		}},
 		Events: func(event Event) {
 			events = append(events, event)
@@ -3663,7 +3668,7 @@ func TestAgentAutoWritesMemoryAfterSuccessfulTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := a.Run(context.Background(), Request{SessionID: "sess_auto_mem", Prompt: "remember build command", Turn: 1}); err != nil {
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_auto_mem", Prompt: "remember this for future reference: build command", Turn: 1}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if err := a.DrainAutoMemory(context.Background()); err != nil {
@@ -3767,7 +3772,7 @@ func TestAgentAutoMemorySkipsPlanMode(t *testing.T) {
 	}
 }
 
-func TestAgentAutoMemoryDoesNotRunForSimpleSingleTurn(t *testing.T) {
+func TestAgentAutoMemoryDoesNotRunBeforeBatchThreshold(t *testing.T) {
 	ws := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
@@ -3838,7 +3843,7 @@ func TestAgentAutoMemoryBatchesTurnsBeforeExtraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	res, err := a.Run(context.Background(), Request{SessionID: "sess_batch_mem", Prompt: "inspect build setup", Turn: 1})
+	res, err := a.Run(context.Background(), Request{SessionID: "sess_batch_mem", Prompt: "the convention is to use make for builds", Turn: 1})
 	if err != nil {
 		t.Fatalf("Run turn 1: %v", err)
 	}
@@ -3850,7 +3855,7 @@ func TestAgentAutoMemoryBatchesTurnsBeforeExtraction(t *testing.T) {
 	}
 	if _, err := a.Run(context.Background(), Request{
 		SessionID: "sess_batch_mem",
-		Prompt:    "inspect tests",
+		Prompt:    "the standard test command is make test",
 		Turn:      2,
 		History:   res.Messages,
 	}); err != nil {
@@ -3926,6 +3931,432 @@ func TestAgentAutoMemorySkipsExternalContextTools(t *testing.T) {
 	}
 }
 
+func TestMemoryAutoEmptyResultBackoff(t *testing.T) {
+	// Direct scheduler test that does not depend on agent turn lifecycle.
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("answer"), fake.Done()},
+		{fake.TextDelta("answer"), fake.Done()},
+		{fake.TextDelta("answer"), fake.Done()},
+		{fake.TextDelta("answer"), fake.Done()},
+		{fake.TextDelta("answer"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+	}}
+	enabled := true
+	sched := NewMemoryAutoScheduler()
+	a, err := New(Options{
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execmode.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 1,
+			MinNewMessages:          1,
+			MinInterval:             1, // 1ns floor, effectively disable interval gating
+		}},
+		MemoryAutoScheduler: sched,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	msgs := []message.Message{message.Text(message.RoleUser, "prefer using X")}
+	agent := a.backgroundAutoMemoryAgent()
+	ctx := context.WithoutCancel(context.Background())
+
+	// Helper: observe one job and wait for it to complete.
+	observeAndDrain := func(turn int) {
+		t.Helper()
+		sched.Observe(autoMemoryJob{
+			agent:    agent,
+			ctx:      ctx,
+			session:  "sess",
+			turn:     turn,
+			messages: msgs,
+		})
+		if err := sched.Drain(ctx, 5000000000); err != nil {
+			t.Fatalf("Drain turn %d: %v", turn, err)
+		}
+	}
+
+	// Turns 1-3: each triggers extraction, returns empty → consecutiveEmpty=3.
+	for i := 1; i <= 3; i++ {
+		observeAndDrain(i)
+		if len(summary.requests) != i {
+			t.Fatalf("after turn %d: requests=%d want %d", i, len(summary.requests), i)
+		}
+	}
+	sched.mu.Lock()
+	ce := sched.consecutiveEmpty
+	sched.mu.Unlock()
+	if ce != 3 {
+		t.Fatalf("consecutiveEmpty=%d want 3", ce)
+	}
+
+	// Turn 4: backoff active, minTurns=1*2=2, minMessages=1*2=2.
+	// After Observe, bufferedTurns=1 < 2 → no extraction.
+	observeAndDrain(4)
+	if len(summary.requests) != 3 {
+		t.Fatalf("backoff should prevent turn 4: requests=%d want 3", len(summary.requests))
+	}
+
+	// Turn 5: bufferedTurns=2 = effective minTurns → triggers.
+	observeAndDrain(5)
+	if len(summary.requests) != 4 {
+		t.Fatalf("after turn 5: requests=%d want 4", len(summary.requests))
+	}
+}
+
+func TestMemoryAutoProviderFailuresDoNotBackoff(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	enabled := true
+	sched := NewMemoryAutoScheduler()
+	summary := &scriptProvider{
+		chatErrors: []error{errors.New("temporary provider failure"), errors.New("temporary provider failure"), errors.New("temporary provider failure")},
+		scripts:    []fake.Script{{fake.TextDelta(`{"memories":[]}`), fake.Done()}},
+	}
+	a, err := New(Options{
+		Provider:           &scriptProvider{},
+		Tools:              tool.New(),
+		Model:              "fake/model",
+		Mode:               execmode.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 1,
+			MinNewMessages:          1,
+			MinInterval:             1,
+		}},
+		MemoryAutoScheduler: sched,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	for turn := 1; turn <= 3; turn++ {
+		sched.Observe(autoMemoryJob{
+			agent:    a.backgroundAutoMemoryAgent(),
+			ctx:      ctx,
+			session:  "sess",
+			turn:     turn,
+			messages: []message.Message{message.Text(message.RoleUser, "durable fact")},
+		})
+		if err := sched.Drain(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Drain turn %d: %v", turn, err)
+		}
+	}
+	sched.mu.Lock()
+	consecutiveEmpty := sched.consecutiveEmpty
+	sched.mu.Unlock()
+	if consecutiveEmpty != 0 {
+		t.Fatalf("provider failures must not enter empty-result backoff, got %d", consecutiveEmpty)
+	}
+	if len(summary.requests) != 3 {
+		t.Fatalf("provider requests after failures = %d, want 3", len(summary.requests))
+	}
+}
+
+func TestMemoryAutoWriteFailuresDoNotBackoff(t *testing.T) {
+	ws := t.TempDir()
+	stateFile := filepath.Join(t.TempDir(), "state-file")
+	if err := os.WriteFile(stateFile, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write state file: %v", err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", stateFile)
+	enabled := true
+	sched := NewMemoryAutoScheduler()
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta(`{"memories":[{"category":"project","text":"durable fact"}]}`), fake.Done()},
+		{fake.TextDelta(`{"memories":[{"category":"project","text":"durable fact"}]}`), fake.Done()},
+		{fake.TextDelta(`{"memories":[{"category":"project","text":"durable fact"}]}`), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider:           &scriptProvider{},
+		Tools:              tool.New(),
+		Model:              "fake/model",
+		Mode:               execmode.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 1,
+			MinNewMessages:          1,
+			MinInterval:             1,
+		}},
+		MemoryAutoScheduler: sched,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	ctx := context.Background()
+	for turn := 1; turn <= 3; turn++ {
+		sched.Observe(autoMemoryJob{
+			agent:    a.backgroundAutoMemoryAgent(),
+			ctx:      ctx,
+			session:  "sess",
+			turn:     turn,
+			messages: []message.Message{message.Text(message.RoleUser, "durable fact")},
+		})
+		if err := sched.Drain(ctx, 5*time.Second); err != nil {
+			t.Fatalf("Drain turn %d: %v", turn, err)
+		}
+	}
+	sched.mu.Lock()
+	consecutiveEmpty := sched.consecutiveEmpty
+	sched.mu.Unlock()
+	if consecutiveEmpty != 0 {
+		t.Fatalf("write failures must not enter empty-result backoff, got %d", consecutiveEmpty)
+	}
+}
+
+func TestMemoryAutoSchedulerDoesNotBatchAcrossSessions(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	enabled := true
+	sched := NewMemoryAutoScheduler()
+	summary := &scriptProvider{scripts: []fake.Script{{fake.TextDelta(`{"memories":[]}`), fake.Done()}}}
+	a, err := New(Options{
+		Provider:           &scriptProvider{},
+		Tools:              tool.New(),
+		Model:              "fake/model",
+		Mode:               execmode.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 2,
+			MinNewMessages:          99,
+			MinInterval:             1,
+		}},
+		MemoryAutoScheduler: sched,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	observe := func(session string, turn int, text string) {
+		t.Helper()
+		sched.Observe(autoMemoryJob{
+			agent:    a.backgroundAutoMemoryAgent(),
+			ctx:      context.Background(),
+			session:  session,
+			turn:     turn,
+			messages: []message.Message{message.Text(message.RoleUser, text)},
+		})
+		if err := sched.Drain(context.Background(), 5*time.Second); err != nil {
+			t.Fatalf("Drain %s turn %d: %v", session, turn, err)
+		}
+	}
+
+	observe("session-a", 1, "A-PRIVATE-MARKER")
+	observe("session-b", 1, "B-FIRST-MARKER")
+	observe("session-b", 2, "B-SECOND-MARKER")
+	if len(summary.requests) != 1 {
+		t.Fatalf("extraction requests = %d, want 1", len(summary.requests))
+	}
+	rendered := renderMessages(summary.requests[0].Messages)
+	if strings.Contains(rendered, "A-PRIVATE-MARKER") || !strings.Contains(rendered, "B-FIRST-MARKER") || !strings.Contains(rendered, "B-SECOND-MARKER") {
+		t.Fatalf("cross-session batch =\n%s", rendered)
+	}
+}
+
+func TestMemoryAutoSchedulerDiscardSessionDefersCleanupUntilRunningJobFinishes(t *testing.T) {
+	sched := NewMemoryAutoScheduler()
+	sched.mu.Lock()
+	sched.inProgress = true
+	sched.runningSession = "old-session"
+	sched.pending = &autoMemoryJob{session: "old-session"}
+	sched.sessionID = "old-session"
+	sched.hasSession = true
+	sched.bufferedMessages = []message.Message{message.Text(message.RoleUser, "discard me")}
+	sched.bufferedTurns = 1
+	sched.mu.Unlock()
+
+	cleaned := make(chan struct{})
+	if deferred := sched.DiscardSession("old-session", func() { close(cleaned) }); !deferred {
+		t.Fatal("cleanup should wait for the running old-session job")
+	}
+	select {
+	case <-cleaned:
+		t.Fatal("cleanup ran before the old-session job finished")
+	default:
+	}
+
+	if next := sched.completeRun("old-session"); next != nil {
+		t.Fatalf("discarded session scheduled another job: %#v", next)
+	}
+	select {
+	case <-cleaned:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not run after the old-session job finished")
+	}
+
+	sched.mu.Lock()
+	defer sched.mu.Unlock()
+	if sched.inProgress || sched.runningSession != "" || sched.hasSession || sched.pending != nil || sched.bufferedTurns != 0 || len(sched.bufferedMessages) != 0 {
+		t.Fatalf("scheduler after discard = %#v", sched)
+	}
+}
+
+func TestBuildAutoMemoryPromptHonorsTotalBudget(t *testing.T) {
+	prompt, err := buildAutoMemoryPrompt("", []message.Message{message.Text(message.RoleUser, strings.Repeat("x", 8_000))}, 1_200)
+	if err != nil {
+		t.Fatalf("buildAutoMemoryPrompt: %v", err)
+	}
+	if got := utf8.RuneCountInString(prompt); got > 1_200 {
+		t.Fatalf("prompt chars = %d, want <= 1200", got)
+	}
+	if !strings.Contains(prompt, "Turn:") {
+		t.Fatalf("prompt omitted turn section:\n%s", prompt)
+	}
+	if _, err := buildAutoMemoryPrompt("", nil, 1); err == nil {
+		t.Fatal("tiny total budget should fail before provider call")
+	}
+}
+
+func TestMemoryAutoExistingMemoryInjected(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	// Pre-populate memory with an existing entry.
+	_, _, err := memory.Append(ws, memory.ScopeAuto, memory.CatProject, "build command is make build")
+	if err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	reg := tool.New()
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("ok"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+	}}
+	enabled := true
+	a, err := New(Options{
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execmode.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 1,
+			MinNewMessages:          1,
+			MinInterval:             1, // 1ns floor
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_existing", Prompt: "remember this for future reference: from now on lint before commit", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory: %v", err)
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("requests=%d want 1", len(summary.requests))
+	}
+	rendered := renderMessages(summary.requests[0].Messages)
+	if !strings.Contains(rendered, "build command is make build") {
+		t.Fatalf("extraction prompt missing existing memory:\n%s", rendered)
+	}
+}
+
+func TestMemoryAutoPromptIncludesTaxonomyAndGate(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	reg := tool.New()
+	main := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta("ok"), fake.Done()},
+	}}
+	summary := &scriptProvider{scripts: []fake.Script{
+		{fake.TextDelta(`{"memories":[]}`), fake.Done()},
+	}}
+	enabled := true
+	a, err := New(Options{
+		Provider:           main,
+		Tools:              reg,
+		Model:              "fake/model",
+		Mode:               execmode.ModeWork,
+		AutoMemoryProvider: summary,
+		AutoMemoryModel:    "small",
+		WorkspaceRoot:      ws,
+		Memory: config.MemoryConfig{Auto: config.MemoryAutoConfig{
+			Enabled:                 &enabled,
+			MinTurnsSinceExtraction: 1,
+			MinNewMessages:          1,
+			MinInterval:             1,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_prompt", Prompt: "remember this for future reference: the build command is make", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := a.DrainAutoMemory(context.Background()); err != nil {
+		t.Fatalf("DrainAutoMemory: %v", err)
+	}
+	if len(summary.requests) != 1 {
+		t.Fatalf("requests=%d want 1", len(summary.requests))
+	}
+	rendered := renderMessages(summary.requests[0].Messages)
+
+	// Four-type taxonomy must be present so the small model classifies by
+	// semantic role rather than guessing from a flat category list.
+	for _, want := range []string{
+		"<name>user</name>",
+		"<name>feedback</name>",
+		"<name>project</name>",
+		"<name>reference</name>",
+		"<when_to_save>",
+		"<maps_to>",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("extraction prompt missing taxonomy element %q:\n%s", want, rendered)
+		}
+	}
+
+	// H2 explicit-save gate: exclusions apply even when user asks to save.
+	if !strings.Contains(rendered, "even when the user explicitly asks you to save") {
+		t.Fatalf("extraction prompt missing H2 explicit-save gate:\n%s", rendered)
+	}
+
+	// What-NOT-to-save section must call out the derivable-from-code cases.
+	for _, want := range []string{
+		"Code patterns",
+		"Git history",
+		"Debugging solutions",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("extraction prompt missing NOT-to-save rule %q:\n%s", want, rendered)
+		}
+	}
+}
+
 func TestAgentRecordsRememberToolMemoryWrite(t *testing.T) {
 	ws := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -3971,6 +4402,53 @@ func TestAgentRecordsRememberToolMemoryWrite(t *testing.T) {
 	if payload.Source != "tool" || payload.Scope != "auto" || payload.Category != "project" || !strings.Contains(payload.Text, "make test") {
 		t.Fatalf("memory_write payload = %#v", payload)
 	}
+}
+
+func TestAgentRecordsForgetToolMemoryWrite(t *testing.T) {
+	ws := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	if _, _, err := memory.Append(ws, memory.ScopeAuto, memory.CatProject, "test command is make test"); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	reg := tool.New()
+	if err := memorytool.Register(reg, ws); err != nil {
+		t.Fatalf("register memory: %v", err)
+	}
+	writer := &recordingRollout{}
+	p := &scriptProvider{scripts: []fake.Script{
+		{fake.ToolCall("forget", map[string]any{"text": "test command is make test", "category": "project"}), fake.Done()},
+		{fake.TextDelta("forgotten"), fake.Done()},
+	}}
+	a, err := New(Options{
+		Provider: p,
+		Tools:    reg,
+		Rollout:  writer,
+		Model:    "fake/model",
+		Mode:     execmode.ModeWork,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := a.Run(context.Background(), Request{SessionID: "sess_forget", Prompt: "forget this", Turn: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := memory.Read(ws, 0); strings.Contains(got, "test command is make test") {
+		t.Fatalf("forgotten entry still present:\n%s", got)
+	}
+	for _, event := range writer.events {
+		if event.Type != rollout.TypeMemoryWrite {
+			continue
+		}
+		var payload rollout.MemoryWritePayload
+		if err := json.Unmarshal(event.Payload, &payload); err != nil {
+			t.Fatalf("decode memory_write: %v", err)
+		}
+		if payload.Source == "tool" && payload.Action == "deleted" && payload.Category == "project" {
+			return
+		}
+	}
+	t.Fatalf("missing deleted memory_write event: %#v", writer.events)
 }
 
 func TestAgentInjectsSessionIDIntoToolContext(t *testing.T) {
