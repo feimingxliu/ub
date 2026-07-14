@@ -154,8 +154,8 @@ func gitPromptSection(workspaceRoot string, cfg config.PromptSectionConfig, run 
 	return includedPromptSection(promptSectionGitSnapshot, promptStabilityDynamic, "git", msg, strings.Contains(msg.Text(), "[git snapshot truncated]"))
 }
 
-func executionModePromptSection(mode execmode.Mode) promptSection {
-	msg, ok := executionModeMessageForMode(mode)
+func executionModePromptSection(mode execmode.Mode, workspaceRoot string) promptSection {
+	msg, ok := executionModeMessageForMode(mode, workspaceRoot)
 	if !ok {
 		return emptyPromptSection(promptSectionExecutionMode, promptStatusUnavailable, promptStabilityDynamic, "execution-mode")
 	}
@@ -197,7 +197,7 @@ func (r *promptRegistry) mainSections(mode execmode.Mode) []promptSection {
 		return nil
 	}
 	sections := clonePromptSections(r.startup)
-	sections = append(sections, executionModePromptSection(mode))
+	sections = append(sections, executionModePromptSection(mode, r.workspaceRoot))
 	sections = append(sections, memoryPromptSection(r.workspaceRoot, r.memoryMaxChars))
 	return sections
 }

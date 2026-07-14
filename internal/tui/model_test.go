@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -4370,7 +4371,7 @@ func TestShiftTabCyclesMode(t *testing.T) {
 	}
 }
 
-func TestPlanModePromptApproveEnterSwitchesMode(t *testing.T) {
+func TestPlanModePromptAutoApprovesEnter(t *testing.T) {
 	response := make(chan agent.PlanModeResponse, 1)
 	runner := &scriptedRunner{mode: "work"}
 	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
@@ -4381,17 +4382,12 @@ func TestPlanModePromptApproveEnterSwitchesMode(t *testing.T) {
 		},
 		Response: response,
 	}
+	// enter_plan_mode is auto-approved without TUI popup.
 	updated, _ := model.Update(planModeRequestMsg{request: req, ok: true})
 	model = assertModel(t, updated)
-	if model.pendingPlanMode == nil {
-		t.Fatalf("pendingPlanMode should be set")
+	if model.pendingPlanMode != nil {
+		t.Fatalf("pendingPlanMode should be nil (enter is auto-approved)")
 	}
-	if view := viewString(model); !strings.Contains(view, "Enter plan mode?") || !strings.Contains(view, "multi-file change") {
-		t.Fatalf("plan mode prompt missing content:\n%s", view)
-	}
-
-	updated, _ = model.Update(runePress('y'))
-	model = assertModel(t, updated)
 	if runner.mode != "plan" || model.status.executionMode != "plan" {
 		t.Fatalf("mode = runner %q status %q, want plan", runner.mode, model.status.executionMode)
 	}
@@ -4403,8 +4399,32 @@ func TestPlanModePromptApproveEnterSwitchesMode(t *testing.T) {
 	default:
 		t.Fatal("no plan mode response returned")
 	}
-	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "approved enter plan mode") {
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "entered plan mode") {
 		t.Fatalf("messages = %#v", got)
+	}
+}
+
+func TestPlanModePromptEnterFailureLeavesStatusUnchanged(t *testing.T) {
+	response := make(chan agent.PlanModeResponse, 1)
+	runner := &failingPlanModeRunner{scriptedRunner: &scriptedRunner{mode: "work"}}
+	model := NewModel(Options{Runner: runner, ExecutionMode: "work"})
+	req := PlanModeRequest{Request: agent.PlanModeRequest{Action: agent.PlanModeEnter}, Response: response}
+
+	updated, _ := model.Update(planModeRequestMsg{request: req, ok: true})
+	model = assertModel(t, updated)
+	if runner.mode != "work" || model.status.executionMode != "work" {
+		t.Fatalf("mode = runner %q status %q, want work", runner.mode, model.status.executionMode)
+	}
+	select {
+	case got := <-response:
+		if got.Approved || got.Reason == "" {
+			t.Fatalf("response = %#v, want rejected transition", got)
+		}
+	default:
+		t.Fatal("no plan mode response returned")
+	}
+	if got := model.MessageTexts(); len(got) != 1 || !strings.Contains(got[0], "failed to enter plan mode") {
+		t.Fatalf("messages = %#v, want failed transition", got)
 	}
 }
 
@@ -4414,15 +4434,16 @@ func TestPlanModePromptDenyExitStaysInPlan(t *testing.T) {
 	model := NewModel(Options{Runner: runner, ExecutionMode: "plan"})
 	req := PlanModeRequest{
 		Request: agent.PlanModeRequest{
-			Action:  agent.PlanModeExit,
-			PlanID:  "plan-1",
-			Summary: "Inspect then edit",
+			Action:   agent.PlanModeExit,
+			PlanID:   "plan-1",
+			Summary:  "Inspect then edit",
+			PlanBody: "# Inspect then edit\n\n- [ ] 1. inspect\n",
 		},
 		Response: response,
 	}
 	updated, _ := model.Update(planModeRequestMsg{request: req, ok: true})
 	model = assertModel(t, updated)
-	if view := viewString(model); !strings.Contains(view, "Exit plan mode?") || !strings.Contains(view, "plan-1") {
+	if view := viewString(model); !strings.Contains(view, "Approve plan and exit plan mode?") || !strings.Contains(view, "Inspect then edit") || !strings.Contains(view, "# Inspect then edit") {
 		t.Fatalf("exit prompt missing content:\n%s", view)
 	}
 
@@ -5903,6 +5924,14 @@ func (r *scriptedRunner) ExitPlanMode() (string, string, error) {
 	r.mode = to
 	r.prePlanMode = ""
 	return from, to, nil
+}
+
+type failingPlanModeRunner struct {
+	*scriptedRunner
+}
+
+func (r *failingPlanModeRunner) EnterPlanMode() (string, string, error) {
+	return r.mode, string(execmode.ModePlan), errors.New("mode storage is unavailable")
 }
 
 func (r *scriptedRunner) Models() []string {

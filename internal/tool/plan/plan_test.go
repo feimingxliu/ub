@@ -60,6 +60,15 @@ func TestNewPlanID_MonotonicallyDifferentTimestamps(t *testing.T) {
 	}
 }
 
+func TestPathRejectsUnsafePlanID(t *testing.T) {
+	ws := testWorkspace(t)
+	for _, id := range []string{"../secret", "nested/plan", `nested\\plan`, ".", ""} {
+		if _, err := Path(ws, id); err == nil {
+			t.Errorf("Path(%q) succeeded, want invalid plan_id error", id)
+		}
+	}
+}
+
 func TestPlanWrite_HappyPath(t *testing.T) {
 	ws := testWorkspace(t)
 	freezeTime(t, time.Date(2026, 5, 27, 10, 0, 0, 0, time.UTC))

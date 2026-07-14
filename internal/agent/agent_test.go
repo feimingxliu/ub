@@ -29,6 +29,7 @@ import (
 	"github.com/feimingxliu/ub/internal/tool"
 	"github.com/feimingxliu/ub/internal/tool/fs"
 	memorytool "github.com/feimingxliu/ub/internal/tool/memory"
+	"github.com/feimingxliu/ub/internal/tool/plan"
 	"github.com/feimingxliu/ub/internal/workspace/filehistory"
 	"github.com/feimingxliu/ub/internal/workspace/memory"
 )
@@ -526,10 +527,10 @@ func TestAgentInjectsPlanModeInstructionsWithoutPersistingThem(t *testing.T) {
 		"<execution_mode>",
 		"mode=plan",
 		"Inspect the workspace only with read, ls, glob, and grep",
-		"create a plan with the plan_write tool before starting implementation",
+		"create a plan with the plan_write tool",
 		"update that same plan with plan_update instead of creating another plan",
-		"Do not create, edit, delete, move, format, install, execute commands",
-		"call exit_plan_mode with the plan_id",
+		"Write/edit/bash/multiedit tools are BLOCKED",
+		"call exit_plan_mode with that plan_id to present the exact artifact for user approval",
 	} {
 		if !containsText(got, want) {
 			t.Fatalf("plan mode instructions missing %q:\n%#v", want, got)
@@ -1384,11 +1385,77 @@ func TestExitPlanModeRequiresPlanIDBeforePrompt(t *testing.T) {
 	if controller.calls != 0 {
 		t.Fatalf("controller was called without plan_id: %#v", controller.requests)
 	}
-	if !result.IsError || !strings.Contains(result.Content, "requires a plan_id") {
+	if !result.IsError || !strings.Contains(result.Content, "requires the plan_id") {
 		t.Fatalf("result = %#v, want missing plan_id error", result)
 	}
 	if result.Metadata["mode_action"] != string(PlanModeExit) || result.Metadata["mode_status"] != "missing_plan" || result.Metadata["mode_approved"] != "false" {
 		t.Fatalf("metadata = %#v, want missing_plan denial", result.Metadata)
+	}
+}
+
+func TestExitPlanModeDisplaysExactPlanArtifact(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	root, err := plan.RootDir(workspace)
+	if err != nil {
+		t.Fatalf("RootDir: %v", err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	const planID = "20260714T120000Z-review-fix"
+	const body = "# Fix review findings\n\n## Steps\n\n- [ ] 1. add tests\n"
+	if err := os.WriteFile(filepath.Join(root, planID+".md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var exitTool tool.Tool
+	for _, candidate := range NewPlanModeTools() {
+		if candidate.Name() == "exit_plan_mode" {
+			exitTool = candidate
+			break
+		}
+	}
+	if exitTool == nil {
+		t.Fatal("exit_plan_mode tool missing")
+	}
+	controller := &recordingPlanModeController{response: PlanModeResponse{Approved: true, FromMode: execmode.ModePlan, ToMode: execmode.ModeWork}}
+	ctx := tool.WithWorkspace(contextWithPlanModeController(context.Background(), controller), workspace)
+	result, err := exitTool.Execute(ctx, json.RawMessage(`{"plan_id":"20260714T120000Z-review-fix"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.IsError || controller.calls != 1 {
+		t.Fatalf("result = %#v, calls = %d", result, controller.calls)
+	}
+	if got := controller.requests[0]; got.PlanID != planID || got.PlanBody != body {
+		t.Fatalf("request = %#v, want plan_id %q and exact body", got, planID)
+	}
+}
+
+func TestExitPlanModeRejectsMissingArtifactBeforePrompt(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	var exitTool tool.Tool
+	for _, candidate := range NewPlanModeTools() {
+		if candidate.Name() == "exit_plan_mode" {
+			exitTool = candidate
+			break
+		}
+	}
+	if exitTool == nil {
+		t.Fatal("exit_plan_mode tool missing")
+	}
+	controller := &recordingPlanModeController{}
+	ctx := tool.WithWorkspace(contextWithPlanModeController(context.Background(), controller), workspace)
+	result, err := exitTool.Execute(ctx, json.RawMessage(`{"plan_id":"20260714T120000Z-missing"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.IsError || !strings.Contains(result.Content, "could not load plan") {
+		t.Fatalf("result = %#v, want missing artifact error", result)
+	}
+	if controller.calls != 0 {
+		t.Fatalf("controller was called for missing artifact: %#v", controller.requests)
 	}
 }
 

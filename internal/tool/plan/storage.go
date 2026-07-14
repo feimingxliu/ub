@@ -27,6 +27,15 @@ const (
 // nowFunc is overridden in tests for deterministic plan ids and log lines.
 var nowFunc = func() time.Time { return time.Now().UTC() }
 
+// RootDir returns the absolute path of the plans directory for a workspace.
+// Plans are stored under $XDG_STATE_HOME/ub/plans/<project-key>/.
+func RootDir(workspace string) (string, error) {
+	if workspace == "" {
+		return "", fmt.Errorf("plan: empty workspace")
+	}
+	return planRoot(workspace)
+}
+
 // planRoot returns the absolute path of the plans directory for a workspace.
 // Plans are stored under $XDG_STATE_HOME/ub/plans/<project-key>/.
 func planRoot(workspace string) (string, error) {
@@ -43,6 +52,9 @@ func planRoot(workspace string) (string, error) {
 
 // planPath returns the absolute path of one plan markdown file.
 func planPath(workspace, planID string) (string, error) {
+	if err := validatePlanID(planID); err != nil {
+		return "", fmt.Errorf("plan: %w", err)
+	}
 	root, err := planRoot(workspace)
 	if err != nil {
 		return "", err
@@ -112,7 +124,20 @@ func List(workspace string) ([]Info, error) {
 	return plans, nil
 }
 
-var slugReplacer = regexp.MustCompile(`[^A-Za-z0-9-]+`)
+var (
+	slugReplacer  = regexp.MustCompile(`[^A-Za-z0-9-]+`)
+	planIDPattern = regexp.MustCompile(`^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$`)
+)
+
+// validatePlanID accepts only the IDs emitted by plan_write. Keeping plan IDs
+// as a single portable filename component prevents callers from escaping the
+// per-workspace plans directory through planPath.
+func validatePlanID(planID string) error {
+	if !planIDPattern.MatchString(planID) {
+		return fmt.Errorf("invalid plan_id %q", planID)
+	}
+	return nil
+}
 
 // slugify produces a filesystem-safe, human-readable suffix for a plan id.
 func slugify(title string) string {

@@ -22,6 +22,7 @@ func (a *Agent) runTool(ctx context.Context, sessionID string, turn int, call to
 	ctx = tool.WithSessionID(ctx, sessionID)
 	ctx = tool.WithAgentTurn(ctx, turn)
 	ctx = tool.WithToolUseID(ctx, call.ID)
+	ctx = tool.WithWorkspace(ctx, a.workspaceRoot)
 	ctx = contextWithAsker(ctx, a.asker)
 	ctx = contextWithPlanModeController(ctx, a.planMode)
 	if a.subagentRunner != nil {

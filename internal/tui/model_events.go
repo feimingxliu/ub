@@ -193,12 +193,38 @@ func (m Model) handleAskRequest(msg askRequestMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handlePlanModeRequest displays the plan-mode confirmation dialog for an
-// incoming enter_plan_mode or exit_plan_mode request from the agent.
+// handlePlanModeRequest processes an incoming enter_plan_mode or
+// exit_plan_mode request from the agent.
+// - enter_plan_mode is auto-approved silently (no TUI popup).
+// - exit_plan_mode displays a confirmation dialog with plan content.
 func (m Model) handlePlanModeRequest(msg planModeRequestMsg) (tea.Model, tea.Cmd) {
 	if !msg.ok {
 		return m, nil
 	}
+	req := msg.request.Request
+	if req.Action == agent.PlanModeEnter {
+		// Auto-approve — enter plan mode silently without TUI popup.
+		from, to, err := m.applyPlanModeTransition(req.Action)
+		resp := agent.PlanModeResponse{Approved: true, FromMode: execmode.Mode(from), ToMode: execmode.Mode(to)}
+		if err != nil {
+			resp.Approved = false
+			resp.Reason = err.Error()
+		}
+		if resp.Approved && resp.ToMode != "" {
+			m.status.executionMode = string(resp.ToMode)
+		}
+		if msg.request.Response != nil {
+			msg.request.Response <- resp
+		}
+		if resp.Approved {
+			m.messages.append(systemRole, "entered plan mode (read-only except plan_write/plan_update)")
+		} else {
+			m.messages.append(errorRole, "failed to enter plan mode: "+defaultString(resp.Reason, "mode transition was rejected"))
+		}
+		m.scrollToBottom()
+		return m, waitForPlanMode(m.planModeReqs)
+	}
+	// exit_plan_mode: show confirmation dialog to the user.
 	m.pendingPlanMode = &msg.request
 	m.planModePrompt = newPlanModePromptModel(msg.request.Request)
 	return m, nil
@@ -239,12 +265,14 @@ func (m Model) resolveAsk(skipped bool) (tea.Model, tea.Cmd) {
 // resolvePlanMode sends the user's plan-mode decision (approved or denied)
 // back to the agent via the response channel. On approval it applies the
 // mode transition (enter/exit plan) via the runner interface.
+// Only exit_plan_mode reaches this path — enter_plan_mode is auto-approved
+// in handlePlanModeRequest.
 func (m Model) resolvePlanMode(approved bool) (tea.Model, tea.Cmd) {
 	from := m.status.executionMode
 	to := from
 	var err error
-	if approved {
-		from, to, err = m.applyPlanModeTransition()
+	if approved && m.pendingPlanMode != nil {
+		from, to, err = m.applyPlanModeTransition(m.pendingPlanMode.Request.Action)
 	}
 	resp := m.planModePrompt.Response(approved, from, to, err)
 	if resp.Approved && resp.ToMode != "" {
@@ -265,9 +293,9 @@ func (m Model) resolvePlanMode(approved bool) (tea.Model, tea.Cmd) {
 // plan-mode request. It prefers the PlanModeControlRunner interface (which
 // records the pre-plan mode for later restoration) and falls back to the
 // generic ControlRunner.SetMode when unavailable.
-func (m Model) applyPlanModeTransition() (from, to string, err error) {
+func (m Model) applyPlanModeTransition(action agent.PlanModeAction) (from, to string, err error) {
 	if runner, ok := m.runner.(PlanModeControlRunner); ok {
-		switch m.planModePrompt.request.Action {
+		switch action {
 		case agent.PlanModeExit:
 			return runner.ExitPlanMode()
 		default:
@@ -275,7 +303,7 @@ func (m Model) applyPlanModeTransition() (from, to string, err error) {
 		}
 	}
 	target := string(execmode.ModePlan)
-	if m.planModePrompt.request.Action == agent.PlanModeExit {
+	if action == agent.PlanModeExit {
 		target = string(execmode.ModeWork)
 	}
 	from = m.status.executionMode

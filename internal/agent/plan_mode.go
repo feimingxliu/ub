@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -11,6 +12,7 @@ import (
 	execmode "github.com/feimingxliu/ub/internal/mode"
 	"github.com/feimingxliu/ub/internal/rollout"
 	"github.com/feimingxliu/ub/internal/tool"
+	"github.com/feimingxliu/ub/internal/tool/plan"
 )
 
 // planModeContextKey is the context key for the PlanModeController that
@@ -35,6 +37,7 @@ type PlanModeRequest struct {
 	Reason    string         `json:"reason,omitempty"`
 	PlanID    string         `json:"plan_id,omitempty"`
 	Summary   string         `json:"summary,omitempty"`
+	PlanBody  string         `json:"plan_body,omitempty"`
 }
 
 // PlanModeResponse is returned by the host after confirming or denying the
@@ -48,7 +51,8 @@ type PlanModeResponse struct {
 }
 
 // PlanModeController asks the host to enter or exit plan execmode. TUI
-// implementations usually show a confirmation dialog; headless runs omit it.
+// implementations enter silently and show the plan approval dialog on exit;
+// headless runs omit the controller.
 type PlanModeController interface {
 	ConfirmPlanMode(ctx context.Context, req PlanModeRequest) (PlanModeResponse, error)
 }
@@ -87,7 +91,7 @@ type enterPlanModeTool struct {
 func (t *enterPlanModeTool) Name() string { return "enter_plan_mode" }
 
 func (t *enterPlanModeTool) Description() string {
-	return "Ask the user to enter plan mode before doing complex implementation work. Use for new features, multi-file behavior changes, architecture choices, risky migrations, or ambiguous requirements that need read-only investigation and a persistent plan first. Do not use for small typo fixes, simple known bug fixes, already-specified implementation steps, or pure read-only questions. This tool is the only way to enter plan mode: stating \"entering plan mode\" in text does nothing, so call this tool instead of announcing it. Do not use todo_write as a substitute; todo_write tracks execution progress, not the planning step. In plan mode, create or revise the plan with plan_write or plan_update, then call exit_plan_mode when the plan is ready for approval."
+	return "Enter plan mode to design an approach before implementing. Use before complex new features, multi-file changes, architecture decisions, risky migrations, or ambiguous requirements. In plan mode only read tools (read, ls, glob, grep) and plan_write/plan_update are available — write/edit/bash are blocked. Use plan_write to create a plan, plan_update to revise it, then call exit_plan_mode for user approval. The only way to enter plan mode is to call this tool; stating \"entering plan mode\" in text does nothing. Do not use todo_write as a substitute."
 }
 
 func (t *enterPlanModeTool) Schema() *jsonschema.Schema { return t.schema }
@@ -109,6 +113,8 @@ func (t *enterPlanModeTool) Execute(ctx context.Context, raw json.RawMessage) (t
 			},
 		}, nil
 	}
+	// Enter silently — no user confirmation popup at entry time.
+	// The single approval point is exit_plan_mode.
 	resp, err := controller.ConfirmPlanMode(ctx, PlanModeRequest{
 		Action:    PlanModeEnter,
 		SessionID: tool.SessionIDFromContext(ctx),
@@ -119,11 +125,15 @@ func (t *enterPlanModeTool) Execute(ctx context.Context, raw json.RawMessage) (t
 	if err != nil {
 		return tool.Result{}, fmt.Errorf("enter_plan_mode: %w", err)
 	}
-	return planModeToolResult(PlanModeEnter, resp, "entered plan mode; inspect read-only context, write or update a plan artifact, then call exit_plan_mode for user approval", "user declined plan mode; continue in the current mode")
+	// If the controller returns approved=false (e.g. headless mode rejecting),
+	// respect it. In TUI mode the controller auto-approves enter requests.
+	return planModeToolResult(PlanModeEnter, resp,
+		"Entered plan mode. You are now in read-only mode. Explore the codebase, write a plan with plan_write, revise with plan_update, and call exit_plan_mode when ready for approval.",
+		"user declined plan mode; continue in the current mode")
 }
 
 type exitPlanModeArgs struct {
-	PlanID  string `json:"plan_id,omitempty" jsonschema:"description=Plan artifact id returned by plan_write or plan_update."`
+	PlanID  string `json:"plan_id" jsonschema:"required,description=Plan artifact id returned by plan_write or plan_update. The exact artifact is displayed for approval."`
 	Summary string `json:"summary,omitempty" jsonschema:"description=Concise summary of the plan the user is approving."`
 }
 
@@ -134,7 +144,7 @@ type exitPlanModeTool struct {
 func (t *exitPlanModeTool) Name() string { return "exit_plan_mode" }
 
 func (t *exitPlanModeTool) Description() string {
-	return "Ask the user to approve the current plan and exit plan execmode. Use only after plan_write or plan_update has captured the intended implementation plan. Include the plan_id returned by the plan tool and a concise summary. If the user declines, stay in plan mode and revise the existing plan."
+	return "Exit plan mode by presenting a specific saved plan for user approval. Use only after plan_write or plan_update has captured the implementation plan, and include its plan_id. If the user declines, stay in plan mode and revise the existing plan. This is the single approval point — enter_plan_mode does not require confirmation."
 }
 
 func (t *exitPlanModeTool) Schema() *jsonschema.Schema { return t.schema }
@@ -148,13 +158,12 @@ func (t *exitPlanModeTool) Execute(ctx context.Context, raw json.RawMessage) (to
 	planID := strings.TrimSpace(args.PlanID)
 	if planID == "" {
 		return tool.Result{
-			Content: "exit_plan_mode requires a plan_id from plan_write or plan_update before asking for approval; stay in plan mode and create or update a plan artifact first.",
+			Content: "exit_plan_mode requires the plan_id returned by plan_write or plan_update; stay in plan mode and create or revise the plan artifact first.",
 			IsError: true,
 			Metadata: map[string]string{
 				"mode_action":   string(PlanModeExit),
 				"mode_approved": "false",
 				"mode_status":   "missing_plan",
-				"reason":        "missing plan_id",
 			},
 		}, nil
 	}
@@ -169,6 +178,16 @@ func (t *exitPlanModeTool) Execute(ctx context.Context, raw json.RawMessage) (to
 			},
 		}, nil
 	}
+	// Read the exact plan artifact for display in the TUI approval dialog.
+	workspace := tool.WorkspaceFromContext(ctx)
+	planBody, planPath, err := readPlanBody(workspace, planID)
+	if err != nil {
+		return tool.Result{
+			Content:  "exit_plan_mode could not load plan " + planID + ": " + err.Error(),
+			IsError:  true,
+			Metadata: map[string]string{"mode_action": string(PlanModeExit), "mode_approved": "false", "mode_status": "missing_plan"},
+		}, nil
+	}
 	resp, err := controller.ConfirmPlanMode(ctx, PlanModeRequest{
 		Action:    PlanModeExit,
 		SessionID: tool.SessionIDFromContext(ctx),
@@ -176,11 +195,33 @@ func (t *exitPlanModeTool) Execute(ctx context.Context, raw json.RawMessage) (to
 		ToolUseID: tool.ToolUseIDFromContext(ctx),
 		PlanID:    planID,
 		Summary:   strings.TrimSpace(args.Summary),
+		PlanBody:  planBody,
 	})
 	if err != nil {
 		return tool.Result{}, fmt.Errorf("exit_plan_mode: %w", err)
 	}
-	return planModeToolResult(PlanModeExit, resp, "plan approved; exited plan mode and restored the previous execution mode", "user declined the plan; stay in plan mode and revise the existing plan")
+	approvedText := "plan approved; exited plan mode and restored the previous execution mode"
+	if planPath != "" {
+		approvedText += "; plan saved at " + planPath
+	}
+	return planModeToolResult(PlanModeExit, resp, approvedText, "user declined the plan; stay in plan mode and revise the existing plan")
+}
+
+// readPlanBody loads the exact requested plan artifact for the approval
+// dialog. The caller must not open the confirmation dialog without it.
+func readPlanBody(workspace, planID string) (string, string, error) {
+	if workspace == "" {
+		return "", "", fmt.Errorf("workspace is unavailable")
+	}
+	path, err := plan.Path(workspace, planID)
+	if err != nil {
+		return "", "", err
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", path, err
+	}
+	return string(body), path, nil
 }
 
 func planModeToolResult(action PlanModeAction, resp PlanModeResponse, approvedText, deniedText string) (tool.Result, error) {

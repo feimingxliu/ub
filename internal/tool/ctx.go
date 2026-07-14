@@ -12,6 +12,7 @@ const (
 	subagentDepthKey
 	agentTurnKey
 	toolUseIDKey
+	workspaceKey
 )
 
 // SubagentRunner is implemented by the agent runtime layer to dispatch a
@@ -115,5 +116,24 @@ func SessionIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	v, _ := ctx.Value(sessionIDKey).(string)
+	return v
+}
+
+// WithWorkspace returns a child context carrying the agent workspace root.
+// Empty workspace strings are dropped.
+func WithWorkspace(ctx context.Context, workspace string) context.Context {
+	if workspace == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, workspaceKey, workspace)
+}
+
+// WorkspaceFromContext returns the workspace root previously installed by
+// WithWorkspace, or "" if none.
+func WorkspaceFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(workspaceKey).(string)
 	return v
 }

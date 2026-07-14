@@ -86,7 +86,7 @@ func (m planModePromptModel) View(width int) string {
 	var b strings.Builder
 	switch m.request.Action {
 	case agent.PlanModeExit:
-		b.WriteString("Exit plan mode?")
+		b.WriteString("Approve plan and exit plan mode?")
 		if planID := strings.TrimSpace(m.request.PlanID); planID != "" {
 			b.WriteString("\nPlan: ")
 			b.WriteString(truncateText(planID, max(10, width-6)))
@@ -95,14 +95,17 @@ func (m planModePromptModel) View(width int) string {
 			b.WriteString("\n")
 			b.WriteString(truncateText(summary, max(10, width)))
 		}
-	default:
-		b.WriteString("Enter plan mode?")
-		if reason := strings.TrimSpace(m.request.Reason); reason != "" {
-			b.WriteString("\n")
-			b.WriteString(truncateText(reason, max(10, width)))
+		if body := strings.TrimSpace(m.request.PlanBody); body != "" {
+			b.WriteString("\n\n--- plan ---\n")
+			b.WriteString(truncateText(body, max(200, width*30)))
+		} else {
+			b.WriteString("\n\n(no plan file found; revise with plan_write or plan_update before exit_plan_mode)")
 		}
+	default:
+		// enter_plan_mode is auto-approved — this branch should not render.
+		b.WriteString("Enter plan mode?")
 	}
-	b.WriteString("\n\nEnter/y approves, Esc/n denies")
+	b.WriteString("\n\nEnter/y approves, Esc/n stays in plan mode")
 	return b.String()
 }
 

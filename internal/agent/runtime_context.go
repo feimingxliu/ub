@@ -7,6 +7,7 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	execmode "github.com/feimingxliu/ub/internal/mode"
+	"github.com/feimingxliu/ub/internal/tool/plan"
 	"github.com/feimingxliu/ub/internal/workspace/memory"
 )
 
@@ -73,22 +74,33 @@ func memoryMessageForWorkspace(workspaceRoot string, maxChars int) (message.Mess
 	return message.Text(message.RoleSystem, "<memory>\n"+body+"\n</memory>"), true
 }
 
-func executionModeMessageForMode(value execmode.Mode) (message.Message, bool) {
+func executionModeMessageForMode(value execmode.Mode, workspaceRoot string) (message.Message, bool) {
 	mode, err := execmode.ParseMode(string(value))
 	if err != nil || mode != execmode.ModePlan {
 		return message.Message{}, false
 	}
-	const body = `<execution_mode>
+	planDir := planStorageDir(workspaceRoot)
+	body := `<execution_mode>
 mode=plan
 </execution_mode>
 Plan mode instructions:
-- This is read-only planning execmode. Inspect the workspace only with read, ls, glob, and grep when needed.
-- For implementation requests such as add, fix, refactor, configure, test, build, or CI setup, create a plan with the plan_write tool before starting implementation.
+- You are in read-only plan mode. Inspect the workspace only with read, ls, glob, and grep.
+- Write/edit/bash/multiedit tools are BLOCKED. The ONLY tools available are read, ls, glob, grep, ask, plan_write, plan_update, exit_plan_mode, and get_goal.
+- For implementation requests such as add, fix, refactor, configure, test, build, or CI setup, create a plan with the plan_write tool. Plan files are stored under ` + planDir + `.
 - If a plan already exists and the user corrects or changes it, update that same plan with plan_update instead of creating another plan.
-- Do not create, edit, delete, move, format, install, execute commands, launch sub-agents, or otherwise change project files in plan execmode.
-- After writing or updating the plan, call exit_plan_mode with the plan_id and a concise summary to ask the user to approve the plan. If denied, revise the same plan with plan_update.
+- After writing or updating the plan, call exit_plan_mode with that plan_id to present the exact artifact for user approval.
+- Do NOT announce "entering plan mode" or "let me plan" in text. Do NOT write design docs to openspec/, docs/, or any directory other than the plan storage path above — those writes are blocked and the system will reject them.
 - If the user only asks a question, answer normally; use plan_write or plan_update only when a persistent execution plan is useful.`
 	return message.Text(message.RoleSystem, body), true
+}
+
+// planStorageDir returns the plans directory for a workspace, or a generic
+// placeholder if it cannot be derived. Used only for prompt injection.
+func planStorageDir(workspaceRoot string) string {
+	if dir, err := plan.RootDir(workspaceRoot); err == nil && dir != "" {
+		return dir
+	}
+	return "$XDG_STATE_HOME/ub/plans/<project-key>/"
 }
 
 func (c RuntimeContext) message() (message.Message, bool) {

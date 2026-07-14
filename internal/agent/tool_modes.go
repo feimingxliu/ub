@@ -121,7 +121,7 @@ func toolAvailableInMode(name string, mode execmode.Mode) bool {
 
 func toolAllowedInPlanMode(name string) bool {
 	switch name {
-	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update", "exit_plan_mode", "create_goal", "update_goal", "get_goal":
+	case "read", "ls", "glob", "grep", "ask", "plan_write", "plan_update", "exit_plan_mode", "get_goal":
 		return true
 	default:
 		return false
@@ -134,7 +134,7 @@ func toolUnavailableInModeMessage(name string, mode execmode.Mode) string {
 		parsed = execmode.ModeWork
 	}
 	if parsed == execmode.ModePlan {
-		return fmt.Sprintf("tool %q is not available in plan mode; use read, ls, glob, grep, ask, plan_write, plan_update, or exit_plan_mode", name)
+		return fmt.Sprintf("tool %q is not available in plan mode; plan mode is read-only — use read, ls, glob, grep, ask, plan_write, plan_update, or exit_plan_mode", name)
 	}
 	if name == "plan_write" || name == "plan_update" {
 		return fmt.Sprintf("tool %q is only available in plan mode", name)
