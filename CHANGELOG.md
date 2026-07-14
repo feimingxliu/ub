@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [0.5.1] - 2026-07-14
+
+
+### Added
+
+- Two-branch auto memory with forget tool ([a8cc9cb](https://github.com/feimingxliu/ub/commit/a8cc9cb1a7e2a2de85b1d4a9e4d6d8946fea5495))
+
+
+### Fixed
+
+- Redesign plan mode to match Claude Code pattern ([6b23c62](https://github.com/feimingxliu/ub/commit/6b23c62ed0a9329091303e196d98227fa756560f))
+
 ## [0.5.0] - 2026-07-13
 
 
@@ -15,6 +27,11 @@ All notable changes to this project are documented here.
 
 - Clear block highlight when clicking empty message area ([8480083](https://github.com/feimingxliu/ub/commit/848008358beb2935dedbaa72fe7a1ace47b9db44))
 - Exclude auto-injected prompts from history navigation ([d2fb6e9](https://github.com/feimingxliu/ub/commit/d2fb6e9dd4f9749f6265a49d02905a45298baeef))
+
+
+### Maintenance
+
+- V0.5.0 ([cad602b](https://github.com/feimingxliu/ub/commit/cad602b5aab6dec7bd28bb1dbd4424ded0b4ffe3))
 
 ## [0.4.4] - 2026-07-13
 

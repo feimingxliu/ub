@@ -288,7 +288,7 @@ func TestAutoMemoryMutationsSerializeAppendAndForget(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err := AppendWithOutcome(ws, ScopeAuto, CatProject, "current build command")
+		_, err := AppendWithOutcome(ws, ScopeAuto, CatPreference, "current build command")
 		errs <- err
 	}()
 	go func() {
