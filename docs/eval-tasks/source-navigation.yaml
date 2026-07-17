@@ -1,0 +1,12 @@
+schema_version: 1
+name: source-navigation
+description: 使用源码定位工具找到目标定义，不修改 workspace。
+prompt: Find the definition of TargetHandler in this workspace. Report its file and purpose. Do not modify any files.
+fixture: fixtures/source-navigation
+timeout: 3m
+assertions:
+  rollout:
+    tools_called_any:
+      - [grep, document_symbols]
+    tools_not_called: [edit, multiedit, apply_patch, write]
+    assistant_contains: [TargetHandler]

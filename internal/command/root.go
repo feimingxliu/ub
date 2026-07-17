@@ -108,7 +108,7 @@ func newRootCmd() *cobra.Command {
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.PersistentFlags().StringVar(&opts.profile, "profile", "", "configuration profile to apply")
 	root.PersistentFlags().BoolVar(&opts.dev, "dev", false, "use the dev profile")
-	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: work, plan, or auto")
+	root.PersistentFlags().StringVar(&opts.mode, "mode", "", "execution mode: work, plan, auto, or full-access")
 	root.Flags().StringVar(&opts.provider, "provider", "", "provider config name for TUI")
 	root.Flags().StringVar(&opts.model, "model", "", "model id override for TUI")
 	root.Flags().StringVar(&opts.resume, "resume", "", "choose a TUI session to resume, or resume the specified id with --resume=<id>")
@@ -120,6 +120,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newPromptCmd())
 	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newEvalCmd())
 	root.AddCommand(newRolloutCmd())
 	root.AddCommand(newSessionsCmd())
 
@@ -198,18 +199,21 @@ func newRunCmd() *cobra.Command {
 	var prompt string
 	var providerName string
 	var model string
+	var sessionID string
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run a headless agent session",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgent(cmd, prompt, providerName, model)
+			return runAgent(cmd, prompt, providerName, model, sessionID)
 		},
 	}
 	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "prompt to send to the agent")
 	cmd.Flags().StringVar(&providerName, "provider", "", "provider config name")
 	cmd.Flags().StringVar(&model, "model", "", "model id override")
+	cmd.Flags().StringVar(&sessionID, "session", "", "continue an existing session (internal eval use)")
+	_ = cmd.Flags().MarkHidden("session")
 	return cmd
 }
 

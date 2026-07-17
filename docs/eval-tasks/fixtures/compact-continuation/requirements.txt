@@ -1,0 +1,29 @@
+The final file must be named answer.txt.
+The exact required marker is CONTEXT_CONTINUED.
+Do not add surrounding prose to answer.txt.
+The file must end with a newline.
+
+Context padding for the evaluation follows. Its purpose is to make the first
+turn large enough that the next turn exercises context maintenance while the
+required marker remains semantically important.
+
+01 Preserve the requested file name and marker.
+02 Preserve the requested file name and marker.
+03 Preserve the requested file name and marker.
+04 Preserve the requested file name and marker.
+05 Preserve the requested file name and marker.
+06 Preserve the requested file name and marker.
+07 Preserve the requested file name and marker.
+08 Preserve the requested file name and marker.
+09 Preserve the requested file name and marker.
+10 Preserve the requested file name and marker.
+11 Preserve the requested file name and marker.
+12 Preserve the requested file name and marker.
+13 Preserve the requested file name and marker.
+14 Preserve the requested file name and marker.
+15 Preserve the requested file name and marker.
+16 Preserve the requested file name and marker.
+17 Preserve the requested file name and marker.
+18 Preserve the requested file name and marker.
+19 Preserve the requested file name and marker.
+20 Preserve the requested file name and marker.

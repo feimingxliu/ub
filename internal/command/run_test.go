@@ -2,11 +2,13 @@ package command
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/feimingxliu/ub/internal/store"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
 )
@@ -68,6 +70,55 @@ providers:
 	}
 	if got := result.out.String(); got != "plan-ok" {
 		t.Fatalf("stdout = %q, want plan-ok", got)
+	}
+}
+
+func TestRunHiddenSessionFlagContinuesAgentHistory(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(temp, "state"))
+	writeChatConfig(t, temp, `default_model: fake/test-model
+providers:
+  fake:
+    type: fake
+    script:
+      - type: text_delta
+        text: done
+      - type: done
+`)
+	t.Chdir(temp)
+	first := runCLITest("run", "--provider", "fake", "-p", "first")
+	if first.code != 0 {
+		t.Fatalf("first run code=%d stderr=%s", first.code, first.err.String())
+	}
+	st, err := store.Open(filepath.Join(temp, "data", "ub", "ub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := st.ListSessions(context.Background(), temp, 10)
+	if err != nil {
+		_ = st.Close()
+		t.Fatal(err)
+	}
+	_ = st.Close()
+	if len(sessions) != 1 {
+		t.Fatalf("sessions=%d, want 1", len(sessions))
+	}
+	second := runCLITest("run", "--provider", "fake", "--session", sessions[0].ID, "-p", "second")
+	if second.code != 0 {
+		t.Fatalf("second run code=%d stderr=%s", second.code, second.err.String())
+	}
+	st, err = store.Open(filepath.Join(temp, "data", "ub", "ub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sessions, err = st.ListSessions(context.Background(), temp, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("continued run created %d sessions, want 1", len(sessions))
 	}
 }
 

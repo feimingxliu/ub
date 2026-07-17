@@ -23,7 +23,7 @@ func TestRootHelp(t *testing.T) {
 
 func TestSubcommandsExist(t *testing.T) {
 	cmd := newRootCmd()
-	for _, name := range []string{"run", "chat", "config", "prompt", "doctor", "rollout", "sessions"} {
+	for _, name := range []string{"run", "chat", "config", "prompt", "doctor", "eval", "rollout", "sessions"} {
 		found, _, err := cmd.Find([]string{name})
 		if err != nil {
 			t.Errorf("subcommand %q not found: %v", name, err)

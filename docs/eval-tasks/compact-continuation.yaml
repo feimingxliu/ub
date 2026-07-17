@@ -1,0 +1,19 @@
+schema_version: 1
+name: compact-continuation
+description: 压缩早期 turn 后仍保留约束并完成后续修改。
+prompt: Read requirements.txt completely and summarize its required marker and answer.txt rule for the next turn. Do not modify files in this turn and do not write durable memory.
+followup_prompts:
+  - Now follow those requirements and create answer.txt. Verify the exact marker is present.
+fixture: fixtures/compact-continuation
+timeout: 8m
+assertions:
+  files:
+    - path: answer.txt
+      exists: true
+      contains: [CONTEXT_CONTINUED]
+  rollout:
+    tools_called: [read]
+    tools_not_called: [remember, forget]
+    tools_called_any:
+      - [edit, multiedit, apply_patch, write]
+    context_actions: [compact]

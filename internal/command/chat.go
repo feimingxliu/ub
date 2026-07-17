@@ -65,7 +65,7 @@ func (s *chatSessionState) Close() error {
 // runAgent executes a single headless agent turn: it resolves the provider
 // and model from config/flags, creates a session, builds the agent with the
 // full tool set, runs one prompt, and prints the result to stdout.
-func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error {
+func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag, sessionID string) error {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return fmt.Errorf("prompt required: pass -p/--prompt")
@@ -121,7 +121,7 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag string) error 
 	if err != nil {
 		return err
 	}
-	state, err := startChatRollout(cmd, prompt, providerName, model, chatOptions{})
+	state, err := startChatRollout(cmd, prompt, providerName, model, chatOptions{SessionID: sessionID})
 	if err != nil {
 		return err
 	}

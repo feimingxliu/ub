@@ -1,0 +1,4 @@
+context:
+  trigger_ratio: 0.001
+  keep_recent_turns: 1
+  reserve_output_tokens: 10000

@@ -1,0 +1,18 @@
+schema_version: 1
+name: complex-task-tracking
+description: 多文件任务建立 todo 或 plan，并完成验证。
+prompt: "Add a NormalizeName helper, use it from both CreateUser and RenameUser, and add focused tests. This is a multi-file task: track your work with todo or plan and run all tests."
+fixture: fixtures/complex-task-tracking
+timeout: 8m
+assertions:
+  files:
+    - path: user.go
+      contains: [NormalizeName]
+  commands:
+    - name: go test
+      run: [go, test, ./...]
+      exit_code: 0
+  rollout:
+    tools_called_any:
+      - [todo_write, plan_write]
+      - [edit, multiedit, apply_patch, write]

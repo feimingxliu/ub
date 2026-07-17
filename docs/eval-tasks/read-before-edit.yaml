@@ -1,0 +1,22 @@
+schema_version: 1
+name: read-before-edit
+description: 修改已有文件前先读取目标内容。
+prompt: Fix the greeting typo in greeting.go so the existing test passes. Inspect the current code before editing and run the test.
+fixture: fixtures/read-before-edit
+timeout: 5m
+assertions:
+  files:
+    - path: greeting.go
+      contains: [Hello]
+      not_contains: [Helo]
+  commands:
+    - name: go test
+      run: [go, test, ./...]
+      exit_code: 0
+  rollout:
+    tools_called: [read]
+    tool_order_any:
+      - [read, edit]
+      - [read, multiedit]
+      - [read, apply_patch]
+      - [read, write]

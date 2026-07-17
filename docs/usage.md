@@ -27,6 +27,7 @@
 | `ub config show` | 打印合并后的有效配置 |
 | `ub config path` | 列出本次加载用到的配置文件 |
 | `ub prompt inspect` / `ub prompt inspect --json` | 检查当前 workspace 的 prompt section、来源、状态、大小与 token 估算；默认不显示正文 |
+| `ub eval --task <name-or-path>` | 在隔离 workspace/session 中运行一个真实 coding-agent 行为评测任务 |
 | `ub doctor` / `ub doctor --plain` | 环境健康检查（plain 关闭颜色，CI 友好） |
 
 > **会话隔离**：sessions 按 `cwd` 字符串严格隔离。在 `/proj` 和 `/proj/sub` 启动会被视作不同工作区，互相看不到对方的历史。
@@ -351,6 +352,19 @@ ub rollout show abc123 --limit 100      # 最多输出 100 个事件
 ```
 
 Pretty 输出会展开 `assistant_message` 中的结构化 content block：模型发起工具调用时会显示 `tool_use` 的工具名、调用 id 和 input JSON；工具执行结果继续显示为独立的 `tool_result` 事件。事件类型：`user_message` / `assistant_message` / `tool_result` / `summary` / `usage` / `activity` / `error`。
+
+### 7.7 运行 Eval task
+
+```sh
+ub eval --task source-navigation --provider anthropic --model claude-sonnet-4-7
+ub eval --task docs/eval-tasks/compact-continuation.yaml --json --keep-workspace
+```
+
+短名称从当前 workspace 的 `docs/eval-tasks/<name>.yaml` 加载，也可传入 YAML 路径。每个 task 声明 fixture、一个或多个 prompt，以及文件、命令和 rollout 断言。Eval 会复制 fixture 到临时 workspace，以 full-access 运行真实 `ub run`，并隔离 XDG state/data；不会改动当前项目或写入常规 session 数据。
+
+默认报告包含通过状态、失败分类、耗时、turn、input/output/reasoning/cache token、工具调用序列、ContextDecision 和逐条断言。`--json` 只在 stdout 输出一个 JSON 对象；`--timeout` 覆盖 task timeout；`--keep-workspace` 保留临时 workspace/state 供诊断。agent 失败或任一断言失败都会返回非零状态。
+
+task 的验证命令会在临时 workspace 直接执行，只运行受信 task。内置五个 MVP task 位于 [`eval-tasks/`](eval-tasks/README.md)；它们用于采集可诊断样本，单次真实模型结果不代表统计结论。
 
 ## 8. Profiles（开发期切配）
 
