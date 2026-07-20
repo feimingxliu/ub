@@ -196,6 +196,9 @@
 - F-DEV-7：`ub eval --task <name-or-path>` MUST 加载 schema v1 YAML task，在临时 workspace 中复制 fixture，并以当前 executable、full-access 和可选 provider/model 覆盖运行真实 headless Agent；follow-up prompts MUST 在同一隔离 session 中顺序执行。task MAY 通过强类型 `runtime` 覆盖 `max_context_tokens`、`context.trigger_ratio` 和 `context.keep_recent_turns`，无效值 MUST 在启动 provider 前拒绝
 - F-DEV-8：Eval MUST 同时隔离 `XDG_STATE_HOME` 与 `XDG_DATA_HOME`，默认清理现场；`--keep-workspace` MUST 保留并报告路径。runtime overrides MUST 只作用于当前 eval 子进程，不得复制、重写或泄露用户 provider 凭据，也不得修改用户配置。task/fixture 路径 MUST 拒绝绝对路径、`..` 逃逸和 symlink，验证命令仅运行用户显式选择的受信 task
 - F-DEV-9：Eval MUST 支持文件、命令与 rollout 行为断言，并从 rollout 汇总 turn、input/output/reasoning/cache token、工具序列和 ContextDecision；报告 MUST 回显 task 实际声明的 runtime overrides；默认输出文本报告，`--json` 输出单个 JSON 对象，agent 或断言失败 MUST 返回非零状态
+- F-DEV-10：`ub eval` MUST 支持重复 `--task`、显式 `--target provider=model`、`--repeat` 和有界 `--parallel`，按 target→task→repetition 生成稳定样本计划；每个样本 MUST 继续使用独立 workspace/state/data/session，最终报告顺序不得依赖并发完成顺序。单 task、非显式 target、repeat=1 MUST 保持原单次 Report 接口
+- F-DEV-11：Eval matrix MUST 把每个 target 的首个样本作为正式 preflight；仅当该样本在没有 tool call/assistant 行为前被分类为 provider/config/infrastructure failure 时熔断该 target，并把剩余样本标记 skipped。assertion failure、普通 agent failure 或已发生行为后的失败 MUST NOT 熔断
+- F-DEV-12：MatrixReport MUST 保留每个执行样本的完整 Report 和 skipped 根因，并按 overall/target/task 汇总 planned/executed/passed/failed/skipped、failure category、pass rate 与样本数、耗时/turn、token/cache 和 ContextDecision action；零执行样本不得产生 NaN/Infinity，任一 failed 或 infrastructure-triggered skipped MUST 返回非零状态
 
 ## 5. 非功能性需求
 

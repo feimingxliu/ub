@@ -160,11 +160,20 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 		return report, observationErr
 	}
 	if processErr != nil {
+		if observation, observeErr := Observe(context.WithoutCancel(ctx), dataHome, workspace); observeErr == nil {
+			applyObservation(&report, observation)
+		}
+		report.Metrics.Duration = time.Since(started)
+		report.Metrics.DurationMillis = report.Metrics.Duration.Milliseconds()
 		report.AgentStderr = summarize(processResult.Stderr)
-		report.FailureCategory = FailureAgent
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			report.FailureCategory = FailureTimeout
 			report.Failure = fmt.Sprintf("agent timed out after %s", timeout)
+		} else if !report.BehaviorObserved && isInfrastructureFailure(report.AgentStderr) {
+			report.FailureCategory = FailureInfrastructure
+			report.Failure = fmt.Sprintf("agent infrastructure failed: %v", processErr)
 		} else {
+			report.FailureCategory = FailureAgent
 			report.Failure = fmt.Sprintf("agent failed: %v", processErr)
 		}
 		return report, fmt.Errorf("%s", report.Failure)
@@ -176,14 +185,7 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 		report.Failure = err.Error()
 		return report, err
 	}
-	report.SessionID = observation.SessionID
-	if report.Provider == "" {
-		report.Provider = observation.Provider
-	}
-	if report.Model == "" {
-		report.Model = observation.Model
-	}
-	report.Metrics = observation.Metrics
+	applyObservation(&report, observation)
 	report.Metrics.Duration = time.Since(started)
 	report.Metrics.DurationMillis = report.Metrics.Duration.Milliseconds()
 	results, err := Evaluate(ctx, taskFile.Task, workspace, env, observation)
@@ -203,6 +205,37 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 		return report, errors.New(report.Failure)
 	}
 	return report, nil
+}
+
+func applyObservation(report *Report, observation Observation) {
+	if report == nil {
+		return
+	}
+	report.SessionID = observation.SessionID
+	if report.Provider == "" {
+		report.Provider = observation.Provider
+	}
+	if report.Model == "" {
+		report.Model = observation.Model
+	}
+	report.Metrics = observation.Metrics
+	report.BehaviorObserved = len(observation.Metrics.ToolCalls) > 0 || strings.TrimSpace(observation.AssistantText) != ""
+}
+
+func isInfrastructureFailure(stderr string) bool {
+	value := strings.ToLower(stderr)
+	for _, marker := range []string{
+		"bad request", "unauthorized", "forbidden", "not configured", "provider unavailable",
+		"connection refused", "no such host", "proxyconnect", "dial tcp", "tls handshake",
+		"certificate", "status 400", "status 401", "status 403", "status 404", "status 409",
+		"status 422", "status 429", "400 bad request", "401 unauthorized", "403 forbidden",
+		"404 not found", "429 too many requests",
+	} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendRuntimeArgs(args []string, runtime Runtime) []string {

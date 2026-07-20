@@ -5,9 +5,16 @@
 ```bash
 ub eval --task source-navigation --provider <provider> --model <model>
 ub eval --task compact-continuation --json --keep-workspace
+ub eval \
+  --task source-navigation --task read-before-edit \
+  --target vibecoding=openai/glm-5.2 \
+  --target vibecoding=openai/deepseek-v4-flash \
+  --repeat 3 --parallel 2 --json
 ```
 
 MVP 任务有意保持小而可解释：通过条件优先使用文件、命令和 rollout 工具序列，而不是对自然语言回答做逐字匹配。真实模型具有随机性，单次失败表示产生了一个可诊断样本，不等同于统计结论。
+
+多个 task/target 或重复样本会输出 `kind: matrix` 报告，完整保留每次单任务 report，并按 overall、target、task 聚合。显式 target 使用 `provider=model`，因此 model ID 中的 `/` 会原样保留，不会和 provider 自动做交叉积。target 首样本若在没有 agent 行为前发生 infrastructure failure，会熔断该 target 并把剩余计划样本标为 skipped；这类 skipped 和普通 assertion/agent failure 分开统计。
 
 Task 可选的 `runtime` 只允许覆盖 Eval 可重复性所需的 context 参数：
 

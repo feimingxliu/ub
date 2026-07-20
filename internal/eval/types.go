@@ -6,11 +6,13 @@ import "time"
 const SchemaVersion = 1
 
 const (
-	FailureNone      = ""
-	FailureTask      = "task"
-	FailureAgent     = "agent"
-	FailureAssertion = "assertion"
-	FailureInternal  = "internal"
+	FailureNone           = ""
+	FailureTask           = "task"
+	FailureAgent          = "agent"
+	FailureInfrastructure = "infrastructure"
+	FailureTimeout        = "timeout"
+	FailureAssertion      = "assertion"
+	FailureInternal       = "internal"
 )
 
 type Task struct {
@@ -109,18 +111,19 @@ type AssertionResult struct {
 }
 
 type Report struct {
-	Task            string            `json:"task"`
-	Passed          bool              `json:"passed"`
-	FailureCategory string            `json:"failure_category,omitempty"`
-	Failure         string            `json:"failure,omitempty"`
-	Provider        string            `json:"provider,omitempty"`
-	Model           string            `json:"model,omitempty"`
-	SessionID       string            `json:"session_id,omitempty"`
-	Workspace       string            `json:"workspace,omitempty"`
-	Runtime         Runtime           `json:"runtime"`
-	Metrics         Metrics           `json:"metrics"`
-	Assertions      []AssertionResult `json:"assertions"`
-	AgentStderr     string            `json:"agent_stderr,omitempty"`
+	Task             string            `json:"task"`
+	Passed           bool              `json:"passed"`
+	FailureCategory  string            `json:"failure_category,omitempty"`
+	Failure          string            `json:"failure,omitempty"`
+	Provider         string            `json:"provider,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	SessionID        string            `json:"session_id,omitempty"`
+	Workspace        string            `json:"workspace,omitempty"`
+	Runtime          Runtime           `json:"runtime"`
+	Metrics          Metrics           `json:"metrics"`
+	Assertions       []AssertionResult `json:"assertions"`
+	AgentStderr      string            `json:"agent_stderr,omitempty"`
+	BehaviorObserved bool              `json:"behavior_observed,omitempty"`
 }
 
 func (r Runtime) Empty() bool {

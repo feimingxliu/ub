@@ -2,10 +2,12 @@ package eval
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/rollout"
@@ -14,9 +16,17 @@ import (
 )
 
 type recordingExecutor struct {
-	request  ProcessRequest
-	requests []ProcessRequest
-	err      error
+	request   ProcessRequest
+	requests  []ProcessRequest
+	err       error
+	resultErr error
+}
+
+type timeoutExecutor struct{}
+
+func (timeoutExecutor) Run(ctx context.Context, _ ProcessRequest) (ProcessResult, error) {
+	<-ctx.Done()
+	return ProcessResult{Stderr: ctx.Err().Error()}, ctx.Err()
 }
 
 func (e *recordingExecutor) Run(ctx context.Context, request ProcessRequest) (ProcessResult, error) {
@@ -58,7 +68,7 @@ func (e *recordingExecutor) Run(ctx context.Context, request ProcessRequest) (Pr
 	if err := os.WriteFile(filepath.Join(request.Dir, "result.txt"), []byte("fixed\n"), 0o644); err != nil {
 		return ProcessResult{}, err
 	}
-	return ProcessResult{Stdout: "done"}, nil
+	return ProcessResult{Stdout: "done", Stderr: "tool execution failed"}, e.resultErr
 }
 
 func TestRunContinuesFollowupPromptsInOneSession(t *testing.T) {
@@ -131,7 +141,24 @@ func TestRunClassifiesAgentFailure(t *testing.T) {
 	executor := &recordingExecutor{err: context.Canceled}
 	task := Task{SchemaVersion: 1, Name: "failed", Prompt: "x", Assertions: Assertions{Rollout: RolloutAssertions{ToolsCalled: []string{"read"}}}}
 	report, err := Run(context.Background(), TaskFile{Task: task, Dir: t.TempDir()}, RunOptions{Executor: executor, Executable: "/test/ub"})
-	if err == nil || report.FailureCategory != FailureAgent || !strings.Contains(report.AgentStderr, "provider unavailable") {
+	if err == nil || report.FailureCategory != FailureInfrastructure || !strings.Contains(report.AgentStderr, "provider unavailable") {
+		t.Fatalf("report=%#v err=%v", report, err)
+	}
+}
+
+func TestRunDoesNotClassifyFailureAfterBehaviorAsInfrastructure(t *testing.T) {
+	executor := &recordingExecutor{resultErr: errors.New("request failed: 400 Bad Request")}
+	task := Task{SchemaVersion: 1, Name: "failed-after-tools", Prompt: "x", Assertions: Assertions{Rollout: RolloutAssertions{ToolsCalled: []string{"read"}}}}
+	report, err := Run(context.Background(), TaskFile{Task: task, Dir: t.TempDir()}, RunOptions{Executor: executor, Executable: "/test/ub"})
+	if err == nil || report.FailureCategory != FailureAgent || !report.BehaviorObserved || len(report.Metrics.ToolCalls) == 0 {
+		t.Fatalf("report=%#v err=%v", report, err)
+	}
+}
+
+func TestRunClassifiesTimeoutSeparately(t *testing.T) {
+	task := Task{SchemaVersion: 1, Name: "timeout", Prompt: "x", Assertions: Assertions{Rollout: RolloutAssertions{ToolsCalled: []string{"read"}}}}
+	report, err := Run(context.Background(), TaskFile{Task: task, Dir: t.TempDir()}, RunOptions{Executor: timeoutExecutor{}, Executable: "/test/ub", Timeout: time.Millisecond})
+	if err == nil || report.FailureCategory != FailureTimeout || !strings.Contains(report.Failure, "timed out") {
 		t.Fatalf("report=%#v err=%v", report, err)
 	}
 }

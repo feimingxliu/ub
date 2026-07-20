@@ -13,6 +13,65 @@ func RenderJSON(w io.Writer, report Report) error {
 	return encoder.Encode(report)
 }
 
+func RenderMatrixJSON(w io.Writer, report MatrixReport) error {
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(report)
+}
+
+func RenderMatrixText(w io.Writer, report MatrixReport) error {
+	status := "PASS"
+	if !report.Passed {
+		status = "FAIL"
+	}
+	if _, err := fmt.Fprintf(w, "Eval Matrix %s: tasks=%d targets=%d repeat=%d parallel=%d\n",
+		status, len(report.Tasks), len(report.Targets), report.Repeat, report.Parallel); err != nil {
+		return err
+	}
+	if err := renderMatrixAggregate(w, "Overall", report.Overall); err != nil {
+		return err
+	}
+	for _, group := range report.ByTarget {
+		if err := renderMatrixAggregate(w, "Target "+group.Key, group.Aggregate); err != nil {
+			return err
+		}
+	}
+	for _, group := range report.ByTask {
+		if err := renderMatrixAggregate(w, "Task "+group.Key, group.Aggregate); err != nil {
+			return err
+		}
+	}
+	for _, run := range report.Runs {
+		switch run.Status {
+		case MatrixStatusFailed:
+			failure := "failed"
+			category := ""
+			if run.Report != nil {
+				failure = run.Report.Failure
+				category = run.Report.FailureCategory
+			}
+			if _, err := fmt.Fprintf(w, "FAIL %s [%s]: %s (%s)\n", run.ID, category, failure, run.Status); err != nil {
+				return err
+			}
+		case MatrixStatusSkipped:
+			if _, err := fmt.Fprintf(w, "SKIP %s: %s\n", run.ID, run.SkipReason); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func renderMatrixAggregate(w io.Writer, label string, aggregate MatrixAggregate) error {
+	_, err := fmt.Fprintf(w,
+		"%s: planned=%d executed=%d passed=%d failed=%d skipped=%d pass_rate=%.1f%% duration=%dms avg_duration=%.1fms avg_turns=%.2f tokens=%d/%d reasoning=%d cache=%d/%d\n",
+		label, aggregate.Planned, aggregate.Executed, aggregate.Passed, aggregate.Failed, aggregate.Skipped,
+		aggregate.PassRate*100, aggregate.DurationMillis, aggregate.AverageDurationMS, aggregate.AverageTurns,
+		aggregate.InputTokens, aggregate.OutputTokens, aggregate.ReasoningTokens,
+		aggregate.CacheReadTokens, aggregate.CacheWriteTokens)
+	return err
+}
+
 func RenderText(w io.Writer, report Report) error {
 	status := "PASS"
 	if !report.Passed {
