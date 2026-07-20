@@ -58,6 +58,7 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 		Task:     taskFile.Task.Name,
 		Provider: opts.Provider,
 		Model:    opts.Model,
+		Runtime:  taskFile.Task.Runtime,
 		Metrics: Metrics{
 			ToolCalls:        []string{},
 			ContextDecisions: []ContextDecision{},
@@ -113,7 +114,6 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 	}
 	env := withEnv(os.Environ(), "XDG_STATE_HOME", stateHome)
 	env = withEnv(env, "XDG_DATA_HOME", dataHome)
-	env = withEnv(env, "UB_EVAL", "1")
 	started := time.Now()
 	prompts := append([]string{taskFile.Task.Prompt}, taskFile.Task.Followups...)
 	var processResult ProcessResult
@@ -122,6 +122,7 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 	var sessionID string
 	for _, prompt := range prompts {
 		args := []string{"--mode", "full-access", "run", "--prompt", prompt}
+		args = appendRuntimeArgs(args, taskFile.Task.Runtime)
 		if opts.Provider != "" {
 			args = append(args, "--provider", opts.Provider)
 		}
@@ -202,6 +203,19 @@ func Run(ctx context.Context, taskFile TaskFile, opts RunOptions) (Report, error
 		return report, errors.New(report.Failure)
 	}
 	return report, nil
+}
+
+func appendRuntimeArgs(args []string, runtime Runtime) []string {
+	if runtime.MaxContextTokens != nil {
+		args = append(args, "--eval-max-context-tokens", fmt.Sprintf("%d", *runtime.MaxContextTokens))
+	}
+	if runtime.Context.TriggerRatio != nil {
+		args = append(args, "--eval-context-trigger-ratio", fmt.Sprintf("%g", *runtime.Context.TriggerRatio))
+	}
+	if runtime.Context.KeepRecentTurns != nil {
+		args = append(args, "--eval-context-keep-recent-turns", fmt.Sprintf("%d", *runtime.Context.KeepRecentTurns))
+	}
+	return args
 }
 
 func runTimeout(task Task, override time.Duration) (time.Duration, error) {

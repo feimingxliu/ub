@@ -63,7 +63,9 @@ func (e *recordingExecutor) Run(ctx context.Context, request ProcessRequest) (Pr
 
 func TestRunContinuesFollowupPromptsInOneSession(t *testing.T) {
 	executor := &recordingExecutor{}
-	task := Task{SchemaVersion: 1, Name: "followup", Prompt: "first", Followups: []string{"second"}, Assertions: Assertions{Rollout: RolloutAssertions{ToolsCalled: []string{"read"}}}}
+	maxContext, triggerRatio, keepTurns := 30000, 0.5, 1
+	runtime := Runtime{MaxContextTokens: &maxContext, Context: RuntimeContext{TriggerRatio: &triggerRatio, KeepRecentTurns: &keepTurns}}
+	task := Task{SchemaVersion: 1, Name: "followup", Prompt: "first", Followups: []string{"second"}, Runtime: runtime, Assertions: Assertions{Rollout: RolloutAssertions{ToolsCalled: []string{"read"}}}}
 	report, err := Run(context.Background(), TaskFile{Task: task, Dir: t.TempDir()}, RunOptions{Executor: executor, Executable: "/test/ub", KeepWorkspace: true})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -77,6 +79,20 @@ func TestRunContinuesFollowupPromptsInOneSession(t *testing.T) {
 	}
 	if got := argValue(executor.requests[1].Args, "--session"); got != "sess_eval" {
 		t.Fatalf("second --session = %q, want sess_eval", got)
+	}
+	for i, request := range executor.requests {
+		joined := strings.Join(request.Args, " ")
+		for _, want := range []string{"--eval-max-context-tokens 30000", "--eval-context-trigger-ratio 0.5", "--eval-context-keep-recent-turns 1"} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("request %d args %q missing %q", i, joined, want)
+			}
+		}
+		if envValue(request.Env, "UB_EVAL") != "" {
+			t.Errorf("request %d retained UB_EVAL", i)
+		}
+	}
+	if report.Runtime.MaxContextTokens == nil || *report.Runtime.MaxContextTokens != maxContext {
+		t.Fatalf("report runtime = %#v", report.Runtime)
 	}
 }
 

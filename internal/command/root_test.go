@@ -50,3 +50,13 @@ func TestRunWithoutPromptErrors(t *testing.T) {
 		t.Errorf("error %q missing prompt hint", err)
 	}
 }
+
+func TestEvalRuntimeFlagsAreHidden(t *testing.T) {
+	tc := newTestRootCommand("run", "--help")
+	if err := tc.cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tc.out.String(), "eval-max-context") || strings.Contains(tc.out.String(), "eval-context-trigger") {
+		t.Fatalf("internal eval flags leaked into help:\n%s", tc.out.String())
+	}
+}

@@ -48,6 +48,9 @@ func LoadTask(path string) (TaskFile, error) {
 	if err := yaml.Unmarshal(data, &task); err != nil {
 		return TaskFile{}, fmt.Errorf("decode eval task: %w", err)
 	}
+	if err := validateRuntimeFields(data); err != nil {
+		return TaskFile{}, err
+	}
 	if err := ValidateTask(task); err != nil {
 		return TaskFile{}, err
 	}
@@ -67,6 +70,9 @@ func ValidateTask(task Task) error {
 	}
 	if strings.TrimSpace(task.Prompt) == "" {
 		return errors.New("eval task prompt is required")
+	}
+	if err := validateRuntime(task.Runtime); err != nil {
+		return err
 	}
 	for i, prompt := range task.Followups {
 		if strings.TrimSpace(prompt) == "" {
@@ -107,6 +113,53 @@ func ValidateTask(task Task) error {
 	for i, order := range task.Assertions.Rollout.ToolOrderAny {
 		if len(order) == 0 {
 			return fmt.Errorf("rollout tool_order_any sequence %d is empty", i+1)
+		}
+	}
+	return nil
+}
+
+func validateRuntime(runtime Runtime) error {
+	if runtime.MaxContextTokens != nil && *runtime.MaxContextTokens <= 0 {
+		return errors.New("eval task runtime.max_context_tokens must be positive")
+	}
+	if ratio := runtime.Context.TriggerRatio; ratio != nil && (*ratio <= 0 || *ratio > 1) {
+		return errors.New("eval task runtime.context.trigger_ratio must be greater than 0 and at most 1")
+	}
+	if runtime.Context.KeepRecentTurns != nil && *runtime.Context.KeepRecentTurns <= 0 {
+		return errors.New("eval task runtime.context.keep_recent_turns must be positive")
+	}
+	return nil
+}
+
+func validateRuntimeFields(data []byte) error {
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("decode eval task fields: %w", err)
+	}
+	rawRuntime, ok := document["runtime"]
+	if !ok || rawRuntime == nil {
+		return nil
+	}
+	runtime, ok := rawRuntime.(map[string]any)
+	if !ok {
+		return errors.New("eval task runtime must be an object")
+	}
+	for key := range runtime {
+		if key != "max_context_tokens" && key != "context" {
+			return fmt.Errorf("eval task runtime contains unknown field %q", key)
+		}
+	}
+	rawContext, ok := runtime["context"]
+	if !ok || rawContext == nil {
+		return nil
+	}
+	context, ok := rawContext.(map[string]any)
+	if !ok {
+		return errors.New("eval task runtime.context must be an object")
+	}
+	for key := range context {
+		if key != "trigger_ratio" && key != "keep_recent_turns" {
+			return fmt.Errorf("eval task runtime.context contains unknown field %q", key)
 		}
 	}
 	return nil

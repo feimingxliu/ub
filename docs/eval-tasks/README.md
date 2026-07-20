@@ -8,3 +8,15 @@ ub eval --task compact-continuation --json --keep-workspace
 ```
 
 MVP 任务有意保持小而可解释：通过条件优先使用文件、命令和 rollout 工具序列，而不是对自然语言回答做逐字匹配。真实模型具有随机性，单次失败表示产生了一个可诊断样本，不等同于统计结论。
+
+Task 可选的 `runtime` 只允许覆盖 Eval 可重复性所需的 context 参数：
+
+```yaml
+runtime:
+  max_context_tokens: 30000
+  context:
+    trigger_ratio: 0.5
+    keep_recent_turns: 1
+```
+
+这些值通过当前 eval 子进程的隐藏参数应用，不会改写用户配置或复制 provider 凭据；文本和 JSON 报告会回显实际声明的覆盖。`compact-continuation` 使用这组边界确保 follow-up 前后的历史进入 `ContextDecision=compact`，不依赖模型原生窗口大小。

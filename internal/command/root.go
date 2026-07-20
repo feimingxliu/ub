@@ -200,13 +200,14 @@ func newRunCmd() *cobra.Command {
 	var providerName string
 	var model string
 	var sessionID string
+	var evalRuntime runAgentRuntimeOverrides
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run a headless agent session",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgent(cmd, prompt, providerName, model, sessionID)
+			return runAgent(cmd, prompt, providerName, model, sessionID, evalRuntime)
 		},
 	}
 	cmd.Flags().StringVarP(&prompt, "prompt", "p", "", "prompt to send to the agent")
@@ -214,6 +215,12 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&model, "model", "", "model id override")
 	cmd.Flags().StringVar(&sessionID, "session", "", "continue an existing session (internal eval use)")
 	_ = cmd.Flags().MarkHidden("session")
+	cmd.Flags().IntVar(&evalRuntime.MaxContextTokens, "eval-max-context-tokens", 0, "override context window for internal eval use")
+	cmd.Flags().Float64Var(&evalRuntime.ContextTriggerRatio, "eval-context-trigger-ratio", 0, "override compact trigger ratio for internal eval use")
+	cmd.Flags().IntVar(&evalRuntime.ContextKeepRecentTurns, "eval-context-keep-recent-turns", 0, "override retained turns for internal eval use")
+	_ = cmd.Flags().MarkHidden("eval-max-context-tokens")
+	_ = cmd.Flags().MarkHidden("eval-context-trigger-ratio")
+	_ = cmd.Flags().MarkHidden("eval-context-keep-recent-turns")
 	return cmd
 }
 

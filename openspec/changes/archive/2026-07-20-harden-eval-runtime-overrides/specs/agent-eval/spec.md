@@ -1,10 +1,4 @@
-# agent-eval Specification
-
-## Purpose
-
-定义声明式 coding-agent 行为任务、隔离执行、自动断言、rollout 指标和 Eval CLI 的稳定契约。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 声明式 Eval Task
 系统 SHALL 支持 schema version 1 的 YAML eval task，至少表达名称、首个 prompt、可选 follow-up prompts/fixture/timeout、受限的 context runtime overrides，以及文件、命令和 rollout 断言。runtime overrides MUST 仅允许声明 `max_context_tokens`、`context.trigger_ratio` 和 `context.keep_recent_turns`，并在启动 agent 前完成范围校验。系统 MUST 在启动 agent 前拒绝未知 schema、缺失必填字段、无效 runtime override、空 follow-up prompt、绝对路径、路径逃逸和 fixture symlink。
@@ -36,17 +30,6 @@
 - **WHEN** task 声明 context runtime overrides
 - **THEN** 每个首轮及 follow-up 子进程 MUST 使用相同的规范化覆盖，且普通 `ub run` 和用户配置 MUST 保持不变
 
-### Requirement: 可组合断言
-系统 SHALL 支持文件存在/包含/不包含、命令退出码/输出、工具必须调用/禁止调用/固定顺序/任一候选顺序/任一调用、assistant 包含/不包含和 ContextDecision action 断言。每条断言 MUST 产生独立的名称、通过状态和失败原因；所有断言通过时 task 才通过。
-
-#### Scenario: 文件与 rollout 均符合预期
-- **WHEN** agent 修改后的文件满足内容断言且 rollout 工具序列满足行为断言
-- **THEN** 系统 MUST 将每条断言和整个 task 标记为通过
-
-#### Scenario: 验证命令失败
-- **WHEN** task 声明的验证命令退出码或输出不符合预期
-- **THEN** 系统 MUST 将对应断言标记失败并把 task 分类为 assertion failure
-
 ### Requirement: Eval 指标与报告
 系统 SHALL 从隔离 rollout 汇总 turn 数、input/output/reasoning/cache token、工具调用序列和 ContextDecision action/reason，并记录总耗时。报告 MUST 包含 task 实际声明并应用的规范化 runtime overrides。默认输出 MUST 是简洁文本报告，`--json` MUST 输出单个机器可读结果对象且不得混入 agent stdout。
 
@@ -57,17 +40,6 @@
 #### Scenario: 断言失败的退出状态
 - **WHEN** agent 成功完成但至少一条断言失败
 - **THEN** 命令 MUST 输出完整报告并以非零状态退出
-
-### Requirement: Eval CLI
-CLI SHALL 提供 `ub eval --task <name-or-path>`，支持可选 `--provider`、`--model`、`--timeout`、`--json` 和 `--keep-workspace`。`--timeout` MUST 覆盖 task timeout；`--keep-workspace` MUST 在成功或失败后保留现场并在报告中给出路径。
-
-#### Scenario: 缺少 task
-- **WHEN** 用户运行 `ub eval` 而未提供 `--task`
-- **THEN** CLI MUST 返回明确的必填参数错误且不得启动 agent
-
-#### Scenario: 保留评测现场
-- **WHEN** 用户使用 `--keep-workspace`
-- **THEN** 系统 MUST 不删除临时 workspace/state，并在文本和 JSON 报告中返回其绝对路径
 
 ### Requirement: 首批行为任务
 仓库 SHALL 提供五个可加载的 Eval MVP task，分别覆盖合适的源码定位工具、修改前读取、失败验证不谎报成功、复杂任务使用 todo/plan、以及发生 compact 后继续完成任务。compact continuation task MUST 声明足以建立压缩前置条件的 runtime overrides，并以 rollout ContextDecision 断言确认实际发生 compact。每个 task MUST 使用最小本地 fixture 和自动断言，不得要求人工判定。

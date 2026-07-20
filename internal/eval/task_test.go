@@ -24,6 +24,11 @@ name: load-fixture
 prompt: fix it
 fixture: fixture
 timeout: 30s
+runtime:
+  max_context_tokens: 30000
+  context:
+    trigger_ratio: 0.5
+    keep_recent_turns: 1
 assertions:
   files:
     - path: main.go
@@ -39,6 +44,11 @@ assertions:
 	}
 	if err := PrepareFixture(taskFile, workspace); err != nil {
 		t.Fatalf("PrepareFixture: %v", err)
+	}
+	if taskFile.Task.Runtime.MaxContextTokens == nil || *taskFile.Task.Runtime.MaxContextTokens != 30000 ||
+		taskFile.Task.Runtime.Context.TriggerRatio == nil || *taskFile.Task.Runtime.Context.TriggerRatio != 0.5 ||
+		taskFile.Task.Runtime.Context.KeepRecentTurns == nil || *taskFile.Task.Runtime.Context.KeepRecentTurns != 1 {
+		t.Fatalf("runtime = %#v", taskFile.Task.Runtime)
 	}
 	data, err := os.ReadFile(filepath.Join(workspace, "main.go"))
 	if err != nil || string(data) != "package main\n" {
@@ -74,12 +84,33 @@ func TestMVPEvalTasksLoad(t *testing.T) {
 		if err := PrepareFixture(taskFile, workspace); err != nil {
 			t.Errorf("PrepareFixture(%s): %v", taskFile.Task.Name, err)
 		}
+		if taskFile.Task.Name == "compact-continuation" && taskFile.Task.Runtime.Empty() {
+			t.Error("compact-continuation must declare runtime overrides")
+		}
 	}
 	sort.Strings(names)
 	for i := 1; i < len(names); i++ {
 		if names[i] == names[i-1] {
 			t.Errorf("duplicate task name %q", names[i])
 		}
+	}
+}
+
+func TestLoadTaskRejectsInvalidRuntimeOverrides(t *testing.T) {
+	for name, runtimeYAML := range map[string]string{
+		"max context":       "  max_context_tokens: 0\n",
+		"trigger ratio":     "  context:\n    trigger_ratio: 1.1\n",
+		"keep recent turns": "  context:\n    keep_recent_turns: -1\n",
+		"unknown runtime":   "  max_tokens: 30000\n",
+		"unknown context":   "  context:\n    ratio: 0.5\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "task.yaml")
+			writeTask(t, path, "schema_version: 1\nname: invalid-runtime\nprompt: x\nruntime:\n"+runtimeYAML+"assertions:\n  rollout:\n    tools_called: [read]\n")
+			if _, err := LoadTask(path); err == nil || !strings.Contains(err.Error(), "runtime") {
+				t.Fatalf("LoadTask error = %v, want runtime validation error", err)
+			}
+		})
 	}
 }
 

@@ -26,6 +26,15 @@ type chatOptions struct {
 	New       bool
 }
 
+// runAgentRuntimeOverrides is an internal, process-scoped layer used by the
+// eval runner. The corresponding flags are hidden so normal configuration
+// remains file/profile driven.
+type runAgentRuntimeOverrides struct {
+	MaxContextTokens       int
+	ContextTriggerRatio    float64
+	ContextKeepRecentTurns int
+}
+
 // chatSessionState holds the store, rollout, and conversation state for a
 // single headless chat session. It is created by runChat and closed when the
 // command finishes.
@@ -65,7 +74,7 @@ func (s *chatSessionState) Close() error {
 // runAgent executes a single headless agent turn: it resolves the provider
 // and model from config/flags, creates a session, builds the agent with the
 // full tool set, runs one prompt, and prints the result to stdout.
-func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag, sessionID string) error {
+func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag, sessionID string, runtime runAgentRuntimeOverrides) error {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return fmt.Errorf("prompt required: pass -p/--prompt")
@@ -77,6 +86,9 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag, sessionID str
 	runStartupMaintenance(cmd, cfg)
 	mainRole, err := resolveMainModelRole(cmd.Context(), cfg, providerFlag, modelFlag)
 	if err != nil {
+		return err
+	}
+	if err := applyRunAgentRuntimeOverrides(cfg, &mainRole, runtime); err != nil {
 		return err
 	}
 	providerName := mainRole.ProviderName
@@ -200,6 +212,28 @@ func runAgent(cmd *cobra.Command, prompt, providerFlag, modelFlag, sessionID str
 	}
 	_ = a.DrainAutoMemory(cmd.Context())
 	return finishChatSession(cmd, state, prompt, providerName, model)
+}
+
+func applyRunAgentRuntimeOverrides(cfg *config.Config, role *resolvedModelRole, runtime runAgentRuntimeOverrides) error {
+	if runtime.MaxContextTokens < 0 {
+		return errors.New("eval max context tokens must be positive")
+	}
+	if runtime.ContextTriggerRatio < 0 || runtime.ContextTriggerRatio > 1 {
+		return errors.New("eval context trigger ratio must be greater than 0 and at most 1")
+	}
+	if runtime.ContextKeepRecentTurns < 0 {
+		return errors.New("eval context keep recent turns must be positive")
+	}
+	if runtime.MaxContextTokens > 0 {
+		role.MaxContextTokens = runtime.MaxContextTokens
+	}
+	if runtime.ContextTriggerRatio > 0 {
+		cfg.Context.TriggerRatio = runtime.ContextTriggerRatio
+	}
+	if runtime.ContextKeepRecentTurns > 0 {
+		cfg.Context.KeepRecentTurns = runtime.ContextKeepRecentTurns
+	}
+	return nil
 }
 
 func runChat(cmd *cobra.Command, promptArg, providerFlag, modelFlag string, opts chatOptions) error {

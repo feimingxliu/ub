@@ -31,6 +31,12 @@ func RenderText(w io.Writer, report Report) error {
 			return err
 		}
 	}
+	if !report.Runtime.Empty() {
+		if _, err := fmt.Fprintf(w, "Runtime: max_context_tokens=%d trigger_ratio=%g keep_recent_turns=%d\n",
+			intValue(report.Runtime.MaxContextTokens), floatValue(report.Runtime.Context.TriggerRatio), intValue(report.Runtime.Context.KeepRecentTurns)); err != nil {
+			return err
+		}
+	}
 	metrics := report.Metrics
 	if _, err := fmt.Fprintf(w, "Metrics: duration=%dms turns=%d tokens=%d/%d reasoning=%d cache=%d/%d\n",
 		metrics.DurationMillis, metrics.Turns, metrics.InputTokens, metrics.OutputTokens,
@@ -75,4 +81,18 @@ func RenderText(w io.Writer, report Report) error {
 		return err
 	}
 	return nil
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func floatValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

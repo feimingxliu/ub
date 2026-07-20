@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/store"
 	"github.com/goccy/go-yaml"
 	"github.com/spf13/cobra"
@@ -119,6 +120,36 @@ providers:
 	}
 	if len(sessions) != 1 {
 		t.Fatalf("continued run created %d sessions, want 1", len(sessions))
+	}
+}
+
+func TestApplyRunAgentRuntimeOverrides(t *testing.T) {
+	cfg := config.Defaults()
+	role := resolvedModelRole{MaxContextTokens: 200000}
+	err := applyRunAgentRuntimeOverrides(cfg, &role, runAgentRuntimeOverrides{
+		MaxContextTokens:       30000,
+		ContextTriggerRatio:    0.5,
+		ContextKeepRecentTurns: 1,
+	})
+	if err != nil {
+		t.Fatalf("apply overrides: %v", err)
+	}
+	if role.MaxContextTokens != 30000 || cfg.Context.TriggerRatio != 0.5 || cfg.Context.KeepRecentTurns != 1 {
+		t.Fatalf("role=%#v context=%#v", role, cfg.Context)
+	}
+}
+
+func TestApplyRunAgentRuntimeOverridesRejectsInvalidValues(t *testing.T) {
+	for name, runtime := range map[string]runAgentRuntimeOverrides{
+		"max context":   {MaxContextTokens: -1},
+		"trigger ratio": {ContextTriggerRatio: 1.1},
+		"recent turns":  {ContextKeepRecentTurns: -1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := applyRunAgentRuntimeOverrides(config.Defaults(), &resolvedModelRole{}, runtime); err == nil {
+				t.Fatal("apply overrides succeeded, want error")
+			}
+		})
 	}
 }
 

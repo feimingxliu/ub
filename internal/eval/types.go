@@ -21,7 +21,21 @@ type Task struct {
 	Followups     []string   `yaml:"followup_prompts,omitempty" json:"followup_prompts,omitempty"`
 	Fixture       string     `yaml:"fixture,omitempty" json:"fixture,omitempty"`
 	Timeout       string     `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Runtime       Runtime    `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 	Assertions    Assertions `yaml:"assertions" json:"assertions"`
+}
+
+// Runtime contains the small, explicit set of agent runtime settings an eval
+// task may override. It deliberately excludes provider credentials, hooks,
+// permissions, and arbitrary config maps.
+type Runtime struct {
+	MaxContextTokens *int           `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"`
+	Context          RuntimeContext `yaml:"context,omitempty" json:"context,omitempty"`
+}
+
+type RuntimeContext struct {
+	TriggerRatio    *float64 `yaml:"trigger_ratio,omitempty" json:"trigger_ratio,omitempty"`
+	KeepRecentTurns *int     `yaml:"keep_recent_turns,omitempty" json:"keep_recent_turns,omitempty"`
 }
 
 type Assertions struct {
@@ -103,9 +117,14 @@ type Report struct {
 	Model           string            `json:"model,omitempty"`
 	SessionID       string            `json:"session_id,omitempty"`
 	Workspace       string            `json:"workspace,omitempty"`
+	Runtime         Runtime           `json:"runtime"`
 	Metrics         Metrics           `json:"metrics"`
 	Assertions      []AssertionResult `json:"assertions"`
 	AgentStderr     string            `json:"agent_stderr,omitempty"`
+}
+
+func (r Runtime) Empty() bool {
+	return r.MaxContextTokens == nil && r.Context.TriggerRatio == nil && r.Context.KeepRecentTurns == nil
 }
 
 func (a Assertions) Empty() bool {

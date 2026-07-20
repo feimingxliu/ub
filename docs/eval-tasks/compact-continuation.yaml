@@ -6,6 +6,11 @@ followup_prompts:
   - Now follow those requirements and create answer.txt. Verify the exact marker is present.
 fixture: fixtures/compact-continuation
 timeout: 8m
+runtime:
+  max_context_tokens: 30000
+  context:
+    trigger_ratio: 0.5
+    keep_recent_turns: 1
 assertions:
   files:
     - path: answer.txt

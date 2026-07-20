@@ -827,11 +827,11 @@ Suggested dev profile (use --suggest to print full snippet):
 
 ### 12.5 Eval MVP（真实 Agent 行为评测）
 
-`ub eval --task <name-or-path>` 加载 `docs/eval-tasks/*.yaml` 或显式 YAML 路径。task schema v1 包含首个 prompt、可选 follow-up prompts、fixture、timeout，以及文件/命令/rollout 断言。runner 不复制 Agent loop，而是启动当前 executable 的 `ub --mode full-access run`；多 turn task 从隔离 store 取得首轮 session ID，再通过隐藏的 `run --session` 复用同一 history/context。
+`ub eval --task <name-or-path>` 加载 `docs/eval-tasks/*.yaml` 或显式 YAML 路径。task schema v1 包含首个 prompt、可选 follow-up prompts、fixture、timeout、受限的 `runtime` context overrides，以及文件/命令/rollout 断言。`runtime` 只接受 `max_context_tokens`、`context.trigger_ratio` 和 `context.keep_recent_turns`。runner 不复制 Agent loop，而是启动当前 executable 的 `ub --mode full-access run`；多 turn task 从隔离 store 取得首轮 session ID，再通过隐藏的 `run --session` 复用同一 history/context。
 
-每次运行创建临时 workspace，并把 `XDG_STATE_HOME`、`XDG_DATA_HOME` 指向该次临时根目录；全局 provider 配置仍按正常加载规则读取。fixture 复制和文件断言拒绝绝对路径、`..` 逃逸与 symlink。task 的命令断言按 argv 直接在临时 workspace 执行，因此只应运行受信 task。
+每次运行创建临时 workspace，并把 `XDG_STATE_HOME`、`XDG_DATA_HOME` 指向该次临时根目录；全局 provider 配置仍按正常加载规则读取。runtime overrides 通过隐藏的 headless `run` 参数应用到每个 turn，在 provider/model 解析后覆盖本次 Agent 的有效窗口和 ContextConfig；不复制含凭据的全局配置，也不修改普通配置合并语义。fixture 复制和文件断言拒绝绝对路径、`..` 逃逸与 symlink。task 的命令断言按 argv 直接在临时 workspace 执行，因此只应运行受信 task。
 
-完成后从隔离 rollout 汇总 turn、usage/cache token、tool result 序列和 summary 的 ContextDecision action/reason，再联合文件、验证命令、assistant 文本断言生成报告。默认文本输出；`--json` 输出单个稳定对象。模型运行失败与断言失败分别标记 `agent` / `assertion` failure category，并返回非零状态。MVP 只运行单个 task；批量任务、模型矩阵和统计报告留给 v0.6。
+完成后从隔离 rollout 汇总 turn、usage/cache token、tool result 序列和 summary 的 ContextDecision action/reason，再联合文件、验证命令、assistant 文本断言生成报告；报告同时回显规范化 runtime overrides。默认文本输出；`--json` 输出单个稳定对象。模型运行失败与断言失败分别标记 `agent` / `assertion` failure category，并返回非零状态。MVP 只运行单个 task；批量任务、模型矩阵和统计报告留给 v0.6。
 
 ## 13. 开发里程碑
 

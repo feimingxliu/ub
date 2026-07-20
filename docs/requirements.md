@@ -193,9 +193,9 @@
   - API key 环境变量是否就位
   - 可选 `--suggest`：输出建议的 `profiles.dev` 配置片段供复制
 - F-DEV-6：`ub prompt inspect` MUST 只读取当前有效配置、canonical workspace、workspace instructions、Git snapshot 与 memory，输出文本或 `--json` prompt manifest；命令 MUST 不调用 provider、不初始化工具运行时、不创建 session/rollout 或执行 startup maintenance。正文默认 MUST 省略，只有显式 `--show-content` 才可展示
-- F-DEV-7：`ub eval --task <name-or-path>` MUST 加载 schema v1 YAML task，在临时 workspace 中复制 fixture，并以当前 executable、full-access 和可选 provider/model 覆盖运行真实 headless Agent；follow-up prompts MUST 在同一隔离 session 中顺序执行
-- F-DEV-8：Eval MUST 同时隔离 `XDG_STATE_HOME` 与 `XDG_DATA_HOME`，默认清理现场；`--keep-workspace` MUST 保留并报告路径。task/fixture 路径 MUST 拒绝绝对路径、`..` 逃逸和 symlink，验证命令仅运行用户显式选择的受信 task
-- F-DEV-9：Eval MUST 支持文件、命令与 rollout 行为断言，并从 rollout 汇总 turn、input/output/reasoning/cache token、工具序列和 ContextDecision；默认输出文本报告，`--json` 输出单个 JSON 对象，agent 或断言失败 MUST 返回非零状态
+- F-DEV-7：`ub eval --task <name-or-path>` MUST 加载 schema v1 YAML task，在临时 workspace 中复制 fixture，并以当前 executable、full-access 和可选 provider/model 覆盖运行真实 headless Agent；follow-up prompts MUST 在同一隔离 session 中顺序执行。task MAY 通过强类型 `runtime` 覆盖 `max_context_tokens`、`context.trigger_ratio` 和 `context.keep_recent_turns`，无效值 MUST 在启动 provider 前拒绝
+- F-DEV-8：Eval MUST 同时隔离 `XDG_STATE_HOME` 与 `XDG_DATA_HOME`，默认清理现场；`--keep-workspace` MUST 保留并报告路径。runtime overrides MUST 只作用于当前 eval 子进程，不得复制、重写或泄露用户 provider 凭据，也不得修改用户配置。task/fixture 路径 MUST 拒绝绝对路径、`..` 逃逸和 symlink，验证命令仅运行用户显式选择的受信 task
+- F-DEV-9：Eval MUST 支持文件、命令与 rollout 行为断言，并从 rollout 汇总 turn、input/output/reasoning/cache token、工具序列和 ContextDecision；报告 MUST 回显 task 实际声明的 runtime overrides；默认输出文本报告，`--json` 输出单个 JSON 对象，agent 或断言失败 MUST 返回非零状态
 
 ## 5. 非功能性需求
 

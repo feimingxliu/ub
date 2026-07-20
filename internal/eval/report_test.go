@@ -8,7 +8,8 @@ import (
 )
 
 func TestRenderJSONAndText(t *testing.T) {
-	report := Report{Task: "sample", Passed: false, FailureCategory: FailureAssertion, Failure: "failed", Metrics: Metrics{Turns: 2, ToolCalls: []string{"read"}, ContextDecisions: []ContextDecision{{Action: "compact", Reason: "threshold"}}}, Assertions: []AssertionResult{{Name: "file", Passed: false, Message: "missing"}}, Workspace: "/tmp/eval"}
+	maxContext, triggerRatio, keepTurns := 30000, 0.5, 1
+	report := Report{Task: "sample", Passed: false, FailureCategory: FailureAssertion, Failure: "failed", Runtime: Runtime{MaxContextTokens: &maxContext, Context: RuntimeContext{TriggerRatio: &triggerRatio, KeepRecentTurns: &keepTurns}}, Metrics: Metrics{Turns: 2, ToolCalls: []string{"read"}, ContextDecisions: []ContextDecision{{Action: "compact", Reason: "threshold"}}}, Assertions: []AssertionResult{{Name: "file", Passed: false, Message: "missing"}}, Workspace: "/tmp/eval"}
 	var jsonOut bytes.Buffer
 	if err := RenderJSON(&jsonOut, report); err != nil {
 		t.Fatal(err)
@@ -21,7 +22,7 @@ func TestRenderJSONAndText(t *testing.T) {
 	if err := RenderText(&textOut, report); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Eval FAIL: sample", "Context: compact(threshold)", "✗ file: missing", "Workspace: /tmp/eval"} {
+	for _, want := range []string{"Eval FAIL: sample", "Runtime: max_context_tokens=30000 trigger_ratio=0.5 keep_recent_turns=1", "Context: compact(threshold)", "✗ file: missing", "Workspace: /tmp/eval"} {
 		if !strings.Contains(textOut.String(), want) {
 			t.Errorf("text output missing %q:\n%s", want, textOut.String())
 		}
