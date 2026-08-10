@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [0.5.2] - 2026-08-10
+
+
+### Added
+
+- Add isolated agent evaluation harness ([6c5b2a2](https://github.com/feimingxliu/ub/commit/6c5b2a2024435c3c3aedd3fd9edeebc7293c2cf6))
+- Add deterministic runtime overrides ([0441fc3](https://github.com/feimingxliu/ub/commit/0441fc34a91fb4e2fd1e8e31727a541dea486ea7))
+- Add matrix reporting ([af68b11](https://github.com/feimingxliu/ub/commit/af68b119944034d49119c043ebd3a1d1d7ecfd9f))
+
+
+### Documentation
+
+- Align roadmap with v0.5.1 baseline ([4bc58d3](https://github.com/feimingxliu/ub/commit/4bc58d35bd2064e607182a6f493d5f11b5b1c5a5))
+
 ## [0.5.1] - 2026-07-14
 
 
@@ -13,6 +27,11 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Redesign plan mode to match Claude Code pattern ([6b23c62](https://github.com/feimingxliu/ub/commit/6b23c62ed0a9329091303e196d98227fa756560f))
+
+
+### Maintenance
+
+- V0.5.1 ([f7a00d7](https://github.com/feimingxliu/ub/commit/f7a00d70653bef1da528f55bfcd01c273dadf315))
 
 ## [0.5.0] - 2026-07-13
 
