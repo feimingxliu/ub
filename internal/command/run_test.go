@@ -88,6 +88,10 @@ providers:
       - type: done
 `)
 	t.Chdir(temp)
+	workspace, err := currentWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
 	first := runCLITest("run", "--provider", "fake", "-p", "first")
 	if first.code != 0 {
 		t.Fatalf("first run code=%d stderr=%s", first.code, first.err.String())
@@ -96,7 +100,7 @@ providers:
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessions, err := st.ListSessions(context.Background(), temp, 10)
+	sessions, err := st.ListSessions(context.Background(), workspace, 10)
 	if err != nil {
 		_ = st.Close()
 		t.Fatal(err)
@@ -114,7 +118,7 @@ providers:
 		t.Fatal(err)
 	}
 	defer st.Close()
-	sessions, err = st.ListSessions(context.Background(), temp, 10)
+	sessions, err = st.ListSessions(context.Background(), workspace, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
