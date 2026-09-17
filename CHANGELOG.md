@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## [0.5.3] - 2026-09-17
+
+
+### Fixed
+
+- Support llama.cpp chat templates and streaming ([413c810](https://github.com/feimingxliu/ub/commit/413c810a3e6cf98ae0603deafd9997b4cba68116))
+- Support declared max effort and honor explicit none ([6eecfca](https://github.com/feimingxliu/ub/commit/6eecfcab5bad1faa055d16f7392954e59251451b))
+
 ## [0.5.2] - 2026-08-10
 
 
@@ -15,6 +23,11 @@ All notable changes to this project are documented here.
 ### Documentation
 
 - Align roadmap with v0.5.1 baseline ([4bc58d3](https://github.com/feimingxliu/ub/commit/4bc58d35bd2064e607182a6f493d5f11b5b1c5a5))
+
+
+### Maintenance
+
+- V0.5.2 ([6e2f057](https://github.com/feimingxliu/ub/commit/6e2f05726371e35b33ce88ebae4232f49b2b0d38))
 
 ## [0.5.1] - 2026-07-14
 
