@@ -24,8 +24,9 @@ import (
 
 // Provider adapts OpenAI Chat Completions to provider.Provider.
 type Provider struct {
-	name   string
-	client sdk.Client
+	name                string
+	client              sdk.Client
+	mergeSystemMessages bool
 }
 
 type constructorOptions struct {
@@ -65,8 +66,9 @@ func newFromConfig(name string, cfg config.ProviderConfig, opts constructorOptio
 		return nil, fmt.Errorf("openai-compatible provider %q missing base_url", name)
 	}
 	return &Provider{
-		name:   name,
-		client: BuildClient(cfg),
+		name:                name,
+		client:              BuildClient(cfg),
+		mergeSystemMessages: cfg.MergeSystemMessages,
 	}, nil
 }
 
@@ -147,13 +149,67 @@ func (p *Provider) Chat(ctx context.Context, req provider.Request) (provider.Str
 	if strings.TrimSpace(req.Model) == "" {
 		return nil, errors.New("openai model is required")
 	}
+	if p.mergeSystemMessages {
+		messages, err := mergeSystemMessages(req.Messages)
+		if err != nil {
+			return nil, err
+		}
+		req.Messages = messages
+	}
 	params, err := toChatCompletionParams(req)
 	if err != nil {
 		return nil, err
 	}
 	return provider.NewRetryStream(ctx, p.name, func() (provider.Stream, error) {
-		return newSDKStream(p.client.Chat.Completions.NewStreaming(ctx, params)), nil
+		var response *http.Response
+		stream := p.client.Chat.Completions.NewStreaming(ctx, params, option.WithResponseInto(&response))
+		if stream.Err() != nil || response == nil {
+			return newSDKStream(stream), nil
+		}
+		// The SDK decoder emits an empty event for comment-only SSE heartbeats.
+		// Reuse the unconsumed response with a filtering decoder so long local
+		// prefills do not fail JSON decoding on ":\n\n" keepalives. Only the new
+		// stream owns and closes the response body; the original was never read.
+		decoder := &heartbeatDecoder{Decoder: ssestream.NewDecoder(response)}
+		return newSDKStream(ssestream.NewStream[sdk.ChatCompletionChunk](decoder, nil)), nil
 	})
+}
+
+type heartbeatDecoder struct {
+	ssestream.Decoder
+}
+
+func (d *heartbeatDecoder) Next() bool {
+	for d.Decoder.Next() {
+		if len(d.Event().Data) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeSystemMessages is a wire-only compatibility policy. Moving late system
+// instructions to the prefix is intentional; their role and relative order are
+// preserved, but their original turn positions are not. Never mutate history.
+func mergeSystemMessages(messages []message.Message) ([]message.Message, error) {
+	var parts []string
+	out := make([]message.Message, 1, len(messages)+1)
+	for _, msg := range messages {
+		if msg.Role != message.RoleSystem {
+			out = append(out, msg)
+			continue
+		}
+		text, err := textContent(msg)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return out[1:], nil
+	}
+	out[0] = message.Text(message.RoleSystem, strings.Join(parts, "\n\n"))
+	return out, nil
 }
 
 func toChatCompletionParams(req provider.Request) (sdk.ChatCompletionNewParams, error) {
@@ -244,7 +300,13 @@ func normalizeOpenAIToolSchema(schema map[string]any) (map[string]any, error) {
 	}
 	out := cloneSchemaMap(resolved)
 	for key, value := range schema {
-		if key == "$ref" || key == "$defs" || key == "definitions" {
+		if key == "$ref" {
+			continue
+		}
+		// Nested properties still resolve references against the original root.
+		// Keep its definition namespaces when lifting the root object schema.
+		if key == "$defs" || key == "definitions" {
+			out[key] = value
 			continue
 		}
 		if _, exists := out[key]; !exists {

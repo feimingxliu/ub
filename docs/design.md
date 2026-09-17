@@ -348,6 +348,22 @@ type Stream interface {
 }
 ```
 
+**OpenAI-compatible 模板适配**：`providers.<name>.merge_system_messages: true` 在共享 Chat Completions adapter 的请求边界生效（`openai` 与 `openai-compat` 均支持，默认 false）。按原始顺序以空行连接所有 system 消息，作为唯一的首部 system；保留非 system 消息及工具调用/结果的相对顺序，不修改 rollout、prompt manifest 或调用方消息。中途的 system（如 compact summary、收尾指令）也会前移，因此这是一项显式的后端兼容策略，不保证原来的逐轮指令位置或 prompt cache 前缀保持不变。system 中不支持的内容块仍报错，不静默丢弃。
+
+共享 adapter 使用 SDK 的 HTTP 请求和 SSE 解码器，在 JSON 解码前过滤无 data 的 SSE 帧（如 llama.cpp 长预填充期间的 `:\n\n` 心跳）；不忽略含 data 的畸形 JSON，保持 HTTP 错误、重试和 stream Close 语义。
+
+工具 schema 的根 `$ref` 展开为 object 后，保留原根 `$defs` / `definitions`，使数组元素、多层嵌套和递归引用仍能解析；不通过删除工具或放宽 schema 来绕过后端校验。
+
+例如本地 llama.cpp provider 可配置（其余模型、超时配置照常保留）：
+
+```yaml
+providers:
+  llamacpp:
+    type: openai-compat
+    base_url: http://127.0.0.1:9931/v1
+    merge_system_messages: true
+```
+
 **双层抽象**（借鉴 codex-rs 的 `model-provider` + `model-provider-info`）：
 - `Provider` 是行为接口
 - `internal/modelinfo.Info` 是模型元信息（reasoning 能力、effort、context window 等），由配置文件 + 内置默认表合并

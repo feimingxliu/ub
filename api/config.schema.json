@@ -421,6 +421,9 @@
     },
     "ProviderConfig": {
       "properties": {
+        "merge_system_messages": {
+          "type": "boolean"
+        },
         "type": {
           "type": "string"
         },

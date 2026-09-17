@@ -87,13 +87,16 @@ type ApprovalAgentConfig struct {
 // intentionally narrow: only what the provider factory in I-07/I-08 will
 // consume. APIKey carries `secret:"true"` so config.Redact masks it.
 type ProviderConfig struct {
-	Type    string                 `yaml:"type,omitempty"     json:"type,omitempty"`
-	APIKey  string                 `yaml:"api_key,omitempty"  json:"api_key,omitempty"  secret:"true"`
-	BaseURL string                 `yaml:"base_url,omitempty" json:"base_url,omitempty"`
-	Headers map[string]string      `yaml:"headers,omitempty"  json:"headers,omitempty"`
-	Timeout time.Duration          `yaml:"timeout,omitempty"  json:"timeout,omitempty"`
-	Models  map[string]ModelConfig `yaml:"models,omitempty"   json:"models,omitempty"`
-	Script  []ProviderScriptEvent  `yaml:"script,omitempty"   json:"script,omitempty"`
+	// MergeSystemMessages combines all system instructions at the start of
+	// OpenAI-compatible requests for templates that accept only one system message.
+	MergeSystemMessages bool                   `yaml:"merge_system_messages,omitempty" json:"merge_system_messages,omitempty"`
+	Type                string                 `yaml:"type,omitempty"     json:"type,omitempty"`
+	APIKey              string                 `yaml:"api_key,omitempty"  json:"api_key,omitempty"  secret:"true"`
+	BaseURL             string                 `yaml:"base_url,omitempty" json:"base_url,omitempty"`
+	Headers             map[string]string      `yaml:"headers,omitempty"  json:"headers,omitempty"`
+	Timeout             time.Duration          `yaml:"timeout,omitempty"  json:"timeout,omitempty"`
+	Models              map[string]ModelConfig `yaml:"models,omitempty"   json:"models,omitempty"`
+	Script              []ProviderScriptEvent  `yaml:"script,omitempty"   json:"script,omitempty"`
 }
 
 // ModelConfig overrides built-in model capability metadata.

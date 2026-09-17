@@ -83,6 +83,9 @@
 - F-PROV-7：provider 事件流可选返回 `reasoning_delta`；只有后端 API 提供可展示 reasoning/thinking 时才透传，未提供时不得合成
 - F-PROV-8：系统 MUST 通过 provider 模型列表发现、内置 modelinfo 表和用户配置覆盖解析模型 reasoning 能力；只有当前模型声明支持时才向 provider 发送 reasoning effort
 - F-PROV-9：OpenAI provider 使用 `reasoning_effort`；Anthropic provider 使用 `thinking` budget；OpenAI-compatible 对未知模型默认不发送 reasoning 参数
+- F-PROV-10：`openai` / `openai-compat` 支持 provider 级 `merge_system_messages`（默认 false）；开启后仅在发往后端的请求中将全部 system 内容按原顺序合并为首条 system，保留其指令角色和非 system 消息顺序，不改写会话历史。该模式面向只接受单条首部 system 的模板。工具 schema 展开根 `$ref` 时 MUST 保留嵌套引用所需的 `$defs` / `definitions`。
+
+- F-PROV-11：Chat Completions 流 MUST 忽略没有 data 的 SSE 注释心跳，保留正常正文、工具、usage、结束事件及实际 JSON 错误。
 
 ### 4.3 工具系统
 

@@ -586,3 +586,24 @@ func TestLoadFromDirsInvalidYAMLErrorIncludesPathAndLocation(t *testing.T) {
 		t.Fatalf("error missing approximate location: %s", msg)
 	}
 }
+
+func TestLoadMergeSystemMessages(t *testing.T) {
+	temp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", temp)
+	mustWriteConfig(t, filepath.Join(temp, "ub", "config.yaml"), `providers:
+  local:
+    type: openai-compat
+    base_url: http://127.0.0.1:9931/v1
+    merge_system_messages: true
+  other:
+    type: openai
+    api_key: test
+`)
+	cfg, _, err := loadFromDirs(temp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Providers["local"].MergeSystemMessages || cfg.Providers["other"].MergeSystemMessages {
+		t.Fatal("provider compatibility setting not loaded independently")
+	}
+}

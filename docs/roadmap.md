@@ -279,6 +279,8 @@
 
 ### I-12 openai-compat 与 Ollama
 
+- **兼容性修复（2026-09）**：共享 adapter 支持显式 `merge_system_messages`，并在展开工具根 schema 时保留嵌套定义，适配 llama.cpp / Qwen 的模板和 schema 校验；过滤长预填充期间的 SSE 注释心跳。
+
 - **目标**：剩两个 provider，复用最大化
 - **依赖**：I-11
 - **In Scope**：

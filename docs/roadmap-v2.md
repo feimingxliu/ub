@@ -596,6 +596,8 @@ ub 已有内置 `web_search` / `web_fetch` 联网工具,不再只能通过 MCP �
 
 ### S4-07 Provider prefix cache optimization
 
+- **兼容性补充（2026-09）**：已实现 provider 级 `merge_system_messages` 开关、工具 schema 定义保留和 SSE 心跳过滤；开启合并会把中途 system 前移，可能改变缓存前缀，默认保持关闭。
+
 **状态**:第一垂直切片已实现。Anthropic 已有 `applyCacheBreakpoints`（system/tools + conversation tail 两个 `cache_control` 断点）与单测；OpenAI-compatible 已设置 `SupportsPromptCache`；DeepSeek 的 `prompt_cache_hit_tokens` 顶层字段和 OpenAI 的 `prompt_tokens_details.cached_tokens` 两种格式均已归一化解析；stable section 缓存稳定性快照测试已覆盖；`ub prompt inspect` 展示每个 section 的 `cacheable` 标记（stable → cacheable, dynamic → not cacheable）；`ub doctor` 展示各 provider 的 prompt cache 策略（`cache_control` / `cached_tokens`）。
 
 把 prompt cache 从"usage 统计字段"推进到可验证、可调优的请求构造策略,优先覆盖 Anthropic 与 DeepSeek/OpenAI-compatible。
