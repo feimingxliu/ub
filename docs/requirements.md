@@ -149,7 +149,7 @@
 - F-CFG-2：配置项：`providers`、`default_provider`、`default_model`、`small_model`（用于 auto memory/title 与 approval fallback，不用于默认 compact summary）、`execution_mode`、`reasoning`、`prompt`、`approval_agent`、`tui`、`permissions`、`mcp_servers`、`lsp_servers`、`tools`（含 `tools.web`）、`context`、`cleanup`、`hooks`、`memory`、`profiles`；`providers.<name>.models.<model>` 可声明 reasoning 能力和 `max_context_tokens`；`context` 支持 `reserve_output_tokens` 与 `tool_results`
 - F-CFG-3：`default_model` 与 `approval_agent.model` 可省略；当 provider 能列出模型时，启动时 MUST 自动选择该 provider 返回的第一个可用模型；provider 无法列模型且运行时要求 model 时，MUST 给出明确配置错误
 - F-CFG-4：配置 schema 用 JSON Schema 描述，IDE 可补全
-- F-CFG-5：配置支持全局 `reasoning.effort`、`approval_agent.reasoning.effort` 和 `providers.<name>.models.<id>` 能力覆盖；effort 值为 `none|minimal|low|medium|high|xhigh`
+- F-CFG-5：配置支持全局 `reasoning.effort`、`approval_agent.reasoning.effort` 和 `providers.<name>.models.<id>` 能力覆盖；effort 值为 `none|minimal|low|medium|high|xhigh|max`；`max` 仅对明确声明该等级的模型可选。未指定 effort 使用模型默认值，显式 `none` 优先关闭思考；声明支持 reasoning 的 OpenAI-compatible 模型须收到 `reasoning_effort: none`，未知模型不发送该参数
 - F-CFG-6：（V2）配置变更可通过 `/config reload` 热加载，无需重启。V1 改配置必须重启进程
 
 ### 4.9 MCP

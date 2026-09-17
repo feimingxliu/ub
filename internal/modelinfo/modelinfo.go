@@ -41,10 +41,10 @@ func Resolve(providerName string, providerCfg config.ProviderConfig, model strin
 // RequestConfig returns the provider request reasoning config for a selected
 // model and user-configured preference.
 func RequestConfig(preferred reasoning.Config, info Info) *reasoning.Config {
-	effort := EffectiveEffort(preferred, info)
-	if effort == reasoning.EffortNone {
+	if !info.SupportsReasoning {
 		return nil
 	}
+	effort := EffectiveEffort(preferred, info)
 	return &reasoning.Config{Effort: effort, Summary: preferred.Summary}
 }
 
@@ -55,13 +55,21 @@ func EffectiveEffort(preferred reasoning.Config, info Info) reasoning.Effort {
 		return reasoning.EffortNone
 	}
 	requested, err := reasoning.NormalizeEffort(string(preferred.Effort))
+	// An explicit off switch must win over the model default. Empty means
+	// unspecified, even though NormalizeEffort also normalizes it to none.
+	if err == nil && requested == reasoning.EffortNone && strings.TrimSpace(string(preferred.Effort)) != "" {
+		return reasoning.EffortNone
+	}
 	if err != nil {
 		requested = reasoning.EffortNone
 	}
 	if requested != reasoning.EffortNone && reasoning.Contains(info.SupportedEfforts, requested) {
 		return requested
 	}
-	if info.DefaultEffort != "" && info.DefaultEffort != reasoning.EffortNone && reasoning.Contains(info.SupportedEfforts, info.DefaultEffort) {
+	if info.DefaultEffort == reasoning.EffortNone {
+		return reasoning.EffortNone
+	}
+	if info.DefaultEffort != "" && reasoning.Contains(info.SupportedEfforts, info.DefaultEffort) {
 		return info.DefaultEffort
 	}
 	if len(info.SupportedEfforts) > 0 {
@@ -132,7 +140,8 @@ func mergeConfigInfo(base Info, cfg config.ModelConfig) Info {
 	}
 	base.SupportedEfforts = efforts
 	defaultEffort, err := reasoning.NormalizeEffort(string(cfg.DefaultEffort))
-	if err != nil || defaultEffort == reasoning.EffortNone || !reasoning.Contains(efforts, defaultEffort) {
+	explicitNone := err == nil && defaultEffort == reasoning.EffortNone && strings.TrimSpace(string(cfg.DefaultEffort)) != ""
+	if !explicitNone && (err != nil || defaultEffort == reasoning.EffortNone || !reasoning.Contains(efforts, defaultEffort)) {
 		defaultEffort = firstPreferredDefault(efforts)
 	}
 	base.DefaultEffort = defaultEffort
@@ -184,7 +193,7 @@ func normalizeEfforts(efforts []reasoning.Effort) []reasoning.Effort {
 }
 
 func firstPreferredDefault(efforts []reasoning.Effort) reasoning.Effort {
-	for _, preferred := range []reasoning.Effort{reasoning.EffortMedium, reasoning.EffortLow, reasoning.EffortHigh, reasoning.EffortMinimal, reasoning.EffortXHigh} {
+	for _, preferred := range []reasoning.Effort{reasoning.EffortMedium, reasoning.EffortLow, reasoning.EffortHigh, reasoning.EffortMinimal, reasoning.EffortXHigh, reasoning.EffortMax} {
 		if reasoning.Contains(efforts, preferred) {
 			return preferred
 		}

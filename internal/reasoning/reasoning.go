@@ -16,6 +16,7 @@ const (
 	EffortMedium  Effort = "medium"
 	EffortHigh    Effort = "high"
 	EffortXHigh   Effort = "xhigh"
+	EffortMax     Effort = "max"
 )
 
 // Config is the runtime/config-file shape for reasoning controls.
@@ -29,7 +30,7 @@ func NormalizeEffort(value string) (Effort, error) {
 	switch effort := Effort(strings.ToLower(strings.TrimSpace(value))); effort {
 	case "", EffortNone:
 		return EffortNone, nil
-	case EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh:
+	case EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
 		return effort, nil
 	default:
 		return "", fmt.Errorf("unknown reasoning effort %q", value)

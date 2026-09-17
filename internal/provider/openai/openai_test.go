@@ -58,17 +58,41 @@ func TestToChatCompletionParamsSetsReasoningEffort(t *testing.T) {
 	}
 }
 
-func TestToChatCompletionParamsOmitsReasoningEffortForNone(t *testing.T) {
-	params, err := toChatCompletionParams(provider.Request{
-		Model:     "gpt-test",
-		Messages:  []message.Message{message.Text(message.RoleUser, "ping")},
-		Reasoning: &reasoning.Config{Effort: reasoning.EffortNone},
-	})
-	if err != nil {
-		t.Fatalf("toChatCompletionParams: %v", err)
-	}
-	if params.ReasoningEffort != "" {
-		t.Fatalf("ReasoningEffort = %q, want empty", params.ReasoningEffort)
+func TestToChatCompletionParamsReasoningWireValues(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		config *reasoning.Config
+		want   string
+	}{
+		{"none", &reasoning.Config{Effort: reasoning.EffortNone}, "none"},
+		{"max", &reasoning.Config{Effort: reasoning.EffortMax}, "max"},
+		{"unset", nil, ""},
+		{"empty", &reasoning.Config{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params, err := toChatCompletionParams(provider.Request{
+				Model: "qwen", Messages: []message.Message{message.Text(message.RoleUser, "ping")}, Reasoning: tc.config,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(params)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body map[string]any
+			if err := json.Unmarshal(raw, &body); err != nil {
+				t.Fatal(err)
+			}
+			value, present := body["reasoning_effort"]
+			if tc.want == "" {
+				if present {
+					t.Fatalf("unexpected reasoning_effort in %s", raw)
+				}
+			} else if !present || value != tc.want {
+				t.Fatalf("reasoning_effort=%v, want %s", value, tc.want)
+			}
+		})
 	}
 }
 

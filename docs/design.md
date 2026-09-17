@@ -395,6 +395,8 @@ type ModelConfig struct {
 **reasoning effort**：
 - `provider.Request` 携带可选 `ReasoningConfig{Effort, Summary}`，Agent 在发送前按当前模型能力校验
 - OpenAI / OpenAI-compatible 映射为 `reasoning_effort`；未知兼容模型默认不发送
+- `max` 可由模型 `supported_efforts` 声明，并用作 `default_effort`，不自动加入内置或未知模型的等级列表。全局偏好不受模型支持时仍回退到模型默认值。
+- 未设置 effort 与显式 `none` 不同：前者选择模型默认值；后者覆盖默认值并关闭思考，模型的 `default_effort: none` 也须保留。已声明支持 reasoning 的模型在 OpenAI 请求中显式发送 `reasoning_effort: none`，未知模型仍返回空 reasoning 配置并省略参数；Anthropic 沿用零 thinking budget 的关闭路径。
 - Anthropic 映射为 `thinking` budget，`none` 不发送 thinking，非 `none` 时自动保证 budget 小于 `max_tokens`
 - TUI 通过 `/effort` 列出和切换当前模型支持的等级，并在状态栏展示当前值
 

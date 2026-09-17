@@ -14,7 +14,6 @@ import (
 	"github.com/feimingxliu/ub/internal/config"
 	"github.com/feimingxliu/ub/internal/message"
 	"github.com/feimingxliu/ub/internal/provider"
-	"github.com/feimingxliu/ub/internal/reasoning"
 	sdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/param"
@@ -220,7 +219,7 @@ func toChatCompletionParams(req provider.Request) (sdk.ChatCompletionNewParams, 
 		},
 		ParallelToolCalls: sdk.Bool(true),
 	}
-	if req.Reasoning != nil && req.Reasoning.Effort != "" && req.Reasoning.Effort != reasoning.EffortNone {
+	if req.Reasoning != nil && req.Reasoning.Effort != "" {
 		params.ReasoningEffort = shared.ReasoningEffort(string(req.Reasoning.Effort))
 	}
 	tools, err := toToolParams(req.Tools)
