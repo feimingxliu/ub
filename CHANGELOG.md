@@ -10,6 +10,16 @@ All notable changes to this project are documented here.
 - Support llama.cpp chat templates and streaming ([413c810](https://github.com/feimingxliu/ub/commit/413c810a3e6cf98ae0603deafd9997b4cba68116))
 - Support declared max effort and honor explicit none ([6eecfca](https://github.com/feimingxliu/ub/commit/6eecfcab5bad1faa055d16f7392954e59251451b))
 
+
+### Maintenance
+
+- V0.5.3 ([e33260b](https://github.com/feimingxliu/ub/commit/e33260be6d054b838f6e97c9b967a1ca92c3a081))
+
+
+### Tests
+
+- Use canonical workspace in session resume test ([ad84f3c](https://github.com/feimingxliu/ub/commit/ad84f3cdef00e459f7e785003213f7b12d1a2755))
+
 ## [0.5.2] - 2026-08-10
 
 
